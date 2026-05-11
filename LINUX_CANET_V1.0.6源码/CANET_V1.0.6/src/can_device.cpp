@@ -5,7 +5,7 @@
 #include "can_device.h"
 #include <cstdio>
 #include <cstring>
-
+//test commit
 // 构造：仅记录设备索引，不做任何 IO；真正打开设备放到 Initialize
 CanDevice::CanDevice(uint8_t device_idx)
     : m_device_idx(device_idx), m_is_running(false), m_received_count(0) {
