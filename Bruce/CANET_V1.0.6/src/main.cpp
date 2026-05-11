@@ -1,9 +1,10 @@
 /**
  * @file   main.cpp
  * @brief  CAN 电机控制框架的示例入口
- * @details 提供 6 个演示函数：
+ * @details 提供 7 个演示函数：
  *          1) 单电机基本控制      2) 同口多电机          3) 多 CAN 口协同
  *          4) 电机健康检查        5) 长时间运行演示      6) 原始 CAN 帧测试（仅依赖 BSP）
+ *          7) CAN 消息转发测试    （监听 can0 ID=0x001，转发到 can1 ID=0x002）
  *          运行方式：./motor_app <示例编号>   默认为 1
  */
 #include <stdio.h>
@@ -299,6 +300,136 @@ void Example6_RawFrameTest() {
     printf("[INFO] Example 6 completed\n");
 }
 
+// ================= 示例 7：CAN 消息转发测试 =================
+// 监听 can0 上 ID=0x001 的消息，收到后原样转发到 can1 上 ID=0x002
+// 演示多设备协同和消息转发
+void Example7_MessageForwarding() {
+    printf("\n========== Example 7: CAN Message Forwarding ==========\n");
+    printf("[INFO] Listening on can0 ID=0x001, forwarding to can1 ID=0x002\n");
+    printf("[INFO] CANET device: 192.168.0.178:4001\n\n");
+
+    BspCan& bsp = BspCan::GetInstance();
+
+    // 配置 can0（接收端）- TCP 客户端
+    CanDeviceConfig config0;
+    config0.device_idx = 0;
+    config0.port = 4001;
+    config0.server_ip = "192.168.0.178";
+    config0.work_mode = TCP_CLIENT;
+
+    // 配置 can1（发送端）- TCP 客户端
+    CanDeviceConfig config1;
+    config1.device_idx = 1;
+    config1.port = 4001;
+    config1.server_ip = "192.168.0.178";
+    config1.work_mode = TCP_CLIENT;
+
+    // 初始化两个设备
+    printf("[ACTION] Initializing CAN device 0 (receiver)...\n");
+    if (!bsp.InitDevice(0, config0)) {
+        printf("[ERROR] Failed to initialize CAN device 0\n");
+        return;
+    }
+
+    printf("[ACTION] Initializing CAN device 1 (sender)...\n");
+    if (!bsp.InitDevice(1, config1)) {
+        printf("[ERROR] Failed to initialize CAN device 1\n");
+        bsp.CloseDevice(0);
+        return;
+    }
+
+    // 启动两个设备
+    printf("[ACTION] Starting CAN device 0...\n");
+    if (!bsp.StartDevice(0)) {
+        printf("[ERROR] Failed to start CAN device 0\n");
+        bsp.CloseDevice(0);
+        bsp.CloseDevice(1);
+        return;
+    }
+
+    printf("[ACTION] Starting CAN device 1...\n");
+    if (!bsp.StartDevice(1)) {
+        printf("[ERROR] Failed to start CAN device 1\n");
+        bsp.StopDevice(0);
+        bsp.CloseDevice(0);
+        bsp.CloseDevice(1);
+        return;
+    }
+
+    printf("[INFO] Both CAN devices are running\n\n");
+
+    // 监听 can0 上的消息，运行 10 秒
+    printf("[ACTION] Listening for messages on can0 (ID=0x001) for 10 seconds...\n");
+    printf("[INFO] Send messages to can0 ID=0x001 to test forwarding\n\n");
+
+    uint32_t forwarded_count = 0;
+    time_t start_time = time(nullptr);
+    time_t current_time;
+
+    while ((current_time = time(nullptr)) - start_time < 10) {
+        // 尝试从 can0 接收消息（超时 100ms）
+        std::vector<BspCanFrame> received_frames;
+        if (bsp.ReceiveFrames(0, received_frames, 100)) {
+            // 处理接收到的每一帧
+            for (const auto& frame : received_frames) {
+                // 只处理 ID=0x001 的消息
+                if (frame.id == 0x001) {
+                    printf("[RECEIVED] can0 ID=0x%03X, DLC=%d, Data=[", frame.id, frame.dlc);
+                    for (int i = 0; i < frame.dlc; i++) {
+                        printf("%02X", frame.data[i]);
+                        if (i < frame.dlc - 1) printf(" ");
+                    }
+                    printf("]\n");
+
+                    // 创建转发帧：修改 ID 为 0x002，其他数据保持不变
+                    BspCanFrame forward_frame;
+                    forward_frame.id = 0x002;
+                    forward_frame.dlc = frame.dlc;
+                    forward_frame.is_extended = frame.is_extended;
+                    memcpy(forward_frame.data, frame.data, 8);
+
+                    // 发送到 can1
+                    if (bsp.SendFrame(1, forward_frame)) {
+                        printf("[FORWARDED] can1 ID=0x%03X, DLC=%d, Data=[", forward_frame.id, forward_frame.dlc);
+                        for (int i = 0; i < forward_frame.dlc; i++) {
+                            printf("%02X", forward_frame.data[i]);
+                            if (i < forward_frame.dlc - 1) printf(" ");
+                        }
+                        printf("]\n");
+                        forwarded_count++;
+                    } else {
+                        printf("[ERROR] Failed to forward frame to can1\n");
+                    }
+                    printf("\n");
+                }
+            }
+        }
+    }
+
+    printf("\n[INFO] Listening completed\n");
+    printf("[STATISTICS] Total messages forwarded: %u\n", forwarded_count);
+
+    // 查询统计信息
+    printf("\n[INFO] CAN Device 0 Statistics:\n");
+    printf("  Sent frames: %u\n", bsp.GetSentFrameCount(0));
+    printf("  Received frames: %u\n", bsp.GetReceivedFrameCount(0));
+
+    printf("\n[INFO] CAN Device 1 Statistics:\n");
+    printf("  Sent frames: %u\n", bsp.GetSentFrameCount(1));
+    printf("  Received frames: %u\n", bsp.GetReceivedFrameCount(1));
+
+    // 停止和关闭设备
+    printf("\n[ACTION] Stopping CAN devices...\n");
+    bsp.StopDevice(0);
+    bsp.StopDevice(1);
+
+    printf("[ACTION] Closing CAN devices...\n");
+    bsp.CloseDevice(0);
+    bsp.CloseDevice(1);
+
+    printf("[INFO] Example 7 completed\n");
+}
+
 // ================= 程序入口 =================
 // 通过命令行参数选择示例编号；未指定则默认运行示例 1
 int main(int argc, char* argv[]) {
@@ -322,7 +453,8 @@ int main(int argc, char* argv[]) {
     printf("  3 - Multi-CAN Port Control\n");
     printf("  4 - Motor Health Check\n");
     printf("  5 - Interactive Control\n");
-    printf("  6 - Raw CAN Frame Test (can0, ID=0x000)\n\n");
+    printf("  6 - Raw CAN Frame Test (can0, ID=0x000)\n");
+    printf("  7 - CAN Message Forwarding (can0 ID=0x001 → can1 ID=0x002)\n\n");
 
     printf("Running Example %d...\n", example);
 
@@ -334,6 +466,7 @@ int main(int argc, char* argv[]) {
         case 4: Example4_HealthCheck();         break;
         case 5: Example5_InteractiveControl();  break;
         case 6: Example6_RawFrameTest();        break;
+        case 7: Example7_MessageForwarding();   break;
         default:
             printf("[ERROR] Invalid example number: %d\n", example);
             return 1;
