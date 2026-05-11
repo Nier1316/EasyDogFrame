@@ -46,6 +46,7 @@ set(FRAMEWORK_SOURCES
     src/can_device.cpp         # CAN 设备层（BSP 内部使用）
     src/motor_manager.cpp      # 设备/电机统一管理
     src/motor_controller.cpp   # 应用层门面 API
+    src/ele_motor_drive.cpp    # 电机驱动扩展（参数读写、验证等）
 )
 
 # ---------------- 编译产物 ----------------

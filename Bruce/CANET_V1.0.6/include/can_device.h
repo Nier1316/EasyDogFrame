@@ -46,6 +46,7 @@ public:
 private:
     uint8_t  m_device_idx;       // CANET 设备索引（0~3）
     bool     m_is_running;       // 当前是否处于运行态（已 Start 未 Stop）
+    bool     m_is_opened;        // 设备是否已成功打开（防止关闭未打开的设备）
     uint32_t m_received_count;   // 累计接收帧计数器（统计用）
     mutable std::mutex m_mutex;  // 保护所有公共方法的并发访问
 

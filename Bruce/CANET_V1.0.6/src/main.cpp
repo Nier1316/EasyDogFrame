@@ -1,10 +1,9 @@
 /**
  * @file   main.cpp
  * @brief  CAN 电机控制框架的示例入口
- * @details 提供 7 个演示函数：
- *          1) 单电机基本控制      2) 同口多电机          3) 多 CAN 口协同
- *          4) 电机健康检查        5) 长时间运行演示      6) 原始 CAN 帧测试（仅依赖 BSP）
- *          7) CAN 消息转发测试    （监听 can0 ID=0x001，转发到 can1 ID=0x002）
+ * @details 提供 6 个演示函数：
+ *          1) 单电机基本控制（三种模式）  2) 同口多电机          3) 多 CAN 口协同
+ *          4) 电机健康检查                5) 长时间运行演示      6) 原始 CAN 帧测试（仅依赖 BSP）
  *          运行方式：./motor_app <示例编号>   默认为 1
  */
 #include <stdio.h>
@@ -14,25 +13,22 @@
 #include "bsp/bsp_can.h"   // 示例 6 直接使用 BSP 层
 
 // 全局控制器指针：仅供信号处理函数访问，用于 Ctrl+C 时优雅停机
-// 使用裸指针是为了在 SignalHandler 中以 C 语言方式访问；实际对象生命周期在 main 内
 MotorController* g_controller = nullptr;
 
 /**
  * @brief 信号处理函数：捕获 SIGINT / SIGTERM，触发优雅退出
- * @note  信号上下文里只做最少量的动作，避免调用不可重入函数导致未定义行为
  */
 void SignalHandler(int sig) {
     printf("\n[INFO] Received signal %d, shutting down...\n", sig);
     if (g_controller) {
-        g_controller->Stop();    // 触发 manager 停线程 + 关设备
+        g_controller->Stop();
     }
-    exit(0);   // 直接退出进程，让 atexit/析构接管剩余清理
+    exit(0);
 }
 
-// ================= 示例 1：基本电机控制 =================
-// 演示完整的"初始化 → 启动 → 控制 → 查询 → 停止"单电机流程
+// ================= 示例 1：基本电机控制（三种模式） =================
 void Example1_BasicControl() {
-    printf("\n========== Example 1: Basic Motor Control ==========\n");
+    printf("\n========== Example 1: Basic Motor Control (Three Modes) ==========\n");
 
     MotorController controller;
 
@@ -47,15 +43,30 @@ void Example1_BasicControl() {
 
     printf("[INFO] System started. Total motors: %d\n", controller.GetMotorCount());
 
-    // 发送一次移动命令：can0 上的 1 号电机，速度 1000，正向
-    printf("\n[ACTION] Moving motor (can0, id=1) at speed 1000, forward\n");
-    controller.MoveMotor(0, 1, 1000, 1);
-    sleep(2);   // 等待电机运行 2 秒，同时后台线程会收集状态
+    // 使能电机
+    printf("\n[ACTION] Enabling motor (can0, id=1)\n");
+    controller.EnableMotor(0, 1);
+    sleep(1);
 
-    controller.PrintMotorStatus(0, 1);   // 打印最新状态
+    // 模式 1：阻抗控制
+    printf("\n[ACTION] Impedance control: pos=0, vel=0, kp=10, kd=1, torque=0\n");
+    controller.ImpedanceControl(0, 1, 0, 0, 10, 1, 0);
+    sleep(2);
 
-    printf("[ACTION] Stopping motor (can0, id=1)\n");
-    controller.StopMotor(0, 1);
+    // 模式 2：速度控制
+    printf("\n[ACTION] Speed control: vel=5 rad/s, kp=10, ki=0.1\n");
+    controller.SpeedControl(0, 1, 5.0f, 10.0f, 0.1f);
+    sleep(2);
+
+    // 模式 3：位置控制
+    printf("\n[ACTION] Position control: pos=1 rad, kvp=5, kp=10, kd=1, kvi=0.1\n");
+    controller.PositionControl(0, 1, 1.0f, 5.0f, 10.0f, 1.0f, 0.1f);
+    sleep(2);
+
+    controller.PrintMotorStatus(0, 1);
+
+    printf("\n[ACTION] Disabling motor (can0, id=1)\n");
+    controller.DisableMotor(0, 1);
     sleep(1);
 
     controller.Stop();
@@ -63,7 +74,6 @@ void Example1_BasicControl() {
 }
 
 // ================= 示例 2：同一 CAN 口上的多电机协同 =================
-// 验证 BroadcastCommand / 多电机并行命令的正确性
 void Example2_MultiMotorControl() {
     printf("\n========== Example 2: Multi-Motor Control ==========\n");
 
@@ -74,19 +84,28 @@ void Example2_MultiMotorControl() {
     }
     printf("[INFO] System started. Total motors: %d\n", controller.GetMotorCount());
 
-    // 给 can0 的 3 个电机分别下不同速度，制造差异以便观察
-    printf("\n[ACTION] Starting all motors on can0\n");
+    // 使能 can0 的 3 个电机
+    printf("\n[ACTION] Enabling all motors on can0\n");
     for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
-        uint16_t speed = 500 + motor_id * 200;   // 700 / 900 / 1100
-        controller.MoveMotor(0, motor_id, speed, 1);
-        printf("  Motor %d: speed=%d\n", motor_id, speed);
+        controller.EnableMotor(0, motor_id);
+    }
+    sleep(1);
+
+    // 给 3 个电机分别下不同的速度控制命令
+    printf("\n[ACTION] Starting all motors on can0 with different speeds\n");
+    for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+        float vel = 2.0f + motor_id * 1.0f;  // 3.0 / 4.0 / 5.0 rad/s
+        controller.SpeedControl(0, motor_id, vel, 10.0f, 0.1f);
+        printf("  Motor %d: vel=%.1f rad/s\n", motor_id, vel);
     }
 
     sleep(3);
-    controller.PrintAllMotorStatus();    // 一次性查看全部电机
+    controller.PrintAllMotorStatus();
 
-    printf("\n[ACTION] Stopping all motors\n");
-    controller.StopAllMotors();          // 广播停机
+    printf("\n[ACTION] Disabling all motors on can0\n");
+    for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+        controller.DisableMotor(0, motor_id);
+    }
     sleep(1);
 
     controller.Stop();
@@ -94,7 +113,6 @@ void Example2_MultiMotorControl() {
 }
 
 // ================= 示例 3：跨 CAN 口控制 =================
-// 演示同一应用同时操作 4 个 CANET 设备（can0~can3）
 void Example3_MultiCanPortControl() {
     printf("\n========== Example 3: Multi-CAN Port Control ==========\n");
 
@@ -105,27 +123,29 @@ void Example3_MultiCanPortControl() {
     }
     printf("[INFO] System started. Total motors: %d\n", controller.GetMotorCount());
 
-    // 每个 CAN 口上只启动 1 号电机，速度按口号递增以便辨识
-    printf("\n[ACTION] Starting motors on different CAN ports\n");
+    // 在 4 个 CAN 口上各启动 1 个电机
+    printf("\n[ACTION] Starting motors on all CAN ports\n");
     for (uint8_t can_port = 0; can_port < 4; can_port++) {
-        uint16_t speed = 800 + can_port * 100;    // 800/900/1000/1100
-        controller.MoveMotor(can_port, 1, speed, 1);
-        printf("  CAN%d Motor 1: speed=%d\n", can_port, speed);
+        controller.EnableMotor(can_port, 1);
+        float vel = 2.0f + can_port * 1.0f;
+        controller.SpeedControl(can_port, 1, vel, 10.0f, 0.1f);
+        printf("  CAN%d Motor 1: vel=%.1f rad/s\n", can_port, vel);
     }
 
     sleep(3);
     controller.PrintAllMotorStatus();
 
-    printf("\n[ACTION] Stopping all motors\n");
-    controller.StopAllMotors();
+    printf("\n[ACTION] Disabling all motors\n");
+    for (uint8_t can_port = 0; can_port < 4; can_port++) {
+        controller.DisableMotor(can_port, 1);
+    }
     sleep(1);
 
     controller.Stop();
     printf("[INFO] Example 3 completed\n");
 }
 
-// ================= 示例 4：健康检查与故障处理 =================
-// 启动若干电机后轮询健康状态，不健康时调用 HandleMotorError
+// ================= 示例 4：电机健康检查 =================
 void Example4_HealthCheck() {
     printf("\n========== Example 4: Motor Health Check ==========\n");
 
@@ -136,39 +156,46 @@ void Example4_HealthCheck() {
     }
     printf("[INFO] System started. Total motors: %d\n", controller.GetMotorCount());
 
-    // 只启动 can0 和 can1，共 6 个电机，减小演示数据量
-    printf("\n[ACTION] Starting motors\n");
-    for (uint8_t can_port = 0; can_port < 2; can_port++) {
+    // 启动所有电机
+    printf("\n[ACTION] Enabling all motors\n");
+    for (uint8_t can_port = 0; can_port < 4; can_port++) {
         for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
-            controller.MoveMotor(can_port, motor_id, 1000, 1);
+            controller.EnableMotor(can_port, motor_id);
+            controller.SpeedControl(can_port, motor_id, 3.0f, 10.0f, 0.1f);
         }
     }
-    sleep(2);    // 等待若干状态回报
 
-    // 对每台电机执行健康检查；不健康的走故障处理策略
-    printf("\n[ACTION] Checking motor health\n");
-    for (uint8_t can_port = 0; can_port < 2; can_port++) {
+    sleep(2);
+
+    // 检查所有电机的健康状态
+    printf("\n[ACTION] Checking health status of all motors\n");
+    for (uint8_t can_port = 0; can_port < 4; can_port++) {
         for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
-            bool healthy = controller.CheckMotorHealth(can_port, motor_id);
-            if (!healthy) {
+            if (controller.CheckMotorHealth(can_port, motor_id)) {
+                printf("  CAN%d Motor %d: HEALTHY\n", can_port, motor_id);
+            } else {
+                printf("  CAN%d Motor %d: UNHEALTHY\n", can_port, motor_id);
                 MotorStatus status = controller.GetMotorStatus(can_port, motor_id);
                 controller.HandleMotorError(can_port, motor_id, status.error_code);
             }
         }
     }
 
-    printf("\n[ACTION] Stopping all motors\n");
-    controller.StopAllMotors();
+    printf("\n[ACTION] Disabling all motors\n");
+    for (uint8_t can_port = 0; can_port < 4; can_port++) {
+        for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+            controller.DisableMotor(can_port, motor_id);
+        }
+    }
     sleep(1);
 
     controller.Stop();
     printf("[INFO] Example 4 completed\n");
 }
 
-// ================= 示例 5：长时间运行演示 =================
-// 启动全部 12 个电机，运行 10 秒，期间可作为吞吐/稳定性压力测试
-void Example5_InteractiveControl() {
-    printf("\n========== Example 5: Interactive Control ==========\n");
+// ================= 示例 5：长时间运行（全 12 电机） =================
+void Example5_LongRunning() {
+    printf("\n========== Example 5: Long Running (All 12 Motors) ==========\n");
 
     MotorController controller;
     if (!controller.Initialize() || !controller.Start()) {
@@ -176,300 +203,139 @@ void Example5_InteractiveControl() {
         return;
     }
     printf("[INFO] System started. Total motors: %d\n", controller.GetMotorCount());
-    printf("[INFO] Running for 10 seconds with periodic status updates...\n\n");
 
-    // 一次性启动全部 12 个电机（4 口 × 3 电机）
+    // 启动全部 12 个电机
+    printf("\n[ACTION] Enabling all 12 motors\n");
     for (uint8_t can_port = 0; can_port < 4; can_port++) {
         for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
-            controller.MoveMotor(can_port, motor_id, 1000, 1);
+            controller.EnableMotor(can_port, motor_id);
+            float vel = 2.0f + (can_port * 3 + motor_id) * 0.5f;
+            controller.SpeedControl(can_port, motor_id, vel, 10.0f, 0.1f);
         }
     }
 
-    // 每秒打印一次心跳；实际项目可替换成更详细的状态打印或日志采集
+    printf("[INFO] All motors running. Monitoring for 10 seconds...\n");
     for (int i = 0; i < 10; i++) {
         sleep(1);
-        printf("[%d] Motors running...\n", i + 1);
+        if (i % 5 == 0) {
+            printf("[INFO] Status check at %d seconds\n", i);
+            controller.PrintAllMotorStatus();
+        }
     }
 
-    printf("\n[ACTION] Stopping all motors\n");
-    controller.StopAllMotors();
+    printf("\n[ACTION] Disabling all motors\n");
+    for (uint8_t can_port = 0; can_port < 4; can_port++) {
+        for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+            controller.DisableMotor(can_port, motor_id);
+        }
+    }
     sleep(1);
 
     controller.Stop();
     printf("[INFO] Example 5 completed\n");
 }
 
-// ================= 示例 6：原始 CAN 帧测试（仅依赖 BSP 层）=================
-// 直接使用 BspCan，不依赖 MotorController，用于测试 CAN 通信
-// 无需电机，只需 CANET 设备连接即可
-void Example6_RawFrameTest() {
+// ================= 示例 6：原始 CAN 帧测试（仅依赖 BSP） =================
+void Example6_RawCanFrameTest() {
     printf("\n========== Example 6: Raw CAN Frame Test (BSP Only) ==========\n");
     printf("[INFO] This example only depends on BSP layer, no motor needed\n");
-    printf("[INFO] Connecting to CANET device at 192.168.0.178:4001\n\n");
 
     BspCan& bsp = BspCan::GetInstance();
 
-    // 创建 CAN 设备配置（can0）- 作为 TCP 客户端连接到 CANET 设备
+    // 初始化 can0
     CanDeviceConfig config;
     config.device_idx = 0;
     config.port = 4001;
-    config.server_ip = "192.168.0.178";  // CANET 设备的 IP 地址
-    config.work_mode = TCP_CLIENT;        // 作为客户端连接
+    config.server_ip = "192.168.0.178";
+    config.work_mode = TCP_CLIENT;
 
-    // 初始化 can0 设备
-    printf("[ACTION] Initializing CAN device 0 (TCP client mode)...\n");
     if (!bsp.InitDevice(0, config)) {
-        printf("[ERROR] Failed to initialize CAN device 0\n");
+        printf("[ERROR] Failed to initialize device 0\n");
         return;
     }
 
-    // 启动 can0 设备
-    printf("[ACTION] Starting CAN device 0...\n");
     if (!bsp.StartDevice(0)) {
-        printf("[ERROR] Failed to start CAN device 0\n");
-        bsp.CloseDevice(0);
+        printf("[ERROR] Failed to start device 0\n");
         return;
     }
 
-    printf("[INFO] CAN device 0 is running\n\n");
+    printf("[INFO] Device 0 initialized and started\n");
 
-    // 发送测试帧 1：ID=0x001，数据为 [01 02 03 04 05 06 07 08]
-    printf("[ACTION] Sending test frame 1: ID=0x001, data=[01 02 03 04 05 06 07 08]\n");
-    BspCanFrame frame1;
-    frame1.id = 0x001;
-    frame1.dlc = 8;
-    frame1.is_extended = 0;
-    uint8_t data1[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
-    memcpy(frame1.data, data1, 8);
-
-    if (bsp.SendFrame(0, frame1)) {
-        printf("[RESULT] Frame 1 sent successfully\n");
-    } else {
-        printf("[ERROR] Failed to send frame 1\n");
-    }
-
-    sleep(1);
-
-    // 发送测试帧 2：ID=0x002，数据为 [AA BB CC DD EE FF 00 11]
-    printf("\n[ACTION] Sending test frame 2: ID=0x002, data=[AA BB CC DD EE FF 00 11]\n");
-    BspCanFrame frame2;
-    frame2.id = 0x002;
-    frame2.dlc = 8;
-    frame2.is_extended = 0;
-    uint8_t data2[8] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11};
-    memcpy(frame2.data, data2, 8);
-
-    if (bsp.SendFrame(0, frame2)) {
-        printf("[RESULT] Frame 2 sent successfully\n");
-    } else {
-        printf("[ERROR] Failed to send frame 2\n");
-    }
-
-    sleep(1);
-
-    // 尝试接收帧（如果有回环或其他设备发送数据）
-    printf("\n[ACTION] Attempting to receive frames (timeout=500ms)...\n");
-    std::vector<BspCanFrame> received_frames;
-    if (bsp.ReceiveFrames(0, received_frames, 500)) {
-        printf("[RESULT] Received %zu frame(s):\n", received_frames.size());
-        for (size_t i = 0; i < received_frames.size(); i++) {
-            printf("  Frame %zu: ID=0x%03X, DLC=%d, Data=[", i + 1, received_frames[i].id, received_frames[i].dlc);
-            for (int j = 0; j < received_frames[i].dlc; j++) {
-                printf("%02X", received_frames[i].data[j]);
-                if (j < received_frames[i].dlc - 1) printf(" ");
-            }
-            printf("]\n");
+    // 发送测试帧
+    printf("\n[ACTION] Sending test frames\n");
+    for (int i = 0; i < 3; i++) {
+        BspCanFrame frame;
+        frame.id = 0x001 + i;
+        frame.dlc = 8;
+        frame.is_extended = 0;
+        for (int j = 0; j < 8; j++) {
+            frame.data[j] = i * 8 + j;
         }
-    } else {
-        printf("[INFO] No frames received (timeout or no data)\n");
+
+        printf("[ACTION] Sending frame %d: ID=0x%03x, data=[", i + 1, frame.id);
+        for (int j = 0; j < 8; j++) {
+            printf("%02x ", frame.data[j]);
+        }
+        printf("]\n");
+
+        if (!bsp.SendFrame(0, frame)) {
+            printf("[ERROR] Failed to send frame\n");
+        }
+
+        sleep(1);
     }
 
-    // 查询统计信息
-    printf("\n[INFO] CAN Device Statistics:\n");
-    printf("  Sent frames: %u\n", bsp.GetSentFrameCount(0));
-    printf("  Received frames: %u\n", bsp.GetReceivedFrameCount(0));
-
-    // 停止设备
-    printf("\n[ACTION] Stopping CAN device 0...\n");
     bsp.StopDevice(0);
-
-    // 关闭设备
-    printf("[ACTION] Closing CAN device 0...\n");
-    bsp.CloseDevice(0);
-
     printf("[INFO] Example 6 completed\n");
 }
 
-// ================= 示例 7：CAN 消息转发测试 =================
-// 监听 can0 上 ID=0x001 的消息，收到后原样转发到 can1 上 ID=0x002
-// 演示多设备协同和消息转发
-void Example7_MessageForwarding() {
-    printf("\n========== Example 7: CAN Message Forwarding ==========\n");
-    printf("[INFO] Listening on can0 ID=0x001, forwarding to can1 ID=0x002\n");
-    printf("[INFO] CANET device: 192.168.0.178:4001\n\n");
-
-    BspCan& bsp = BspCan::GetInstance();
-
-    // 配置 can0（接收端）- TCP 客户端
-    CanDeviceConfig config0;
-    config0.device_idx = 0;
-    config0.port = 4001;
-    config0.server_ip = "192.168.0.178";
-    config0.work_mode = TCP_CLIENT;
-
-    // 配置 can1（发送端）- TCP 客户端
-    CanDeviceConfig config1;
-    config1.device_idx = 1;
-    config1.port = 4001;
-    config1.server_ip = "192.168.0.178";
-    config1.work_mode = TCP_CLIENT;
-
-    // 初始化两个设备
-    printf("[ACTION] Initializing CAN device 0 (receiver)...\n");
-    if (!bsp.InitDevice(0, config0)) {
-        printf("[ERROR] Failed to initialize CAN device 0\n");
-        return;
-    }
-
-    printf("[ACTION] Initializing CAN device 1 (sender)...\n");
-    if (!bsp.InitDevice(1, config1)) {
-        printf("[ERROR] Failed to initialize CAN device 1\n");
-        bsp.CloseDevice(0);
-        return;
-    }
-
-    // 启动两个设备
-    printf("[ACTION] Starting CAN device 0...\n");
-    if (!bsp.StartDevice(0)) {
-        printf("[ERROR] Failed to start CAN device 0\n");
-        bsp.CloseDevice(0);
-        bsp.CloseDevice(1);
-        return;
-    }
-
-    printf("[ACTION] Starting CAN device 1...\n");
-    if (!bsp.StartDevice(1)) {
-        printf("[ERROR] Failed to start CAN device 1\n");
-        bsp.StopDevice(0);
-        bsp.CloseDevice(0);
-        bsp.CloseDevice(1);
-        return;
-    }
-
-    printf("[INFO] Both CAN devices are running\n\n");
-
-    // 监听 can0 上的消息，运行 10 秒
-    printf("[ACTION] Listening for messages on can0 (ID=0x001) for 10 seconds...\n");
-    printf("[INFO] Send messages to can0 ID=0x001 to test forwarding\n\n");
-
-    uint32_t forwarded_count = 0;
-    time_t start_time = time(nullptr);
-    time_t current_time;
-
-    while ((current_time = time(nullptr)) - start_time < 10) {
-        // 尝试从 can0 接收消息（超时 100ms）
-        std::vector<BspCanFrame> received_frames;
-        if (bsp.ReceiveFrames(0, received_frames, 100)) {
-            // 处理接收到的每一帧
-            for (const auto& frame : received_frames) {
-                // 只处理 ID=0x001 的消息
-                if (frame.id == 0x001) {
-                    printf("[RECEIVED] can0 ID=0x%03X, DLC=%d, Data=[", frame.id, frame.dlc);
-                    for (int i = 0; i < frame.dlc; i++) {
-                        printf("%02X", frame.data[i]);
-                        if (i < frame.dlc - 1) printf(" ");
-                    }
-                    printf("]\n");
-
-                    // 创建转发帧：修改 ID 为 0x002，其他数据保持不变
-                    BspCanFrame forward_frame;
-                    forward_frame.id = 0x002;
-                    forward_frame.dlc = frame.dlc;
-                    forward_frame.is_extended = frame.is_extended;
-                    memcpy(forward_frame.data, frame.data, 8);
-
-                    // 发送到 can1
-                    if (bsp.SendFrame(1, forward_frame)) {
-                        printf("[FORWARDED] can1 ID=0x%03X, DLC=%d, Data=[", forward_frame.id, forward_frame.dlc);
-                        for (int i = 0; i < forward_frame.dlc; i++) {
-                            printf("%02X", forward_frame.data[i]);
-                            if (i < forward_frame.dlc - 1) printf(" ");
-                        }
-                        printf("]\n");
-                        forwarded_count++;
-                    } else {
-                        printf("[ERROR] Failed to forward frame to can1\n");
-                    }
-                    printf("\n");
-                }
-            }
-        }
-    }
-
-    printf("\n[INFO] Listening completed\n");
-    printf("[STATISTICS] Total messages forwarded: %u\n", forwarded_count);
-
-    // 查询统计信息
-    printf("\n[INFO] CAN Device 0 Statistics:\n");
-    printf("  Sent frames: %u\n", bsp.GetSentFrameCount(0));
-    printf("  Received frames: %u\n", bsp.GetReceivedFrameCount(0));
-
-    printf("\n[INFO] CAN Device 1 Statistics:\n");
-    printf("  Sent frames: %u\n", bsp.GetSentFrameCount(1));
-    printf("  Received frames: %u\n", bsp.GetReceivedFrameCount(1));
-
-    // 停止和关闭设备
-    printf("\n[ACTION] Stopping CAN devices...\n");
-    bsp.StopDevice(0);
-    bsp.StopDevice(1);
-
-    printf("[ACTION] Closing CAN devices...\n");
-    bsp.CloseDevice(0);
-    bsp.CloseDevice(1);
-
-    printf("[INFO] Example 7 completed\n");
-}
-
-// ================= 程序入口 =================
-// 通过命令行参数选择示例编号；未指定则默认运行示例 1
+// ================= 主函数 =================
 int main(int argc, char* argv[]) {
-    printf("========================================\n");
-    printf("   CAN Motor Control Framework Demo\n");
-    printf("========================================\n\n");
-
-    // 注册 SIGINT / SIGTERM 处理，支持 Ctrl+C 优雅退出
-    signal(SIGINT,  SignalHandler);
-    signal(SIGTERM, SignalHandler);
-
-    // 解析命令行参数（可选），默认运行示例 1
     int example = 1;
     if (argc > 1) {
         example = atoi(argv[1]);
     }
 
+    // 注册信号处理
+    signal(SIGINT, SignalHandler);
+    signal(SIGTERM, SignalHandler);
+
+    printf("========================================\n");
+    printf("   CAN Motor Control Framework Demo\n");
+    printf("========================================\n\n");
+
     printf("Usage: %s [example_number]\n", argv[0]);
-    printf("  1 - Basic Motor Control\n");
+    printf("  1 - Basic Motor Control (Three Modes)\n");
     printf("  2 - Multi-Motor Control\n");
     printf("  3 - Multi-CAN Port Control\n");
     printf("  4 - Motor Health Check\n");
-    printf("  5 - Interactive Control\n");
-    printf("  6 - Raw CAN Frame Test (can0, ID=0x000)\n");
-    printf("  7 - CAN Message Forwarding (can0 ID=0x001 → can1 ID=0x002)\n\n");
+    printf("  5 - Long Running (All 12 Motors)\n");
+    printf("  6 - Raw CAN Frame Test (BSP Only)\n\n");
 
     printf("Running Example %d...\n", example);
 
-    // 分发到对应示例；未知编号返回非 0，便于脚本判断
     switch (example) {
-        case 1: Example1_BasicControl();        break;
-        case 2: Example2_MultiMotorControl();   break;
-        case 3: Example3_MultiCanPortControl(); break;
-        case 4: Example4_HealthCheck();         break;
-        case 5: Example5_InteractiveControl();  break;
-        case 6: Example6_RawFrameTest();        break;
-        case 7: Example7_MessageForwarding();   break;
+        case 1:
+            Example1_BasicControl();
+            break;
+        case 2:
+            Example2_MultiMotorControl();
+            break;
+        case 3:
+            Example3_MultiCanPortControl();
+            break;
+        case 4:
+            Example4_HealthCheck();
+            break;
+        case 5:
+            Example5_LongRunning();
+            break;
+        case 6:
+            Example6_RawCanFrameTest();
+            break;
         default:
-            printf("[ERROR] Invalid example number: %d\n", example);
-            return 1;
+            printf("[ERROR] Unknown example number: %d\n", example);
+            return -1;
     }
 
     printf("\n========================================\n");

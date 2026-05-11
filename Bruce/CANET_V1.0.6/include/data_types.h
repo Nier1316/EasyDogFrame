@@ -17,54 +17,87 @@
 // =====================================================================
 
 /**
+ * @brief 电机控制模式枚举
+ */
+enum ControlMode {
+    IMPEDANCE = 0,  // 阻抗控制
+    SPEED     = 1,  // 速度控制
+    POSITION  = 2   // 位置控制
+};
+
+/**
  * @brief 电机命令类型枚举
- * @note  每个电机命令帧的第二个字节（data[1]）用于标识命令类型
+ * @note  支持硬件协议的完整功能集
  */
 enum MotorCommandType {
-    CMD_SET_SPEED     = 0x01,  // 设置速度（目标转速）
-    CMD_SET_TORQUE    = 0x02,  // 设置扭矩（力矩控制）
-    CMD_SET_DIRECTION = 0x03,  // 设置方向（正转/反转）
-    CMD_STOP          = 0x04,  // 立即停止电机
-    CMD_RESET         = 0x05,  // 复位（清错误、回初始状态）
-    CMD_QUERY_STATUS  = 0x06   // 主动查询电机状态
+    // 特殊指令（data[7] 标识）
+    CMD_ENABLE        = 0x10,  // 电机使能（0xFC）
+    CMD_DISABLE       = 0x11,  // 电机失能（0xFD）
+    CMD_SET_ZERO      = 0x12,  // 角度置零（0xFE）
+    CMD_CLEAR_ERROR   = 0x13,  // 清除错误（0xF4）
+    CMD_ANGLE_CORRECT = 0x14,  // 角度矫正（0xF7）
+
+    // 参数指令
+    CMD_READ_PARAM    = 0x20,  // 读参数（float2bag RW=0）
+    CMD_WRITE_PARAM   = 0x21,  // 写参数（float2bag RW=1）
+
+    // 控制指令
+    CMD_IMPEDANCE_CTRL = 0x30, // 阻抗控制
+    CMD_SPEED_CTRL     = 0x31, // 速度控制
+    CMD_POSITION_CTRL  = 0x32  // 位置控制
 };
 
 /**
  * @brief 电机控制命令结构体
  * @details 上层应用通过该结构体向 Motor 模块下发控制指令；
  *          Motor::EncodeCommand() 会将该结构体打包成 CAN 帧的 8 字节数据区。
+ *          支持多种控制模式：阻抗控制、速度控制、位置控制、参数读写、特殊指令。
  */
 struct MotorCommand {
-    uint8_t  motor_id;      // 电机 ID（1~3，同一 CAN 口内的编号）
-    uint8_t  cmd_type;      // 命令类型（MotorCommandType 枚举值）
-    uint16_t speed;         // 目标速度（0~65535，高字节在前）
-    uint16_t torque;        // 目标扭矩（0~65535，高字节在前）
-    uint8_t  direction;     // 旋转方向（0=反向，1=正向）
-    uint8_t  reserved[2];   // 保留字节，扩展用，默认填 0
+    uint8_t     motor_id;      // 电机 ID（1~3，同一 CAN 口内的编号）
+    uint8_t     cmd_type;      // 命令类型（MotorCommandType 枚举值）
+    ControlMode mode;          // 控制模式（控制指令时有效）
 
-    // 默认构造函数：所有字段初始化为 0，避免读取到未初始化的垃圾数据
-    MotorCommand() : motor_id(0), cmd_type(0), speed(0), torque(0), direction(0) {
-        memset(reserved, 0, sizeof(reserved));
-    }
+    // 控制指令参数（浮点物理量）
+    float       pos;           // 期望角度 rad，范围 ±12.5
+    float       vel;           // 期望角速度 rad/s，范围 ±14
+    float       kp;            // 刚度/位置环Kp，范围 0~500
+    float       kd;            // 阻尼/位置环Kd，范围 0~100
+    float       torque;        // 扭矩前馈 Nm，范围 ±200
+    float       kp_speed;      // 速度环Kp（速度/位置模式）
+    float       ki_speed;      // 速度环Ki（速度/位置模式）
+
+    // 参数读写指令参数
+    float       param_value;   // 参数读写时的值（float2bag 用）
+    uint8_t     param_type;    // 参数类型（motor_rw_api.h 中的 MOTOR_WR_* 宏）
+    uint8_t     param_rw;      // 0=读，1=写
+
+    // 默认构造函数：所有字段初始化为 0
+    MotorCommand() : motor_id(0), cmd_type(0), mode(IMPEDANCE),
+                     pos(0), vel(0), kp(0), kd(0), torque(0),
+                     kp_speed(0), ki_speed(0), param_value(0),
+                     param_type(0), param_rw(0) {}
 };
 
 /**
  * @brief 电机状态结构体
  * @details Motor::DecodeStatus() 从 CAN 接收帧中解析出该结构体；
  *          上层应用通过 Motor::GetStatus() 读取最新状态。
+ *          按硬件实际 6 字节返回帧格式解析。
  */
 struct MotorStatus {
-    uint8_t  motor_id;      // 电机 ID（回填，便于上层识别来源）
-    uint16_t speed;         // 当前实际速度
-    uint16_t torque;        // 当前实际扭矩
-    uint8_t  temperature;   // 电机温度（单位：°C）
-    uint8_t  error_code;    // 错误码，0 表示正常（见 ErrorCode 枚举）
-    uint8_t  state;         // 运行状态：0=停止，1=运行中，2=故障
-    uint8_t  reserved;      // 保留字节，扩展用
+    uint8_t motor_id;   // CAN_ID（data[0] bit3-0）
+    bool    ack;        // data[0] bit7：收到指令=1
+    bool    fault;      // data[0] bit6：驱动错误=1
+    bool    enable;     // data[0] bit4：使能=1
+    float   position;   // rad，由 data[1-2] 16位解码
+    float   velocity;   // rad/s，由 data[3]高4位+data[5] 12位解码
+    float   torque;     // Nm，由 data[3]低4位+data[4] 12位解码
+    uint8_t error_code; // 框架层错误码（ERR_* 枚举）
 
     // 默认构造函数：所有字段清零，表示"无效/未更新"状态
-    MotorStatus() : motor_id(0), speed(0), torque(0), temperature(0),
-                    error_code(0), state(0), reserved(0) {}
+    MotorStatus() : motor_id(0), ack(false), fault(false), enable(false),
+                    position(0), velocity(0), torque(0), error_code(0) {}
 };
 
 // =====================================================================

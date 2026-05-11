@@ -27,12 +27,21 @@ public:
     ~Motor();
 
     // ---------------- 命令接口（构造命令结构体，返回是否成功）----------------
-    bool SetSpeed(uint16_t speed);       // 设置目标转速
-    bool SetTorque(uint16_t torque);     // 设置目标扭矩
-    bool SetDirection(uint8_t direction);// 设置旋转方向（0=反向，1=正向）
-    bool Stop();                         // 立即停止
-    bool Reset();                        // 复位（清除故障）
-    bool QueryStatus();                  // 主动查询状态
+    // 特殊指令接口
+    bool Enable();
+    bool Disable();
+    bool SetZero();
+    bool ClearError();
+    bool SetControlMode(ControlMode mode);
+
+    // 控制指令接口
+    bool ImpedanceControl(float pos, float vel, float kp, float kd, float torque);
+    bool SpeedControl(float vel, float kp, float ki);
+    bool PositionControl(float pos, float kvp, float kp, float kd, float kvi);
+
+    // 参数读写接口
+    bool ReadParam(uint8_t param_type);
+    bool WriteParam(uint8_t param_type, float value);
 
     // ---------------- 状态查询（线程安全，会加锁）----------------
     MotorStatus GetStatus() const;       // 返回当前缓存的完整状态

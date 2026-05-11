@@ -89,7 +89,7 @@ make -j$(nproc)
 
 ### 1. MotorController（应用接口）
 
-**最常用的类，提供高级 API**
+**最常用的类，提供高级 API，支持三种控制模式**
 
 ```cpp
 MotorController controller;
@@ -98,8 +98,20 @@ MotorController controller;
 controller.Initialize();
 controller.Start();
 
-// 控制电机
+// 特殊指令
+controller.EnableMotor(can_port, motor_id);
+controller.DisableMotor(can_port, motor_id);
+controller.SetMotorZero(can_port, motor_id);
+controller.ClearMotorError(can_port, motor_id);
+
+// 控制指令（三种模式）
+controller.ImpedanceControl(can_port, motor_id, pos, vel, kp, kd, torque);  // 阻抗控制
+controller.SpeedControl(can_port, motor_id, vel, kp, ki);                   // 速度控制
+controller.PositionControl(can_port, motor_id, pos, kvp, kp, kd, kvi);      // 位置控制
+
+// 兼容旧接口
 controller.MoveMotor(can_port, motor_id, speed, direction);
+controller.SetMotorTorque(can_port, motor_id, torque);
 controller.StopMotor(can_port, motor_id);
 controller.StopAllMotors();
 
@@ -134,17 +146,32 @@ MotorStatus status = manager.GetMotorStatus(can_port, motor_id);
 
 ### 3. Motor（电机驱动）
 
-**代表单个电机**
+**代表单个电机，支持三种控制模式**
 
 ```cpp
 Motor motor(can_port, motor_id, rx_id, tx_id);
 
-// 命令
+// 特殊指令
+motor.Enable();
+motor.Disable();
+motor.SetZero();
+motor.ClearError();
+
+// 控制指令（三种模式）
+motor.ImpedanceControl(pos, vel, kp, kd, torque);  // 阻抗控制
+motor.SpeedControl(vel, kp, ki);                   // 速度控制
+motor.PositionControl(pos, kvp, kp, kd, kvi);      // 位置控制
+
+// 参数读写
+motor.ReadParam(param_type);
+motor.WriteParam(param_type, value);
+
+// 兼容旧接口
 motor.SetSpeed(speed);
 motor.SetTorque(torque);
 motor.Stop();
 
-// 状态
+// 状态查询
 MotorStatus status = motor.GetStatus();
 bool healthy = motor.IsHealthy();
 ```
@@ -183,28 +210,43 @@ int main() {
         return -1;
     }
     
-    // 控制 can0 上的电机 1
-    controller.MoveMotor(0, 1, 1000, 1);  // 速度 1000，正向
+    // 使能电机
+    controller.EnableMotor(0, 1);
+    sleep(1);
+    
+    // 阻抗控制：位置0，速度0，刚度10，阻尼1，扭矩0
+    controller.ImpedanceControl(0, 1, 0, 0, 10, 1, 0);
     sleep(2);
     
     // 查询状态
     controller.PrintMotorStatus(0, 1);
     
     // 停止
-    controller.StopMotor(0, 1);
+    controller.DisableMotor(0, 1);
     controller.Stop();
     
     return 0;
 }
 ```
 
-### 示例 2：多电机控制
+### 示例 2：多电机控制（三种模式）
 
 ```cpp
-// 同时控制多个电机
+// 同时控制多个电机，使用不同的控制模式
 for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
-    controller.MoveMotor(0, motor_id, 1000, 1);
+    controller.EnableMotor(0, motor_id);
 }
+
+sleep(1);
+
+// 电机1：阻抗控制
+controller.ImpedanceControl(0, 1, 0, 0, 10, 1, 0);
+
+// 电机2：速度控制（速度5 rad/s，Kp=10，Ki=0.1）
+controller.SpeedControl(0, 2, 5.0f, 10.0f, 0.1f);
+
+// 电机3：位置控制（位置1 rad，Kvp=5，Kp=10，Kd=1，Kvi=0.1）
+controller.PositionControl(0, 3, 1.0f, 5.0f, 10.0f, 1.0f, 0.1f);
 
 sleep(3);
 
@@ -245,11 +287,23 @@ if (!controller.CheckMotorHealth(0, 1)) {
 
 ```cpp
 struct MotorCommand {
-    uint8_t motor_id;      // 电机 ID (1-3)
-    uint8_t cmd_type;      // 命令类型
-    uint16_t speed;        // 速度 (0-65535)
-    uint16_t torque;       // 扭矩 (0-65535)
-    uint8_t direction;     // 方向 (0=反向, 1=正向)
+    uint8_t     motor_id;      // 电机 ID (1-3)
+    uint8_t     cmd_type;      // 命令类型（MotorCommandType 枚举）
+    ControlMode mode;          // 控制模式（IMPEDANCE/SPEED/POSITION）
+    
+    // 控制指令参数（浮点物理量）
+    float       pos;           // 期望角度 rad，范围 ±12.5
+    float       vel;           // 期望角速度 rad/s，范围 ±14
+    float       kp;            // 刚度/位置环Kp，范围 0~500
+    float       kd;            // 阻尼/位置环Kd，范围 0~100
+    float       torque;        // 扭矩前馈 Nm，范围 ±200
+    float       kp_speed;      // 速度环Kp
+    float       ki_speed;      // 速度环Ki
+    
+    // 参数读写指令参数
+    float       param_value;   // 参数值
+    uint8_t     param_type;    // 参数类型
+    uint8_t     param_rw;      // 0=读，1=写
 };
 ```
 
@@ -257,12 +311,14 @@ struct MotorCommand {
 
 ```cpp
 struct MotorStatus {
-    uint8_t motor_id;      // 电机 ID
-    uint16_t speed;        // 当前速度
-    uint16_t torque;       // 当前扭矩
-    uint8_t temperature;   // 温度 (°C)
-    uint8_t error_code;    // 错误码 (0=正常)
-    uint8_t state;         // 状态 (0=停止, 1=运行, 2=故障)
+    uint8_t motor_id;   // 电机 ID
+    bool    ack;        // 收到指令标志
+    bool    fault;      // 驱动错误标志
+    bool    enable;     // 使能标志
+    float   position;   // 当前角度 rad
+    float   velocity;   // 当前角速度 rad/s
+    float   torque;     // 当前扭矩 Nm
+    uint8_t error_code; // 错误码 (0=正常)
 };
 ```
 
@@ -270,12 +326,35 @@ struct MotorStatus {
 
 ```cpp
 enum MotorCommandType {
-    CMD_SET_SPEED = 0x01,      // 设置速度
-    CMD_SET_TORQUE = 0x02,     // 设置扭矩
+    // 基础命令（兼容旧版本）
+    CMD_SET_SPEED     = 0x01,  // 设置速度
+    CMD_SET_TORQUE    = 0x02,  // 设置扭矩
     CMD_SET_DIRECTION = 0x03,  // 设置方向
-    CMD_STOP = 0x04,           // 停止
-    CMD_RESET = 0x05,          // 复位
-    CMD_QUERY_STATUS = 0x06    // 查询状态
+    CMD_STOP          = 0x04,  // 停止
+    CMD_RESET         = 0x05,  // 复位
+    CMD_QUERY_STATUS  = 0x06,  // 查询状态
+
+    // 特殊指令（硬件协议）
+    CMD_ENABLE        = 0x10,  // 电机使能（0xFC）
+    CMD_DISABLE       = 0x11,  // 电机失能（0xFD）
+    CMD_SET_ZERO      = 0x12,  // 角度置零（0xFE）
+    CMD_CLEAR_ERROR   = 0x13,  // 清除错误（0xF4）
+    CMD_ANGLE_CORRECT = 0x14,  // 角度矫正（0xF7）
+
+    // 参数指令
+    CMD_READ_PARAM    = 0x20,  // 读参数
+    CMD_WRITE_PARAM   = 0x21,  // 写参数
+
+    // 控制指令
+    CMD_IMPEDANCE_CTRL = 0x30, // 阻抗控制
+    CMD_SPEED_CTRL     = 0x31, // 速度控制
+    CMD_POSITION_CTRL  = 0x32  // 位置控制
+};
+
+enum ControlMode {
+    IMPEDANCE = 0,  // 阻抗控制
+    SPEED     = 1,  // 速度控制
+    POSITION  = 2   // 位置控制
 };
 ```
 

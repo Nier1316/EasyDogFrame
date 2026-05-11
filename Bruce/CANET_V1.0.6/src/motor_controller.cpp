@@ -27,8 +27,8 @@ bool MotorController::Initialize() {
         CanDeviceConfig config;
         config.device_idx = i;
         config.port       = 4001 + i;   // 4001 / 4002 / 4003 / 4004
-        config.server_ip  = nullptr;    // 服务器模式不需要目标 IP
-        config.work_mode  = TCP_SERVER; // 上位机作为服务器，等待 CANET 设备连入
+        config.server_ip  = "192.168.0.178";  // 连接到 CANET 设备
+        config.work_mode  = TCP_CLIENT; // 作为客户端连接到 CANET 设备
         can_configs.push_back(config);
     }
 
@@ -75,32 +75,8 @@ bool MotorController::IsRunning() const {
 
 // 所有"动作类"接口的通用前置检查：未运行时拒绝发送，避免静默失败
 // ------------------------------------------------------------------
-// 让电机按指定速度/方向转动：封装 CMD_SET_SPEED
-bool MotorController::MoveMotor(uint8_t can_port, uint8_t motor_id, uint16_t speed, uint8_t direction) {
-    if (!IsRunning()) {
-        printf("[ERROR] MotorController is not running\n");
-        return false;
-    }
-
-    MotorCommand cmd;
-    cmd.motor_id  = motor_id;
-    cmd.cmd_type  = CMD_SET_SPEED;
-    cmd.speed     = speed;
-    cmd.direction = direction;
-
-    if (!m_motor_manager.SendMotorCommand(can_port, motor_id, cmd)) {
-        printf("[ERROR] Failed to send move command to motor (can_port=%d, motor_id=%d)\n",
-               can_port, motor_id);
-        return false;
-    }
-
-    printf("[INFO] Move command sent: can_port=%d, motor_id=%d, speed=%d, direction=%d\n",
-           can_port, motor_id, speed, direction);
-    return true;
-}
-
-// 扭矩控制：适合需要恒力输出的场景（如夹爪、牵引）
-bool MotorController::SetMotorTorque(uint8_t can_port, uint8_t motor_id, uint16_t torque) {
+// 新增控制接口：特殊指令
+bool MotorController::EnableMotor(uint8_t can_port, uint8_t motor_id) {
     if (!IsRunning()) {
         printf("[ERROR] MotorController is not running\n");
         return false;
@@ -108,21 +84,19 @@ bool MotorController::SetMotorTorque(uint8_t can_port, uint8_t motor_id, uint16_
 
     MotorCommand cmd;
     cmd.motor_id = motor_id;
-    cmd.cmd_type = CMD_SET_TORQUE;
-    cmd.torque   = torque;
+    cmd.cmd_type = CMD_ENABLE;
 
     if (!m_motor_manager.SendMotorCommand(can_port, motor_id, cmd)) {
-        printf("[ERROR] Failed to send torque command to motor (can_port=%d, motor_id=%d)\n",
+        printf("[ERROR] Failed to send enable command to motor (can_port=%d, motor_id=%d)\n",
                can_port, motor_id);
         return false;
     }
 
-    printf("[INFO] Torque command sent: can_port=%d, motor_id=%d, torque=%d\n",
-           can_port, motor_id, torque);
+    printf("[INFO] Enable command sent: can_port=%d, motor_id=%d\n", can_port, motor_id);
     return true;
 }
 
-bool MotorController::StopMotor(uint8_t can_port, uint8_t motor_id) {
+bool MotorController::DisableMotor(uint8_t can_port, uint8_t motor_id) {
     if (!IsRunning()) {
         printf("[ERROR] MotorController is not running\n");
         return false;
@@ -130,39 +104,19 @@ bool MotorController::StopMotor(uint8_t can_port, uint8_t motor_id) {
 
     MotorCommand cmd;
     cmd.motor_id = motor_id;
-    cmd.cmd_type = CMD_STOP;      // STOP 命令不需要 speed/torque/direction
+    cmd.cmd_type = CMD_DISABLE;
 
     if (!m_motor_manager.SendMotorCommand(can_port, motor_id, cmd)) {
-        printf("[ERROR] Failed to send stop command to motor (can_port=%d, motor_id=%d)\n",
+        printf("[ERROR] Failed to send disable command to motor (can_port=%d, motor_id=%d)\n",
                can_port, motor_id);
         return false;
     }
 
-    printf("[INFO] Stop command sent: can_port=%d, motor_id=%d\n", can_port, motor_id);
+    printf("[INFO] Disable command sent: can_port=%d, motor_id=%d\n", can_port, motor_id);
     return true;
 }
 
-// 紧急停机：对所有电机广播 STOP；即便某一路失败，其它电机仍会收到停止命令
-bool MotorController::StopAllMotors() {
-    if (!IsRunning()) {
-        printf("[ERROR] MotorController is not running\n");
-        return false;
-    }
-
-    MotorCommand cmd;
-    cmd.cmd_type = CMD_STOP;   // motor_id 由 BroadcastCommand 内部逐一填入
-
-    if (!m_motor_manager.BroadcastCommand(cmd)) {
-        printf("[ERROR] Failed to broadcast stop command\n");
-        return false;
-    }
-
-    printf("[INFO] Stop command broadcast to all motors\n");
-    return true;
-}
-
-// 复位电机：用于清除堵转/过载等触发的故障态，使电机重新可控
-bool MotorController::ResetMotor(uint8_t can_port, uint8_t motor_id) {
+bool MotorController::SetMotorZero(uint8_t can_port, uint8_t motor_id) {
     if (!IsRunning()) {
         printf("[ERROR] MotorController is not running\n");
         return false;
@@ -170,15 +124,120 @@ bool MotorController::ResetMotor(uint8_t can_port, uint8_t motor_id) {
 
     MotorCommand cmd;
     cmd.motor_id = motor_id;
-    cmd.cmd_type = CMD_RESET;
+    cmd.cmd_type = CMD_SET_ZERO;
 
     if (!m_motor_manager.SendMotorCommand(can_port, motor_id, cmd)) {
-        printf("[ERROR] Failed to send reset command to motor (can_port=%d, motor_id=%d)\n",
+        printf("[ERROR] Failed to send set zero command to motor (can_port=%d, motor_id=%d)\n",
                can_port, motor_id);
         return false;
     }
 
-    printf("[INFO] Reset command sent: can_port=%d, motor_id=%d\n", can_port, motor_id);
+    printf("[INFO] Set zero command sent: can_port=%d, motor_id=%d\n", can_port, motor_id);
+    return true;
+}
+
+bool MotorController::ClearMotorError(uint8_t can_port, uint8_t motor_id) {
+    if (!IsRunning()) {
+        printf("[ERROR] MotorController is not running\n");
+        return false;
+    }
+
+    MotorCommand cmd;
+    cmd.motor_id = motor_id;
+    cmd.cmd_type = CMD_CLEAR_ERROR;
+
+    if (!m_motor_manager.SendMotorCommand(can_port, motor_id, cmd)) {
+        printf("[ERROR] Failed to send clear error command to motor (can_port=%d, motor_id=%d)\n",
+               can_port, motor_id);
+        return false;
+    }
+
+    printf("[INFO] Clear error command sent: can_port=%d, motor_id=%d\n", can_port, motor_id);
+    return true;
+}
+
+bool MotorController::SetControlMode(uint8_t can_port, uint8_t motor_id, ControlMode mode) {
+    // 控制模式通过后续的控制指令隐含设置
+    return true;
+}
+
+// 新增控制接口：控制指令（三种模式）
+bool MotorController::ImpedanceControl(uint8_t can_port, uint8_t motor_id,
+                                       float pos, float vel, float kp, float kd, float torque) {
+    if (!IsRunning()) {
+        printf("[ERROR] MotorController is not running\n");
+        return false;
+    }
+
+    MotorCommand cmd;
+    cmd.motor_id = motor_id;
+    cmd.cmd_type = CMD_IMPEDANCE_CTRL;
+    cmd.mode = IMPEDANCE;
+    cmd.pos = pos;
+    cmd.vel = vel;
+    cmd.kp = kp;
+    cmd.kd = kd;
+    cmd.torque = torque;
+
+    if (!m_motor_manager.SendMotorCommand(can_port, motor_id, cmd)) {
+        printf("[ERROR] Failed to send impedance control command to motor (can_port=%d, motor_id=%d)\n",
+               can_port, motor_id);
+        return false;
+    }
+
+    printf("[INFO] Impedance control command sent: can_port=%d, motor_id=%d\n", can_port, motor_id);
+    return true;
+}
+
+bool MotorController::SpeedControl(uint8_t can_port, uint8_t motor_id,
+                                   float vel, float kp, float ki) {
+    if (!IsRunning()) {
+        printf("[ERROR] MotorController is not running\n");
+        return false;
+    }
+
+    MotorCommand cmd;
+    cmd.motor_id = motor_id;
+    cmd.cmd_type = CMD_SPEED_CTRL;
+    cmd.mode = SPEED;
+    cmd.vel = vel;
+    cmd.kp_speed = kp;
+    cmd.ki_speed = ki;
+
+    if (!m_motor_manager.SendMotorCommand(can_port, motor_id, cmd)) {
+        printf("[ERROR] Failed to send speed control command to motor (can_port=%d, motor_id=%d)\n",
+               can_port, motor_id);
+        return false;
+    }
+
+    printf("[INFO] Speed control command sent: can_port=%d, motor_id=%d\n", can_port, motor_id);
+    return true;
+}
+
+bool MotorController::PositionControl(uint8_t can_port, uint8_t motor_id,
+                                      float pos, float kvp, float kp, float kd, float kvi) {
+    if (!IsRunning()) {
+        printf("[ERROR] MotorController is not running\n");
+        return false;
+    }
+
+    MotorCommand cmd;
+    cmd.motor_id = motor_id;
+    cmd.cmd_type = CMD_POSITION_CTRL;
+    cmd.mode = POSITION;
+    cmd.pos = pos;
+    cmd.kp_speed = kvp;
+    cmd.kp = kp;
+    cmd.kd = kd;
+    cmd.ki_speed = kvi;
+
+    if (!m_motor_manager.SendMotorCommand(can_port, motor_id, cmd)) {
+        printf("[ERROR] Failed to send position control command to motor (can_port=%d, motor_id=%d)\n",
+               can_port, motor_id);
+        return false;
+    }
+
+    printf("[INFO] Position control command sent: can_port=%d, motor_id=%d\n", can_port, motor_id);
     return true;
 }
 
@@ -189,10 +248,12 @@ void MotorController::PrintMotorStatus(uint8_t can_port, uint8_t motor_id) {
     printf("\n========== Motor Status ==========\n");
     printf("CAN Port:     %d\n", can_port);
     printf("Motor ID:     %d\n", status.motor_id);
-    printf("Speed:        %d\n", status.speed);
-    printf("Torque:       %d\n", status.torque);
-    printf("Temperature:  %d°C\n", status.temperature);
-    printf("State:        %s\n", GetMotorStateName(status.state));
+    printf("Position:     %.2f rad\n", status.position);
+    printf("Velocity:     %.2f rad/s\n", status.velocity);
+    printf("Torque:       %.2f Nm\n", status.torque);
+    printf("Enable:       %s\n", status.enable ? "Yes" : "No");
+    printf("Fault:        %s\n", status.fault ? "Yes" : "No");
+    printf("ACK:          %s\n", status.ack ? "Yes" : "No");
     printf("Error Code:   0x%02x (%s)\n", status.error_code, GetErrorCodeName(status.error_code));
     printf("==================================\n\n");
 }
@@ -205,11 +266,9 @@ void MotorController::PrintAllMotorStatus() {
     printf("Total Motors: %zu\n\n", statuses.size());
 
     for (const auto& status : statuses) {
-        // 注意：MotorStatus 自身不带 can_port 字段，此处仅展示 motor_id
-        //       若需区分 CAN 口，应改用 MotorManager::GetAllMotors() + Motor::GetCanPort()
-        printf("Motor (can_port=?, id=%d): Speed=%d, Torque=%d, Temp=%d°C, State=%s, Error=0x%02x\n",
-               status.motor_id, status.speed, status.torque, status.temperature,
-               GetMotorStateName(status.state), status.error_code);
+        printf("Motor (id=%d): Pos=%.2f, Vel=%.2f, Torque=%.2f, Enable=%s, Fault=%s, Error=0x%02x\n",
+               status.motor_id, status.position, status.velocity, status.torque,
+               status.enable ? "Y" : "N", status.fault ? "Y" : "N", status.error_code);
     }
 
     printf("========================================\n\n");
@@ -245,7 +304,6 @@ bool MotorController::CheckMotorHealth(uint8_t can_port, uint8_t motor_id) {
 //   过热 / 过流 → 立即停机，避免设备损坏
 //   堵转         → 复位，尝试恢复自动控制
 //   其它         → 仅打印日志，交给上层决策
-// 如果需要更复杂的策略（重试次数、退避、报警上报），可在此扩展
 void MotorController::HandleMotorError(uint8_t can_port, uint8_t motor_id, uint8_t error_code) {
     printf("[ERROR] Motor error detected: can_port=%d, motor_id=%d, error=0x%02x (%s)\n",
            can_port, motor_id, error_code, GetErrorCodeName(error_code));
@@ -254,19 +312,19 @@ void MotorController::HandleMotorError(uint8_t can_port, uint8_t motor_id, uint8
         case ERR_MOTOR_OVERHEAT:
             // 高温继续运行有烧毁风险，立即停机
             printf("[ACTION] Stopping motor due to overheat\n");
-            StopMotor(can_port, motor_id);
+            DisableMotor(can_port, motor_id);
             break;
 
         case ERR_MOTOR_OVERCURRENT:
             // 过流通常意味着负载异常或短路，必须立即切断
             printf("[ACTION] Stopping motor due to overcurrent\n");
-            StopMotor(can_port, motor_id);
+            DisableMotor(can_port, motor_id);
             break;
 
         case ERR_MOTOR_STALL:
-            // 堵转多为机械卡阻，先复位清错，等待上层决定是否重启
-            printf("[ACTION] Resetting motor due to stall\n");
-            ResetMotor(can_port, motor_id);
+            // 堵转多为机械卡阻，先清错，等待上层决定是否重启
+            printf("[ACTION] Clearing error due to stall\n");
+            ClearMotorError(can_port, motor_id);
             break;
 
         default:
@@ -274,15 +332,6 @@ void MotorController::HandleMotorError(uint8_t can_port, uint8_t motor_id, uint8
             printf("[ACTION] No specific action for this error\n");
             break;
     }
-}
-
-// 发送原始 CAN 帧：透传到 MotorManager，不经过 Motor 抽象层（测试/调试用）
-bool MotorController::SendRawFrame(uint8_t can_port, uint32_t id, const uint8_t* data, uint8_t len) {
-    if (!IsRunning()) {
-        printf("[ERROR] MotorController is not running\n");
-        return false;
-    }
-    return m_motor_manager.SendRawFrame(can_port, id, data, len);
 }
 
 // 透传 manager 的电机总数，方便上层做界面/循环
@@ -313,4 +362,68 @@ const char* MotorController::GetErrorCodeName(uint8_t error_code) {
         case ERR_DEVICE_OFFLINE:    return "设备离线";
         default:                    return "未知错误";
     }
+}
+
+// =====================================================================
+//                    参数读写接口实现
+// =====================================================================
+
+bool MotorController::ReadMotorParam(uint8_t can_port, uint8_t motor_id, uint8_t param_type) {
+    if (!IsRunning()) {
+        printf("[ERROR] MotorController is not running\n");
+        return false;
+    }
+
+    Motor* motor = m_motor_manager.GetMotor(can_port, motor_id);
+    if (!motor) {
+        printf("[ERROR] Motor not found: can_port=%d, motor_id=%d\n", can_port, motor_id);
+        return false;
+    }
+
+    if (!motor->ReadParam(param_type)) {
+        printf("[ERROR] Failed to send read parameter command to motor (can_port=%d, motor_id=%d, param_type=0x%02x)\n",
+               can_port, motor_id, param_type);
+        return false;
+    }
+
+    printf("[INFO] Read parameter command sent: can_port=%d, motor_id=%d, param_type=0x%02x\n",
+           can_port, motor_id, param_type);
+    return true;
+}
+
+bool MotorController::WriteMotorParam(uint8_t can_port, uint8_t motor_id, uint8_t param_type, float value) {
+    if (!IsRunning()) {
+        printf("[ERROR] MotorController is not running\n");
+        return false;
+    }
+
+    Motor* motor = m_motor_manager.GetMotor(can_port, motor_id);
+    if (!motor) {
+        printf("[ERROR] Motor not found: can_port=%d, motor_id=%d\n", can_port, motor_id);
+        return false;
+    }
+
+    if (!motor->WriteParam(param_type, value)) {
+        printf("[ERROR] Failed to send write parameter command to motor (can_port=%d, motor_id=%d, param_type=0x%02x, value=%.2f)\n",
+               can_port, motor_id, param_type, value);
+        return false;
+    }
+
+    printf("[INFO] Write parameter command sent: can_port=%d, motor_id=%d, param_type=0x%02x, value=%.2f\n",
+           can_port, motor_id, param_type, value);
+    return true;
+}
+
+float MotorController::GetMotorParam(uint8_t can_port, uint8_t motor_id, uint8_t param_type) {
+    Motor* motor = m_motor_manager.GetMotor(can_port, motor_id);
+    if (!motor) {
+        printf("[ERROR] Motor not found: can_port=%d, motor_id=%d\n", can_port, motor_id);
+        return 0.0f;
+    }
+
+    // 这里返回的是最后一次读取的参数值
+    // 实际的参数值需要通过 ReadMotorParam 后等待响应获取
+    printf("[INFO] Getting motor parameter: can_port=%d, motor_id=%d, param_type=0x%02x\n",
+           can_port, motor_id, param_type);
+    return 0.0f;  // 预留接口，实际实现需要参数缓存机制
 }
