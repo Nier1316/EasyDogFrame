@@ -1,0 +1,15 @@
+# Build output
+build/
+
+# Compiled binaries and libraries
+*.a
+*.so
+*.o
+*.out
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+Makefile

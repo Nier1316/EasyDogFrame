@@ -44,6 +44,8 @@ public:
     bool SendMotorCommand(uint8_t can_port, uint8_t motor_id, const MotorCommand& cmd);
     // 广播命令：对所有电机执行同一命令（例如全局 STOP）
     bool BroadcastCommand(const MotorCommand& cmd);
+    // 发送原始 CAN 帧（测试/调试用）：直接指定 ID 和数据，不经过 Motor 抽象层
+    bool SendRawFrame(uint8_t can_port, uint32_t id, const uint8_t* data, uint8_t len);
 
     // ---------------- 状态查询 ----------------
     MotorStatus GetMotorStatus(uint8_t can_port, uint8_t motor_id);  // 单个电机

@@ -34,6 +34,8 @@ public:
     bool StopMotor(uint8_t can_port, uint8_t motor_id);   // 停止单个电机
     bool StopAllMotors();                                 // 广播停止全部电机（紧急停机）
     bool ResetMotor(uint8_t can_port, uint8_t motor_id);  // 复位单个电机（清故障）
+    // 发送原始 CAN 帧（测试/调试用）：直接指定 ID 和数据，不经过 Motor 抽象层
+    bool SendRawFrame(uint8_t can_port, uint32_t id, const uint8_t* data, uint8_t len);
 
     // ---------------- 状态监控 ----------------
     void PrintMotorStatus(uint8_t can_port, uint8_t motor_id); // 打印指定电机的详细状态

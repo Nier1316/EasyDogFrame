@@ -1,1 +1,0 @@
-/usr/bin/g++ -g CMakeFiles/motor_app.dir/src/main.cpp.o -o motor_app  libmotor_framework.a ../lib/linux_x64/Debug/libCANET_TCP.a 

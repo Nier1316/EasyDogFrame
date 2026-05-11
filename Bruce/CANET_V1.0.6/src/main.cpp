@@ -197,6 +197,28 @@ void Example5_InteractiveControl() {
     printf("[INFO] Example 5 completed\n");
 }
 
+// ================= 示例 6：原始 CAN 帧测试 =================
+// 通过 can0 发送一条 ID=0x000 的测试帧，验证 CANET 链路是否正常
+void Example6_RawFrameTest() {
+    printf("\n========== Example 6: Raw CAN Frame Test ==========\n");
+
+    MotorController controller;
+    if (!controller.Initialize() || !controller.Start()) {
+        printf("[ERROR] Failed to initialize/start controller\n");
+        return;
+    }
+
+    // 8 字节测试数据，内容可自定义
+    uint8_t test_data[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+
+    printf("[ACTION] Sending raw frame: can0, ID=0x000, data=[01 02 03 04 05 06 07 08]\n");
+    bool ok = controller.SendRawFrame(0, 0x000, test_data, 8);
+    printf("[RESULT] %s\n", ok ? "Frame sent successfully" : "Failed to send frame");
+
+    controller.Stop();
+    printf("[INFO] Example 6 completed\n");
+}
+
 // ================= 程序入口 =================
 // 通过命令行参数选择示例编号；未指定则默认运行示例 1
 int main(int argc, char* argv[]) {
@@ -219,7 +241,8 @@ int main(int argc, char* argv[]) {
     printf("  2 - Multi-Motor Control\n");
     printf("  3 - Multi-CAN Port Control\n");
     printf("  4 - Motor Health Check\n");
-    printf("  5 - Interactive Control\n\n");
+    printf("  5 - Interactive Control\n");
+    printf("  6 - Raw CAN Frame Test (can0, ID=0x000)\n\n");
 
     printf("Running Example %d...\n", example);
 
@@ -230,6 +253,7 @@ int main(int argc, char* argv[]) {
         case 3: Example3_MultiCanPortControl(); break;
         case 4: Example4_HealthCheck();         break;
         case 5: Example5_InteractiveControl();  break;
+        case 6: Example6_RawFrameTest();        break;
         default:
             printf("[ERROR] Invalid example number: %d\n", example);
             return 1;

@@ -276,6 +276,15 @@ void MotorController::HandleMotorError(uint8_t can_port, uint8_t motor_id, uint8
     }
 }
 
+// 发送原始 CAN 帧：透传到 MotorManager，不经过 Motor 抽象层（测试/调试用）
+bool MotorController::SendRawFrame(uint8_t can_port, uint32_t id, const uint8_t* data, uint8_t len) {
+    if (!IsRunning()) {
+        printf("[ERROR] MotorController is not running\n");
+        return false;
+    }
+    return m_motor_manager.SendRawFrame(can_port, id, data, len);
+}
+
 // 透传 manager 的电机总数，方便上层做界面/循环
 uint32_t MotorController::GetMotorCount() const {
     return m_motor_manager.GetMotorCount();

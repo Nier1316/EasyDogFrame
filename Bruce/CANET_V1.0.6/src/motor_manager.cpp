@@ -139,6 +139,26 @@ bool MotorManager::SendMotorCommand(uint8_t can_port, uint8_t motor_id, const Mo
     return device_it->second->SendFrame(frame);
 }
 
+// 发送原始 CAN 帧：绕过 Motor 抽象层，直接指定 ID 和数据（测试/调试用）
+bool MotorManager::SendRawFrame(uint8_t can_port, uint32_t id, const uint8_t* data, uint8_t len) {
+    auto device_it = m_can_devices.find(can_port);
+    if (device_it == m_can_devices.end()) {
+        printf("[ERROR] CAN device not found: can_port=%d\n", can_port);
+        return false;
+    }
+
+    VCI_CAN_OBJ frame;
+    memset(&frame, 0, sizeof(frame));
+    frame.ID         = id;
+    frame.SendType   = 0;
+    frame.RemoteFlag = 0;
+    frame.ExternFlag = 0;
+    frame.DataLen    = (len > 8) ? 8 : len;
+    memcpy(frame.Data, data, frame.DataLen);
+
+    return device_it->second->SendFrame(frame);
+}
+
 // 广播：对所有电机执行同一命令；任一失败整体返回 false，但继续发完剩余电机
 bool MotorManager::BroadcastCommand(const MotorCommand& cmd) {
     bool success = true;
