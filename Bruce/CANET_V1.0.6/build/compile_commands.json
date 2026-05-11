@@ -1,0 +1,27 @@
+[
+{
+  "directory": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build",
+  "command": "/usr/bin/g++  -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/include -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/CANET -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/base -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/lib -g -Wall -Wextra -Wpedantic -std=gnu++14 -o CMakeFiles/motor_framework.dir/src/motor.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/motor.cpp",
+  "file": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/motor.cpp"
+},
+{
+  "directory": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build",
+  "command": "/usr/bin/g++  -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/include -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/CANET -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/base -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/lib -g -Wall -Wextra -Wpedantic -std=gnu++14 -o CMakeFiles/motor_framework.dir/src/can_device.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/can_device.cpp",
+  "file": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/can_device.cpp"
+},
+{
+  "directory": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build",
+  "command": "/usr/bin/g++  -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/include -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/CANET -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/base -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/lib -g -Wall -Wextra -Wpedantic -std=gnu++14 -o CMakeFiles/motor_framework.dir/src/motor_manager.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/motor_manager.cpp",
+  "file": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/motor_manager.cpp"
+},
+{
+  "directory": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build",
+  "command": "/usr/bin/g++  -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/include -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/CANET -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/base -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/lib -g -Wall -Wextra -Wpedantic -std=gnu++14 -o CMakeFiles/motor_framework.dir/src/motor_controller.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/motor_controller.cpp",
+  "file": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/motor_controller.cpp"
+},
+{
+  "directory": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build",
+  "command": "/usr/bin/g++  -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/include -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/CANET -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/base -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/lib -g -Wall -Wextra -Wpedantic -std=gnu++14 -o CMakeFiles/motor_app.dir/src/main.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/main.cpp",
+  "file": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/main.cpp"
+}
+]

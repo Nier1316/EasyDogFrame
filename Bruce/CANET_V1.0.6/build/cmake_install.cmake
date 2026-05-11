@@ -1,4 +1,4 @@
-# Install script for directory: /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6
+# Install script for directory: /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -12,7 +12,7 @@ if(NOT DEFINED CMAKE_INSTALL_CONFIG_NAME)
     string(REGEX REPLACE "^[^A-Za-z0-9_]+" ""
            CMAKE_INSTALL_CONFIG_NAME "${BUILD_TYPE}")
   else()
-    set(CMAKE_INSTALL_CONFIG_NAME "")
+    set(CMAKE_INSTALL_CONFIG_NAME "Debug")
   endif()
   message(STATUS "Install configuration: \"${CMAKE_INSTALL_CONFIG_NAME}\"")
 endif()
@@ -50,5 +50,5 @@ endif()
 
 string(REPLACE ";" "\n" CMAKE_INSTALL_MANIFEST_CONTENT
        "${CMAKE_INSTALL_MANIFEST_FILES}")
-file(WRITE "/home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/build/${CMAKE_INSTALL_MANIFEST}"
+file(WRITE "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build/${CMAKE_INSTALL_MANIFEST}"
      "${CMAKE_INSTALL_MANIFEST_CONTENT}")

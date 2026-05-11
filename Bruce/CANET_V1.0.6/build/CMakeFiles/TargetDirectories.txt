@@ -1,4 +1,4 @@
-/home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/build/CMakeFiles/motor_framework.dir
-/home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/build/CMakeFiles/motor_app.dir
-/home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/build/CMakeFiles/edit_cache.dir
-/home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/build/CMakeFiles/rebuild_cache.dir
+/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build/CMakeFiles/motor_framework.dir
+/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build/CMakeFiles/motor_app.dir
+/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build/CMakeFiles/edit_cache.dir
+/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build/CMakeFiles/rebuild_cache.dir

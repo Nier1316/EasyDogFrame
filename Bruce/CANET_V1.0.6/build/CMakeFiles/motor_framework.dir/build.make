@@ -53,10 +53,10 @@ RM = /usr/bin/cmake -E rm -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6
+CMAKE_SOURCE_DIR = /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/build
+CMAKE_BINARY_DIR = /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build
 
 # Include any dependencies generated for this target.
 include CMakeFiles/motor_framework.dir/depend.make
@@ -72,58 +72,58 @@ include CMakeFiles/motor_framework.dir/flags.make
 CMakeFiles/motor_framework.dir/src/motor.cpp.o: CMakeFiles/motor_framework.dir/flags.make
 CMakeFiles/motor_framework.dir/src/motor.cpp.o: ../src/motor.cpp
 CMakeFiles/motor_framework.dir/src/motor.cpp.o: CMakeFiles/motor_framework.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/motor_framework.dir/src/motor.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/motor_framework.dir/src/motor.cpp.o -MF CMakeFiles/motor_framework.dir/src/motor.cpp.o.d -o CMakeFiles/motor_framework.dir/src/motor.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/src/motor.cpp
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/motor_framework.dir/src/motor.cpp.o"
+	/usr/bin/g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/motor_framework.dir/src/motor.cpp.o -MF CMakeFiles/motor_framework.dir/src/motor.cpp.o.d -o CMakeFiles/motor_framework.dir/src/motor.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/motor.cpp
 
 CMakeFiles/motor_framework.dir/src/motor.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/motor_framework.dir/src/motor.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/src/motor.cpp > CMakeFiles/motor_framework.dir/src/motor.cpp.i
+	/usr/bin/g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/motor.cpp > CMakeFiles/motor_framework.dir/src/motor.cpp.i
 
 CMakeFiles/motor_framework.dir/src/motor.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/motor_framework.dir/src/motor.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/src/motor.cpp -o CMakeFiles/motor_framework.dir/src/motor.cpp.s
+	/usr/bin/g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/motor.cpp -o CMakeFiles/motor_framework.dir/src/motor.cpp.s
 
 CMakeFiles/motor_framework.dir/src/can_device.cpp.o: CMakeFiles/motor_framework.dir/flags.make
 CMakeFiles/motor_framework.dir/src/can_device.cpp.o: ../src/can_device.cpp
 CMakeFiles/motor_framework.dir/src/can_device.cpp.o: CMakeFiles/motor_framework.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building CXX object CMakeFiles/motor_framework.dir/src/can_device.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/motor_framework.dir/src/can_device.cpp.o -MF CMakeFiles/motor_framework.dir/src/can_device.cpp.o.d -o CMakeFiles/motor_framework.dir/src/can_device.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/src/can_device.cpp
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building CXX object CMakeFiles/motor_framework.dir/src/can_device.cpp.o"
+	/usr/bin/g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/motor_framework.dir/src/can_device.cpp.o -MF CMakeFiles/motor_framework.dir/src/can_device.cpp.o.d -o CMakeFiles/motor_framework.dir/src/can_device.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/can_device.cpp
 
 CMakeFiles/motor_framework.dir/src/can_device.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/motor_framework.dir/src/can_device.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/src/can_device.cpp > CMakeFiles/motor_framework.dir/src/can_device.cpp.i
+	/usr/bin/g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/can_device.cpp > CMakeFiles/motor_framework.dir/src/can_device.cpp.i
 
 CMakeFiles/motor_framework.dir/src/can_device.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/motor_framework.dir/src/can_device.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/src/can_device.cpp -o CMakeFiles/motor_framework.dir/src/can_device.cpp.s
+	/usr/bin/g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/can_device.cpp -o CMakeFiles/motor_framework.dir/src/can_device.cpp.s
 
 CMakeFiles/motor_framework.dir/src/motor_manager.cpp.o: CMakeFiles/motor_framework.dir/flags.make
 CMakeFiles/motor_framework.dir/src/motor_manager.cpp.o: ../src/motor_manager.cpp
 CMakeFiles/motor_framework.dir/src/motor_manager.cpp.o: CMakeFiles/motor_framework.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building CXX object CMakeFiles/motor_framework.dir/src/motor_manager.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/motor_framework.dir/src/motor_manager.cpp.o -MF CMakeFiles/motor_framework.dir/src/motor_manager.cpp.o.d -o CMakeFiles/motor_framework.dir/src/motor_manager.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/src/motor_manager.cpp
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building CXX object CMakeFiles/motor_framework.dir/src/motor_manager.cpp.o"
+	/usr/bin/g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/motor_framework.dir/src/motor_manager.cpp.o -MF CMakeFiles/motor_framework.dir/src/motor_manager.cpp.o.d -o CMakeFiles/motor_framework.dir/src/motor_manager.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/motor_manager.cpp
 
 CMakeFiles/motor_framework.dir/src/motor_manager.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/motor_framework.dir/src/motor_manager.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/src/motor_manager.cpp > CMakeFiles/motor_framework.dir/src/motor_manager.cpp.i
+	/usr/bin/g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/motor_manager.cpp > CMakeFiles/motor_framework.dir/src/motor_manager.cpp.i
 
 CMakeFiles/motor_framework.dir/src/motor_manager.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/motor_framework.dir/src/motor_manager.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/src/motor_manager.cpp -o CMakeFiles/motor_framework.dir/src/motor_manager.cpp.s
+	/usr/bin/g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/motor_manager.cpp -o CMakeFiles/motor_framework.dir/src/motor_manager.cpp.s
 
 CMakeFiles/motor_framework.dir/src/motor_controller.cpp.o: CMakeFiles/motor_framework.dir/flags.make
 CMakeFiles/motor_framework.dir/src/motor_controller.cpp.o: ../src/motor_controller.cpp
 CMakeFiles/motor_framework.dir/src/motor_controller.cpp.o: CMakeFiles/motor_framework.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Building CXX object CMakeFiles/motor_framework.dir/src/motor_controller.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/motor_framework.dir/src/motor_controller.cpp.o -MF CMakeFiles/motor_framework.dir/src/motor_controller.cpp.o.d -o CMakeFiles/motor_framework.dir/src/motor_controller.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/src/motor_controller.cpp
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Building CXX object CMakeFiles/motor_framework.dir/src/motor_controller.cpp.o"
+	/usr/bin/g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/motor_framework.dir/src/motor_controller.cpp.o -MF CMakeFiles/motor_framework.dir/src/motor_controller.cpp.o.d -o CMakeFiles/motor_framework.dir/src/motor_controller.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/motor_controller.cpp
 
 CMakeFiles/motor_framework.dir/src/motor_controller.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/motor_framework.dir/src/motor_controller.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/src/motor_controller.cpp > CMakeFiles/motor_framework.dir/src/motor_controller.cpp.i
+	/usr/bin/g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/motor_controller.cpp > CMakeFiles/motor_framework.dir/src/motor_controller.cpp.i
 
 CMakeFiles/motor_framework.dir/src/motor_controller.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/motor_framework.dir/src/motor_controller.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/src/motor_controller.cpp -o CMakeFiles/motor_framework.dir/src/motor_controller.cpp.s
+	/usr/bin/g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/src/motor_controller.cpp -o CMakeFiles/motor_framework.dir/src/motor_controller.cpp.s
 
 # Object files for target motor_framework
 motor_framework_OBJECTS = \
@@ -141,7 +141,7 @@ libmotor_framework.a: CMakeFiles/motor_framework.dir/src/motor_manager.cpp.o
 libmotor_framework.a: CMakeFiles/motor_framework.dir/src/motor_controller.cpp.o
 libmotor_framework.a: CMakeFiles/motor_framework.dir/build.make
 libmotor_framework.a: CMakeFiles/motor_framework.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Linking CXX static library libmotor_framework.a"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Linking CXX static library libmotor_framework.a"
 	$(CMAKE_COMMAND) -P CMakeFiles/motor_framework.dir/cmake_clean_target.cmake
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/motor_framework.dir/link.txt --verbose=$(VERBOSE)
 
@@ -154,6 +154,6 @@ CMakeFiles/motor_framework.dir/clean:
 .PHONY : CMakeFiles/motor_framework.dir/clean
 
 CMakeFiles/motor_framework.dir/depend:
-	cd /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/build && $(CMAKE_COMMAND) -E cmake_depends "Unix Makefiles" /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6 /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6 /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/build /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/build /home/sysu/Desktop/Dog_Train/Bruce/LINUX_CANET_V1.0.6源码/CANET_V1.0.6/build/CMakeFiles/motor_framework.dir/DependInfo.cmake --color=$(COLOR)
+	cd /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build && $(CMAKE_COMMAND) -E cmake_depends "Unix Makefiles" /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6 /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6 /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build /home/sysu/Desktop/Dog_Train/Bruce/Bruce/CANET_V1.0.6/build/CMakeFiles/motor_framework.dir/DependInfo.cmake --color=$(COLOR)
 .PHONY : CMakeFiles/motor_framework.dir/depend
 
