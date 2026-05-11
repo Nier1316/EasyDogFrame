@@ -25,8 +25,8 @@
 #define KD_MAX  100.0f      // Kd最大值
 #define KI_MIN  0.0f        // Ki最小值
 #define KI_MAX  10000.0f    // Ki最大值
-#define T_MIN   -200.0f     // 扭矩最小值 (Nm)
-#define T_MAX   200.0f      // 扭矩最大值 (Nm)
+#define T_MIN   -10.0f     // 扭矩最小值 (Nm)
+#define T_MAX   10.0f      // 扭矩最大值 (Nm)
 
 // =====================================================================
 //                    参数类型定义（来自 motor_rw_api.h）
