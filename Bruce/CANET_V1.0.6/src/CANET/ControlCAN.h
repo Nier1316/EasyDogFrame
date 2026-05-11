@@ -1,7 +1,7 @@
 #ifndef CONTROLCAN_H
 #define CONTROLCAN_H
 
-//�ӿڿ����Ͷ���
+//接口卡类型定义
 #define VCI_PCI5121         1
 #define VCI_PCI9810         2
 #define VCI_USBCAN1         3
@@ -42,36 +42,36 @@
 #define VCI_CANDTU_NET      36
 #define VCI_CANDTU_100UR    37
 
-//CAN������
-#define ERR_CAN_OVERFLOW            0x0001  //CAN�������ڲ�FIFO���
-#define ERR_CAN_ERRALARM            0x0002  //CAN���������󱨾�
-#define ERR_CAN_PASSIVE             0x0004  //CAN��������������
-#define ERR_CAN_LOSE                0x0008  //CAN�������ٲö�ʧ
-#define ERR_CAN_BUSERR              0x0010  //CAN���������ߴ���
-#define ERR_CAN_BUSOFF              0x0020  //���߹رմ���
-#define ERR_CAN_BUFFER_OVERFLOW     0x0040  //CAN�������ڲ�BUFFER���
-//ͨ�ô�����
-#define ERR_DEVICEOPENED            0x0100  //�豸�Ѿ���
-#define ERR_DEVICEOPEN              0x0200  //���豸����
-#define ERR_DEVICENOTOPEN           0x0400  //�豸û�д�
-#define ERR_BUFFEROVERFLOW          0x0800  //���������
-#define ERR_DEVICENOTEXIST          0x1000  //���豸������
-#define ERR_LOADKERNELDLL           0x2000  //װ�ض�̬��ʧ��
-#define ERR_CMDFAILED               0x4000  //ִ������ʧ�ܴ�����
-#define ERR_BUFFERCREATE            0x8000  //�ڴ治��
+//CAN错误码
+#define ERR_CAN_OVERFLOW            0x0001  //CAN控制器内部FIFO溢出
+#define ERR_CAN_ERRALARM            0x0002  //CAN控制器错误报警
+#define ERR_CAN_PASSIVE             0x0004  //CAN控制器消极错误
+#define ERR_CAN_LOSE                0x0008  //CAN控制器仲裁丢失
+#define ERR_CAN_BUSERR              0x0010  //CAN控制器总线错误
+#define ERR_CAN_BUSOFF              0x0020  //总线关闭错误
+#define ERR_CAN_BUFFER_OVERFLOW     0x0040  //CAN控制器内部BUFFER溢出
+//通用错误码
+#define ERR_DEVICEOPENED            0x0100  //设备已经打开
+#define ERR_DEVICEOPEN              0x0200  //打开设备错误
+#define ERR_DEVICENOTOPEN           0x0400  //设备没有打开
+#define ERR_BUFFEROVERFLOW          0x0800  //缓冲区溢出
+#define ERR_DEVICENOTEXIST          0x1000  //此设备不存在
+#define ERR_LOADKERNELDLL           0x2000  //装载动态库失败
+#define ERR_CMDFAILED               0x4000  //执行命令失败错误码
+#define ERR_BUFFERCREATE            0x8000  //内存不足
 
-//CANET������
-#define ERR_CANETE_PORTOPENED       0x00010000  //�˿��Ѿ�����
-#define ERR_CANETE_INDEXUSED        0x00020000  //�豸�������Ѿ���ռ��
-#define ERR_REF_TYPE_ID             0x00030000  //SetReference��GetReference���ݵ�RefType������
-#define ERR_CREATE_SOCKET           0x00030002  //����Socketʧ��
-#define ERR_OPEN_CONNECT            0x00030003  //��Socket������ʱʧ�ܣ������豸�����Ѿ�����
-#define ERR_NO_STARTUP              0x00030004  //�豸û����
-#define ERR_NO_CONNECTED            0x00030005  //�豸������
-#define ERR_SEND_PARTIAL            0x00030006  //ֻ�����˲��ֵ�CAN֡
-#define ERR_SEND_TOO_FAST           0x00030007  //���ݷ���̫�죬Socket����������
+//CANET错误码
+#define ERR_CANETE_PORTOPENED       0x00010000  //端口已经被打开
+#define ERR_CANETE_INDEXUSED        0x00020000  //设备索引号已经被占用
+#define ERR_REF_TYPE_ID             0x00030000  //SetReference或GetReference传递的RefType不存在
+#define ERR_CREATE_SOCKET           0x00030002  //创建Socket失败
+#define ERR_OPEN_CONNECT            0x00030003  //打开Socket的连接时失败，可能设备连接已经存在
+#define ERR_NO_STARTUP              0x00030004  //设备没启动
+#define ERR_NO_CONNECTED            0x00030005  //设备无连接
+#define ERR_SEND_PARTIAL            0x00030006  //只发送了部分的CAN帧
+#define ERR_SEND_TOO_FAST           0x00030007  //数据发得太快，Socket缓冲区满了
 
-//�������÷���״ֵ̬
+//函数调用返回状态值
 #define STATUS_OK                   1
 #define STATUS_ERR                  0
 
@@ -79,17 +79,17 @@
 #define CMD_DESPORT                 1
 #define CMD_CHGDESIPANDPORT         2
 #define CMD_SRCPORT                 2
-#define CMD_TCP_TYPE                4  //tcp ������ʽ��������:1 ���ǿͻ���:0
+#define CMD_TCP_TYPE                4  //tcp 工作方式，服务器:1 或是客户端:0
 #define TCP_CLIENT                  0
 #define TCP_SERVER                  1
-//��������ʽ����Ч
-#define CMD_CLIENT_COUNT            5  //�����ϵĿͻ��˼���
-#define CMD_CLIENT                  6  //�����ϵĿͻ���
-#define CMD_DISCONN_CLINET          7  //�Ͽ�һ������
-#define CMD_SET_RECONNECT_TIME      8  //ʹ���Զ�����
-//CANDTU_NET֧��GPS
+//服务器方式下有效
+#define CMD_CLIENT_COUNT            5  //连接上的客户端计数
+#define CMD_CLIENT                  6  //连接上的客户端
+#define CMD_DISCONN_CLINET          7  //断开一个连接
+#define CMD_SET_RECONNECT_TIME      8  //使能自动重连
+//CANDTU_NET支持GPS
 #define CMD_GET_GPS                 9
-#define CMD_GET_GPS_NUM             10 //��ȡGPS��Ϣ����Ŀ
+#define CMD_GET_GPS_NUM             10 //获取GPS信息的数目
 
 typedef unsigned long       DWORD, ULONG;
 typedef int                 INT;
@@ -117,7 +117,7 @@ typedef struct _tagChgDesIPAndPort
     BYTE    blistenonly;
 }CHGDESIPANDPORT;
 
-//1.ZLGCANϵ�нӿڿ���Ϣ���������͡�
+//1.ZLGCAN系列接口卡信息的数据类型。
 typedef  struct  _VCI_BOARD_INFO{
     USHORT  hw_Version;
     USHORT  fw_Version;
@@ -130,20 +130,20 @@ typedef  struct  _VCI_BOARD_INFO{
     USHORT  Reserved[4];
 } VCI_BOARD_INFO,*PVCI_BOARD_INFO;
 
-//2.����CAN��Ϣ֡���������͡�
+//2.定义CAN信息帧的数据类型。
 typedef  struct  _VCI_CAN_OBJ{
     UINT    ID;
     UINT    TimeStamp; // 100us
     BYTE    TimeFlag;
     BYTE    SendType;
-    BYTE    RemoteFlag;//�Ƿ���Զ��֡
-    BYTE    ExternFlag;//�Ƿ�����չ֡
+    BYTE    RemoteFlag;//是否是远程帧
+    BYTE    ExternFlag;//是否是扩展帧
     BYTE    DataLen;
     BYTE    Data[8];
-    BYTE    Reserved[3];    //Reserved[0] ��0λ��ʾ����Ŀ��л��߸���֡
+    BYTE    Reserved[3];    //Reserved[0] 第0位表示特殊的空行或者高亮帧
 }VCI_CAN_OBJ,*PVCI_CAN_OBJ;
 
-//3.����CAN������״̬���������͡�
+//3.定义CAN控制器状态的数据类型。
 typedef struct _VCI_CAN_STATUS{
     UCHAR   ErrInterrupt;
     UCHAR   regMode;
@@ -156,14 +156,14 @@ typedef struct _VCI_CAN_STATUS{
     DWORD   Reserved;
 }VCI_CAN_STATUS,*PVCI_CAN_STATUS;
 
-//4.���������Ϣ���������͡�
+//4.定义错误信息的数据类型。
 typedef struct _VCI_ERR_INFO{
     UINT    ErrCode;
     BYTE    Passive_ErrData[3];
     BYTE    ArLost_ErrData;
 } VCI_ERR_INFO,*PVCI_ERR_INFO;
 
-//5.�����ʼ��CAN����������
+//5.定义初始化CAN的数据类型
 typedef struct _VCI_INIT_CONFIG{
     DWORD    AccCode;
     DWORD    AccMask;
@@ -176,34 +176,34 @@ typedef struct _VCI_INIT_CONFIG{
 
 ///////// new add struct for filter /////////
 typedef struct _VCI_FILTER_RECORD{
-    DWORD   ExtFrame;   //�Ƿ�Ϊ��չ֡
+    DWORD   ExtFrame;   //是否为扩展帧
     DWORD   Start;
     DWORD   End;
 }VCI_FILTER_RECORD,*PVCI_FILTER_RECORD;
 
-//��ʱ�Զ�����֡�ṹ
+//定时自动发送帧结构
 typedef struct _VCI_AUTO_SEND_OBJ{
-    BYTE    Enable;     //ʹ�ܱ������� 0:���� 1:ʹ��
-    BYTE    Index;      //���ı��     ���֧��32������
-    DWORD   Interval;   //��ʱ����ʱ�� 1msΪ��λ
-    VCI_CAN_OBJ obj;    //����
+    BYTE    Enable;     //使能本条报文 0:禁能 1:使能
+    BYTE    Index;      //报文编号     最大支持32条报文
+    DWORD   Interval;   //定时发送时间 1ms为单位
+    VCI_CAN_OBJ obj;    //报文
 }VCI_AUTO_SEND_OBJ,*PVCI_AUTO_SEND_OBJ;
 
-//����ָʾ��״̬�ṹ
+//设置指示灯状态结构
 typedef struct _VCI_INDICATE_LIGHT{
-    BYTE    Indicate;             //ָʾ�Ʊ��
-    BYTE    AttribRedMode:2;      //Red LED��/��/��˸/�Կ�
-    BYTE    AttribGreenMode:2;    //Green LED��/��/��˸/�Կ�
-    BYTE    AttribReserved:4;     //������ʱ����
-    BYTE    FrequenceRed:2;       //Red LED��˸Ƶ��
-    BYTE    FrequenceGreen:2;     //Green LED��˸Ƶ��
-    BYTE    FrequenceReserved:4;  //������ʱ����
+    BYTE    Indicate;             //指示灯编号
+    BYTE    AttribRedMode:2;      //Red LED灭/亮/闪烁/自控
+    BYTE    AttribGreenMode:2;    //Green LED灭/亮/闪烁/自控
+    BYTE    AttribReserved:4;     //保留暂时不用
+    BYTE    FrequenceRed:2;       //Red LED闪烁频率
+    BYTE    FrequenceGreen:2;     //Green LED闪烁频率
+    BYTE    FrequenceReserved:4;  //保留暂时不用
 } VCI_INDICATE_LIGHT,*PVCI_INDICATE_LIGHT;
 
-//����ת���ṹ
+//设置转发结构
 typedef struct _VCI_CAN_OBJ_REDIRECT{
-    BYTE    Action;                //��ʶ������ֹͣת��
-    BYTE    DestCanIndex;          //CANĿ��ͨ��
+    BYTE    Action;                //标识开启或停止转发
+    BYTE    DestCanIndex;          //CAN目标通道
 } VCI_CAN_OBJ_REDIRECT,*PVCI_CAN_OBJ_REDIRECT;
 
 typedef struct _CANDTUTIME {
@@ -215,20 +215,20 @@ typedef struct _CANDTUTIME {
     UINT16 wSecond;
 } CANDTUTIME;
 
-//GPS���ݽṹ
+//GPS数据结构
 typedef struct _tagCANDTUGPSData
 {
-    float       fLatitude;  //γ��
-    float       fLongitude; //����
-    float       fSpeed;     //�ٶ�
+    float       fLatitude;  //纬度
+    float       fLongitude; //经度
+    float       fSpeed;     //速度
     CANDTUTIME  candtuTime;
 }CANDTUGPSData, *PCANDTUGPSData;
 
-//��ȡGPS�ṹ
+//获取GPS结构
 typedef struct _VCI_CANDTU_GPS_DATA
 {
-    PCANDTUGPSData pGPSData;    //�û��ṩ����GPS���ݵĻ�������ַ
-    ULONG          nGPSDataCnt; //�������ɵ�GPS���ݸ���
+    PCANDTUGPSData pGPSData;    //用户提供接收GPS数据的缓冲区地址
+    ULONG          nGPSDataCnt; //可以容纳的GPS数据个数
 }VCI_CANDTU_GPS_DATA, *PVCI_CANDTU_GPS_DATA;
 
 #ifdef __cplusplus

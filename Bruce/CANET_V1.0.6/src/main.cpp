@@ -1,15 +1,16 @@
 /**
  * @file   main.cpp
  * @brief  CAN 电机控制框架的示例入口
- * @details 提供 5 个演示函数：
+ * @details 提供 6 个演示函数：
  *          1) 单电机基本控制      2) 同口多电机          3) 多 CAN 口协同
- *          4) 电机健康检查        5) 长时间运行演示
+ *          4) 电机健康检查        5) 长时间运行演示      6) 原始 CAN 帧测试（仅依赖 BSP）
  *          运行方式：./motor_app <示例编号>   默认为 1
  */
 #include <stdio.h>
 #include <unistd.h>       // sleep()
 #include <signal.h>       // signal() / SIGINT / SIGTERM
 #include "motor_controller.h"
+#include "bsp/bsp_can.h"   // 示例 6 直接使用 BSP 层
 
 // 全局控制器指针：仅供信号处理函数访问，用于 Ctrl+C 时优雅停机
 // 使用裸指针是为了在 SignalHandler 中以 C 语言方式访问；实际对象生命周期在 main 内
@@ -197,25 +198,104 @@ void Example5_InteractiveControl() {
     printf("[INFO] Example 5 completed\n");
 }
 
-// ================= 示例 6：原始 CAN 帧测试 =================
-// 通过 can0 发送一条 ID=0x000 的测试帧，验证 CANET 链路是否正常
+// ================= 示例 6：原始 CAN 帧测试（仅依赖 BSP 层）=================
+// 直接使用 BspCan，不依赖 MotorController，用于测试 CAN 通信
+// 无需电机，只需 CANET 设备连接即可
 void Example6_RawFrameTest() {
-    printf("\n========== Example 6: Raw CAN Frame Test ==========\n");
+    printf("\n========== Example 6: Raw CAN Frame Test (BSP Only) ==========\n");
+    printf("[INFO] This example only depends on BSP layer, no motor needed\n");
+    printf("[INFO] Connecting to CANET device at 192.168.0.178:4001\n\n");
 
-    MotorController controller;
-    if (!controller.Initialize() || !controller.Start()) {
-        printf("[ERROR] Failed to initialize/start controller\n");
+    BspCan& bsp = BspCan::GetInstance();
+
+    // 创建 CAN 设备配置（can0）- 作为 TCP 客户端连接到 CANET 设备
+    CanDeviceConfig config;
+    config.device_idx = 0;
+    config.port = 4001;
+    config.server_ip = "192.168.0.178";  // CANET 设备的 IP 地址
+    config.work_mode = TCP_CLIENT;        // 作为客户端连接
+
+    // 初始化 can0 设备
+    printf("[ACTION] Initializing CAN device 0 (TCP client mode)...\n");
+    if (!bsp.InitDevice(0, config)) {
+        printf("[ERROR] Failed to initialize CAN device 0\n");
         return;
     }
 
-    // 8 字节测试数据，内容可自定义
-    uint8_t test_data[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+    // 启动 can0 设备
+    printf("[ACTION] Starting CAN device 0...\n");
+    if (!bsp.StartDevice(0)) {
+        printf("[ERROR] Failed to start CAN device 0\n");
+        bsp.CloseDevice(0);
+        return;
+    }
 
-    printf("[ACTION] Sending raw frame: can0, ID=0x000, data=[01 02 03 04 05 06 07 08]\n");
-    bool ok = controller.SendRawFrame(0, 0x000, test_data, 8);
-    printf("[RESULT] %s\n", ok ? "Frame sent successfully" : "Failed to send frame");
+    printf("[INFO] CAN device 0 is running\n\n");
 
-    controller.Stop();
+    // 发送测试帧 1：ID=0x001，数据为 [01 02 03 04 05 06 07 08]
+    printf("[ACTION] Sending test frame 1: ID=0x001, data=[01 02 03 04 05 06 07 08]\n");
+    BspCanFrame frame1;
+    frame1.id = 0x001;
+    frame1.dlc = 8;
+    frame1.is_extended = 0;
+    uint8_t data1[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+    memcpy(frame1.data, data1, 8);
+
+    if (bsp.SendFrame(0, frame1)) {
+        printf("[RESULT] Frame 1 sent successfully\n");
+    } else {
+        printf("[ERROR] Failed to send frame 1\n");
+    }
+
+    sleep(1);
+
+    // 发送测试帧 2：ID=0x002，数据为 [AA BB CC DD EE FF 00 11]
+    printf("\n[ACTION] Sending test frame 2: ID=0x002, data=[AA BB CC DD EE FF 00 11]\n");
+    BspCanFrame frame2;
+    frame2.id = 0x002;
+    frame2.dlc = 8;
+    frame2.is_extended = 0;
+    uint8_t data2[8] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11};
+    memcpy(frame2.data, data2, 8);
+
+    if (bsp.SendFrame(0, frame2)) {
+        printf("[RESULT] Frame 2 sent successfully\n");
+    } else {
+        printf("[ERROR] Failed to send frame 2\n");
+    }
+
+    sleep(1);
+
+    // 尝试接收帧（如果有回环或其他设备发送数据）
+    printf("\n[ACTION] Attempting to receive frames (timeout=500ms)...\n");
+    std::vector<BspCanFrame> received_frames;
+    if (bsp.ReceiveFrames(0, received_frames, 500)) {
+        printf("[RESULT] Received %zu frame(s):\n", received_frames.size());
+        for (size_t i = 0; i < received_frames.size(); i++) {
+            printf("  Frame %zu: ID=0x%03X, DLC=%d, Data=[", i + 1, received_frames[i].id, received_frames[i].dlc);
+            for (int j = 0; j < received_frames[i].dlc; j++) {
+                printf("%02X", received_frames[i].data[j]);
+                if (j < received_frames[i].dlc - 1) printf(" ");
+            }
+            printf("]\n");
+        }
+    } else {
+        printf("[INFO] No frames received (timeout or no data)\n");
+    }
+
+    // 查询统计信息
+    printf("\n[INFO] CAN Device Statistics:\n");
+    printf("  Sent frames: %u\n", bsp.GetSentFrameCount(0));
+    printf("  Received frames: %u\n", bsp.GetReceivedFrameCount(0));
+
+    // 停止设备
+    printf("\n[ACTION] Stopping CAN device 0...\n");
+    bsp.StopDevice(0);
+
+    // 关闭设备
+    printf("[ACTION] Closing CAN device 0...\n");
+    bsp.CloseDevice(0);
+
     printf("[INFO] Example 6 completed\n");
 }
 
