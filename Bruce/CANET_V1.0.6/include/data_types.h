@@ -63,7 +63,7 @@ struct MotorCommand {
     float       vel;           // 期望角速度 rad/s，范围 ±14
     float       kp;            // 刚度/位置环Kp，范围 0~500
     float       kd;            // 阻尼/位置环Kd，范围 0~100
-    float       torque;        // 扭矩前馈 Nm，范围 ±200
+    float       torque;        // 扭矩前馈 Nm，范围 ±10
     float       kp_speed;      // 速度环Kp（速度/位置模式）
     float       ki_speed;      // 速度环Ki（速度/位置模式）
 

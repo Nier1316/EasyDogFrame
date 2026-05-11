@@ -144,10 +144,14 @@ void MotorControlGUI::createControlModeGroup() {
     layout->addWidget(impedanceRadio);
     layout->addWidget(speedRadio);
     layout->addWidget(positionRadio);
+
+    setModeBtn = new QPushButton("设置模式");
+    layout->addWidget(setModeBtn);
     layout->addStretch();
 
     connect(modeGroup, QOverload<int>::of(&QButtonGroup::buttonClicked),
             this, &MotorControlGUI::onControlModeChanged);
+    connect(setModeBtn, &QPushButton::clicked, this, &MotorControlGUI::onSetControlMode);
 
     impedanceRadio->setParent(modeWidget);
 }
@@ -308,7 +312,7 @@ void MotorControlGUI::onMotorIdChanged(int value) {
 }
 
 void MotorControlGUI::onEnableMotor() {
-    uint8_t data[8] = {0x80, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE};
+    uint8_t data[8] = {0x80, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC};
     displayCanFrame(data, 8, "使能指令");
 }
 
@@ -318,7 +322,7 @@ void MotorControlGUI::onDisableMotor() {
 }
 
 void MotorControlGUI::onSetZero() {
-    uint8_t data[8] = {0x80, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC};
+    uint8_t data[8] = {0x80, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE};
     displayCanFrame(data, 8, "置零指令");
 }
 
@@ -333,6 +337,18 @@ void MotorControlGUI::onControlModeChanged(int id) {
     positionGroup->setVisible(id == 2);
 }
 
+void MotorControlGUI::onSetControlMode() {
+    // 获取当前选择的模式
+    int modeId = modeGroup->checkedId();
+    uint8_t modeValue = (uint8_t)modeId;  // 0=阻抗, 1=速度, 2=位置
+
+    // 使用参数指令设置控制模式
+    uint8_t data[8];
+    MotorParamCodec::Float2Bag((float)modeValue, 1, MOTOR_WR_CONTROL_MODE, currentMotorId, data);
+
+    displayCanFrame(data, 8, "设置控制模式指令");
+}
+
 void MotorControlGUI::onCalculateImpedanceCommand() {
     float pos = MotorParamValidator::ValidatePosition(impedancePosSpinBox->value());
     float vel = MotorParamValidator::ValidateVelocity(impedanceVelSpinBox->value());
@@ -340,23 +356,23 @@ void MotorControlGUI::onCalculateImpedanceCommand() {
     float kd = MotorParamValidator::ValidateKd(impedanceKdSpinBox->value());
     float torque = MotorParamValidator::ValidateTorque(impedanceTorqueSpinBox->value());
 
-    // 量化参数
+    // 量化参数（按硬件协议）
     unsigned int posInt = MotorParamCodec::FloatToUint(pos, P_MIN, P_MAX, 15);
     unsigned int velInt = MotorParamCodec::FloatToUint(vel, V_MIN, V_MAX, 12);
-    unsigned int kpInt = MotorParamCodec::FloatToUint(kp, KP_MIN, KP_MAX, 9);
-    unsigned int kdInt = MotorParamCodec::FloatToUint(kd, KD_MIN, KD_MAX, 8);
+    unsigned int kpInt = MotorParamCodec::FloatToUint(kp, KP_MIN, KP_MAX, 12);  // 12位
+    unsigned int kdInt = MotorParamCodec::FloatToUint(kd, KD_MIN, KD_MAX, 12);  // 12位
     unsigned int torqueInt = MotorParamCodec::FloatToUint(torque, T_MIN, T_MAX, 12);
 
-    // 打包CAN帧（简化版本，实际应按硬件协议打包）
+    // 按硬件协议打包CAN帧
     uint8_t data[8];
-    data[0] = (posInt >> 8) & 0xFF;
-    data[1] = posInt & 0xFF;
-    data[2] = (velInt >> 8) & 0xFF;
-    data[3] = velInt & 0xFF;
-    data[4] = (kpInt >> 4) & 0xFF;
-    data[5] = ((kpInt & 0x0F) << 4) | ((kdInt >> 4) & 0x0F);
-    data[6] = ((kdInt & 0x0F) << 4) | ((torqueInt >> 8) & 0x0F);
-    data[7] = torqueInt & 0xFF;
+    data[0] = (uint8_t)((posInt >> 8) & 0x7F);
+    data[1] = (uint8_t)(posInt & 0xFF);
+    data[2] = (uint8_t)(velInt >> 4);
+    data[3] = (uint8_t)(((velInt & 0xF) << 4) | (kpInt >> 8));
+    data[4] = (uint8_t)(kpInt & 0xFF);
+    data[5] = (uint8_t)(kdInt >> 4);
+    data[6] = (uint8_t)(((kdInt & 0xF) << 4) | (torqueInt >> 8));
+    data[7] = (uint8_t)(torqueInt & 0xFF);
 
     displayCanFrame(data, 8, "阻抗控制指令");
 }

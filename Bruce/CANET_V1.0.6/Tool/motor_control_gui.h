@@ -36,6 +36,7 @@ private slots:
 
     // 模式选择
     void onControlModeChanged(int id);
+    void onSetControlMode();  // 新增：设置控制模式
 
     // 参数计算
     void onCalculateImpedanceCommand();
@@ -77,6 +78,7 @@ private:
     QRadioButton *speedRadio;
     QRadioButton *positionRadio;
     QButtonGroup *modeGroup;
+    QPushButton *setModeBtn;  // 新增：设置模式按钮
 
     // UI组件 - 阻抗模式参数
     QGroupBox *impedanceGroup;
