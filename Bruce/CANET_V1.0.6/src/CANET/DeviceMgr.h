@@ -21,6 +21,7 @@ public:
 
 public:
     std::map<UINT, Device*> m_devices;
+    bool m_destroyed = false;
 };
 
 DeviceMgr *TheDeviceMgr();

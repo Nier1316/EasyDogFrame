@@ -17,7 +17,7 @@
 #include <memory>         // std::unique_ptr：自动管理设备/电机生命周期
 #include <mutex>
 #include <thread>         // 后台数据处理线程
-#include "can_device.h"
+#include "bsp/bsp_can.h"
 #include "motor.h"
 #include "data_types.h"
 
@@ -64,13 +64,11 @@ private:
     MotorManager(const MotorManager&) = delete;
     MotorManager& operator=(const MotorManager&) = delete;
 
-    // 以 device_idx 为 key 存 CAN 设备；unique_ptr 自动释放
-    std::map<uint8_t, std::unique_ptr<CanDevice>> m_can_devices;
     // 以 "can_port_motor_id" 字符串为 key 存电机，支持 O(log n) 查找
     std::map<std::string, std::unique_ptr<Motor>> m_motors;
     std::thread m_process_thread;   // 后台接收/分发线程
     bool m_is_running;              // 运行标志；线程循环的退出条件
-    mutable std::mutex m_mutex;     // 保护 m_can_devices / m_motors / m_is_running
+    mutable std::mutex m_mutex;     // 保护 m_motors / m_is_running
 
     // ---------------- 内部工具方法 ----------------
     std::string MakeMotorKey(uint8_t can_port, uint8_t motor_id); // 生成 map 的 key

@@ -15,7 +15,7 @@ CLog* TheLog()
     return &_inst;
 }
 
-CLog::CLog()
+CLog::CLog() : m_filepath("motor_control.log"), m_fileopenmode("a+"), m_fp(nullptr)
 {
 }
 
@@ -49,14 +49,11 @@ bool CLog::Open()
 
 void CLog::Close()
 {
-	// 程序退出时不能访问锁，可能异常
-    // std::unique_lock<std::recursive_mutex> lk(m_mutex);
-
     if (m_fp) {
         fflush(m_fp);
         fclose(m_fp);
+        m_fp = nullptr;
     }
-    m_fp = nullptr;
 }
 
 void CLog::Write(int level, const char* fmt, ...)

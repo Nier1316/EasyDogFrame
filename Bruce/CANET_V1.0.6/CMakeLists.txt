@@ -32,11 +32,18 @@ include_directories(
 # 线程库：Linux 下对应 -lpthread
 find_package(Threads REQUIRED)
 
+# ---------------- 输出目录 ----------------
+# 必须在 add_executable / add_library 之前设置，否则不生效
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
+
 # ---------------- 框架源文件 ----------------
-# 按分层顺序排列：底层驱动 → 管理层 → 应用门面
+# 按分层顺序排列：底层驱动 → BSP 层 → 管理层 → 应用门面
 set(FRAMEWORK_SOURCES
+    src/bsp/bsp_can.cpp        # BSP 层（CAN 硬件抽象）
     src/motor.cpp              # 电机驱动层
-    src/can_device.cpp         # CAN 设备层
+    src/can_device.cpp         # CAN 设备层（BSP 内部使用）
     src/motor_manager.cpp      # 设备/电机统一管理
     src/motor_controller.cpp   # 应用层门面 API
 )
@@ -65,11 +72,6 @@ endif()
 # pthread：CANET 内部和本框架都使用了 std::thread
 target_link_libraries(motor_app PRIVATE Threads::Threads)
 
-# ---------------- 输出目录 ----------------
-# 可执行文件 → bin/，静态库/归档 → lib/
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
 
 # ---------------- 编译警告（仅 UNIX） ----------------
 # -Wall -Wextra -Wpedantic：打开常见的静态检查，尽早发现隐患

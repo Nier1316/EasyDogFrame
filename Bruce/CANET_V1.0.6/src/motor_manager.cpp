@@ -22,44 +22,39 @@ MotorManager& MotorManager::GetInstance() {
     return instance;
 }
 
-// 初始化：根据配置列表批量创建 CanDevice，再按硬件拓扑创建电机
+// 初始化：根据配置列表通过 BSP 层初始化所有 CAN 设备，再按硬件拓扑创建电机
 bool MotorManager::Initialize(const std::vector<CanDeviceConfig>& can_configs) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     printf("[INFO] Initializing MotorManager...\n");
 
-    // 1) 为每一条 CAN 配置创建一个 CanDevice 并完成初始化
-    //    任何一个设备初始化失败都会中断，但已创建的设备由 unique_ptr 自动释放
-    for (const auto& config : can_configs) {
-        auto device = std::make_unique<CanDevice>(config.device_idx);
-        if (!device->Initialize(config)) {
-            printf("[ERROR] Failed to initialize CAN device %d\n", config.device_idx);
-            return false;
-        }
-        m_can_devices[config.device_idx] = std::move(device);
+    // 通过 BSP 层初始化所有 CAN 设备
+    BspCan& bsp = BspCan::GetInstance();
+    if (!bsp.InitAllDevices(can_configs)) {
+        printf("[ERROR] Failed to initialize CAN devices via BSP\n");
+        return false;
     }
 
-    // 2) 根据硬件拓扑（4 口 × 3 电机）批量创建 Motor 实例
+    // 根据硬件拓扑（4 口 × 3 电机）批量创建 Motor 实例
     CreateMotors();
 
     printf("[INFO] MotorManager initialized with %zu CAN devices and %zu motors\n",
-           m_can_devices.size(), m_motors.size());
+           can_configs.size(), m_motors.size());
 
     return true;
 }
 
-// 启动：按序启动所有 CanDevice，然后拉起后台接收线程
+// 启动：通过 BSP 层启动所有 CAN 设备，然后拉起后台接收线程
 bool MotorManager::Start() {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     printf("[INFO] Starting MotorManager...\n");
 
-    // 启动每一个 CAN 设备；任一失败则整体失败（已启动的设备在 Stop 时统一回滚）
-    for (auto& pair : m_can_devices) {
-        if (!pair.second->Start()) {
-            printf("[ERROR] Failed to start CAN device %d\n", pair.first);
-            return false;
-        }
+    // 通过 BSP 层启动所有 CAN 设备
+    BspCan& bsp = BspCan::GetInstance();
+    if (!bsp.StartAllDevices()) {
+        printf("[ERROR] Failed to start CAN devices via BSP\n");
+        return false;
     }
 
     m_is_running = true;
@@ -84,10 +79,9 @@ bool MotorManager::Stop() {
         m_process_thread.join();
     }
 
-    // 依次停止所有 CAN 设备
-    for (auto& pair : m_can_devices) {
-        pair.second->Stop();
-    }
+    // 通过 BSP 层停止所有 CAN 设备
+    BspCan& bsp = BspCan::GetInstance();
+    bsp.StopAllDevices();
 
     printf("[INFO] MotorManager stopped\n");
     return true;
@@ -128,35 +122,23 @@ bool MotorManager::SendMotorCommand(uint8_t can_port, uint8_t motor_id, const Mo
         return false;
     }
 
-    auto device_it = m_can_devices.find(can_port);
-    if (device_it == m_can_devices.end()) {
-        printf("[ERROR] CAN device not found: can_port=%d\n", can_port);
-        return false;
-    }
-
-    // 让 Motor 把命令编码成 CAN 帧（ID 已填为 tx_id），再交给对应 CanDevice 发送
-    VCI_CAN_OBJ frame = motor->EncodeCommand(cmd);
-    return device_it->second->SendFrame(frame);
+    // 让 Motor 把命令编码成 CAN 帧（ID 已填为 tx_id），再交给 BSP 层发送
+    BspCanFrame frame = motor->EncodeCommand(cmd);
+    BspCan& bsp = BspCan::GetInstance();
+    return bsp.SendFrame(can_port, frame);
 }
 
 // 发送原始 CAN 帧：绕过 Motor 抽象层，直接指定 ID 和数据（测试/调试用）
 bool MotorManager::SendRawFrame(uint8_t can_port, uint32_t id, const uint8_t* data, uint8_t len) {
-    auto device_it = m_can_devices.find(can_port);
-    if (device_it == m_can_devices.end()) {
-        printf("[ERROR] CAN device not found: can_port=%d\n", can_port);
-        return false;
-    }
-
-    VCI_CAN_OBJ frame;
+    BspCanFrame frame;
     memset(&frame, 0, sizeof(frame));
-    frame.ID         = id;
-    frame.SendType   = 0;
-    frame.RemoteFlag = 0;
-    frame.ExternFlag = 0;
-    frame.DataLen    = (len > 8) ? 8 : len;
-    memcpy(frame.Data, data, frame.DataLen);
+    frame.id = id;
+    frame.dlc = (len > 8) ? 8 : len;
+    frame.is_extended = 0;
+    memcpy(frame.data, data, frame.dlc);
 
-    return device_it->second->SendFrame(frame);
+    BspCan& bsp = BspCan::GetInstance();
+    return bsp.SendFrame(can_port, frame);
 }
 
 // 广播：对所有电机执行同一命令；任一失败整体返回 false，但继续发完剩余电机
@@ -202,8 +184,11 @@ void MotorManager::Shutdown() {
     Stop();
 
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_can_devices.clear();   // unique_ptr 析构 → 调用 CanDevice 的析构 → Shutdown
     m_motors.clear();        // unique_ptr 析构 → Motor 被释放
+
+    // 通过 BSP 层关闭所有设备
+    BspCan& bsp = BspCan::GetInstance();
+    bsp.ShutdownAll();
 
     printf("[INFO] MotorManager shutdown\n");
 }
@@ -234,21 +219,23 @@ void MotorManager::CreateMotors() {
 }
 
 // 后台接收线程主循环：
-//   轮询每个 CanDevice → 读取所有帧 → 按 (can_port, rx_id) 匹配到 Motor → 更新状态缓存
+//   轮询每个 CAN 设备 → 读取所有帧 → 按 (can_port, rx_id) 匹配到 Motor → 更新状态缓存
 // 每次轮询后 sleep 10ms，避免空转打满 CPU；灵敏度与 CPU 占用之间的折中
 void MotorManager::ProcessCanData() {
     printf("[INFO] CAN data processing thread started\n");
 
+    BspCan& bsp = BspCan::GetInstance();
+
     while (m_is_running) {
         // 依次轮询 4 个 CAN 口；每次最多阻塞 10ms 等待数据
-        for (auto& pair : m_can_devices) {
-            std::vector<VCI_CAN_OBJ> frames;
-            if (pair.second->ReceiveFrames(frames, 10)) {
+        for (uint8_t can_port = 0; can_port < 4; can_port++) {
+            std::vector<BspCanFrame> frames;
+            if (bsp.ReceiveFrames(can_port, frames, 10)) {
                 // 对每一帧：在所有电机里找到 (can_port 匹配 && rx_id 匹配) 的那一个
                 for (const auto& frame : frames) {
-                    for (auto& motor_pair : m_motors) {
-                        Motor* motor = motor_pair.second.get();
-                        if (motor->GetCanPort() == pair.first && motor->GetRxId() == frame.ID) {
+                    auto motors = GetAllMotors();
+                    for (auto motor : motors) {
+                        if (motor->GetCanPort() == can_port && motor->GetRxId() == frame.id) {
                             MotorStatus status = motor->DecodeStatus(frame);
                             motor->UpdateStatus(status);
                             break;   // 已匹配到唯一目标，跳出电机遍历

@@ -13,7 +13,7 @@
 #include <cstdint>
 #include <mutex>             // std::mutex：保护状态字段的并发访问
 #include "data_types.h"      // MotorCommand / MotorStatus / ErrorCode
-#include "CANET.h"           // VCI_CAN_OBJ：CANET 库的 CAN 帧结构
+#include "bsp/bsp_can.h"     // BspCanFrame：BSP 层的 CAN 帧结构
 
 class Motor {
 public:
@@ -48,8 +48,8 @@ public:
 
     // ---------------- 供 MotorManager 内部调用（非应用层 API）----------------
     void UpdateStatus(const MotorStatus& status);           // 后台线程收到新状态后更新缓存
-    VCI_CAN_OBJ EncodeCommand(const MotorCommand& cmd);     // 将命令打包为 CAN 帧（ID 用 m_tx_id）
-    MotorStatus DecodeStatus(const VCI_CAN_OBJ& frame);     // 从接收帧解出状态
+    BspCanFrame EncodeCommand(const MotorCommand& cmd);     // 将命令打包为 CAN 帧（ID 用 m_tx_id）
+    MotorStatus DecodeStatus(const BspCanFrame& frame);     // 从接收帧解出状态
 
 private:
     uint8_t     m_can_port;        // 所属 CAN 口（0~3），决定走哪个 CanDevice

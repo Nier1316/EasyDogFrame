@@ -71,6 +71,10 @@ struct MotorStatus {
 //                       CAN 设备（CANET）配置
 // =====================================================================
 
+// TCP 工作模式常量
+#define TCP_CLIENT  0   // 客户端模式
+#define TCP_SERVER  1   // 服务器模式
+
 /**
  * @brief CAN 设备（CANET 转换器）配置
  * @details 每个 CANET 设备通过 TCP 与上位机通信，本结构体描述其连接参数。

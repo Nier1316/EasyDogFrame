@@ -108,25 +108,24 @@ void Motor::UpdateStatus(const MotorStatus& status) {
 }
 
 // ------------------------------------------------------------------
-// 命令打包：构造一个 VCI_CAN_OBJ（CAN 帧），填 ID 与 8 字节数据区
+// 命令打包：构造一个 BspCanFrame（CAN 帧），填 ID 与 8 字节数据区
 // ------------------------------------------------------------------
-VCI_CAN_OBJ Motor::EncodeCommand(const MotorCommand& cmd) {
-    VCI_CAN_OBJ frame;
+BspCanFrame Motor::EncodeCommand(const MotorCommand& cmd) {
+    BspCanFrame frame;
     memset(&frame, 0, sizeof(frame));  // 清零，避免脏数据触发未预期标志
 
-    frame.ID         = m_tx_id;        // 发送 ID：上位机 → 电机
-    frame.DataLen    = 8;              // 固定使用 8 字节数据区
-    frame.ExternFlag = 0;              // 标准帧（11 位 ID）
-    frame.RemoteFlag = 0;              // 数据帧（非远程请求帧）
+    frame.id = m_tx_id;                // 发送 ID：上位机 → 电机
+    frame.dlc = 8;                     // 固定使用 8 字节数据区
+    frame.is_extended = 0;             // 标准帧（11 位 ID）
 
-    EncodeMotorCommand(frame.Data, cmd);  // 实际填充数据区
+    EncodeMotorCommand(frame.data, cmd);  // 实际填充数据区
     return frame;
 }
 
 // 从接收帧解出 MotorStatus；调用者需保证帧 ID 确实是本电机的 m_rx_id
-MotorStatus Motor::DecodeStatus(const VCI_CAN_OBJ& frame) {
+MotorStatus Motor::DecodeStatus(const BspCanFrame& frame) {
     MotorStatus status;
-    DecodeMotorStatus(frame.Data, status);
+    DecodeMotorStatus(frame.data, status);
     return status;
 }
 

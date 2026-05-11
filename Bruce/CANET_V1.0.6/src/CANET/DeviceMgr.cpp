@@ -34,9 +34,10 @@ DeviceMgr::DeviceMgr()
 
 DeviceMgr::~DeviceMgr()
 {
+    m_destroyed = true;
     // Global object exit may occur crash when close device!
     // ClearDevice();
-    
+
     cc_socket_cleanup();
     cc_time_end_period(1);
 }
@@ -65,6 +66,10 @@ Device* DeviceMgr::FindDevice(DWORD type, DWORD idx)
 
 bool DeviceMgr::DeleteDevice(DWORD type, DWORD idx)
 {
+    if (m_destroyed) {
+        return true;
+    }
+
     Device *dev = FindDevice(type, idx);
     if (!dev) {
         return false;
