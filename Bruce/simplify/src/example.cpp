@@ -139,3 +139,92 @@ void Example4_SharedData() {
 
     printf("  最终 speed = %.1f（期望约 5.0）\n", shared.get<float>("speed"));
 }
+
+// ================= 示例 5：重复注册异常测试 =================
+void Example5_DuplicateRegister() {
+    printf("\n========== Example 5: Duplicate Register Test ==========\n");
+    ThreadManager mgr;
+
+    mgr.register_thread("task", []() {}, ThreadMode::ONCE);
+    printf("  第一次注册: 成功\n");
+
+    try {
+        mgr.register_thread("task", []() {}, ThreadMode::ONCE);
+        printf("  第二次注册: 未抛出异常（不符合预期）\n");
+    } catch (const std::runtime_error& e) {
+        printf("  第二次注册: 捕获异常 \"%s\"（期望: 抛出异常）\n", e.what());
+    }
+}
+
+// ================= 示例 6：线程重启测试 =================
+void Example6_ThreadRestart() {
+    printf("\n========== Example 6: Thread Restart Test ==========\n");
+    ThreadManager mgr;
+    int run_count = 0;
+
+    mgr.register_thread("task", [&run_count]() {
+        run_count++;
+        printf("  [ONCE] 第 %d 次运行\n", run_count);
+    }, ThreadMode::ONCE);
+
+    // 第一次启动，等待自然结束
+    mgr.start_thread("task");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    printf("  第一次完成后状态: %s\n", state_str(mgr.get_thread_state("task")));
+
+    // 从 STOPPED 重新启动
+    mgr.start_thread("task");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    printf("  第二次完成后状态: %s\n", state_str(mgr.get_thread_state("task")));
+
+    printf("  共运行 %d 次（期望: 2）\n", run_count);
+}
+
+// ================= 示例 7：析构自动清理测试 =================
+void Example7_AutoCleanup() {
+    printf("\n========== Example 7: Auto Cleanup Test ==========\n");
+    std::atomic<int> cleanup_count{0};
+
+    {
+        ThreadManager mgr;
+        mgr.register_thread("loop_task", [&cleanup_count]() {
+            cleanup_count++;
+        }, ThreadMode::LOOP, 100);
+
+        mgr.start_thread("loop_task");
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        printf("  析构前执行次数: %d\n", cleanup_count.load());
+        printf("  mgr 即将析构（不手动 stop）...\n");
+    } // mgr 析构，自动 stop + join 所有线程
+
+    // 能到这里说明析构成功 join 了线程，线程已停止
+    printf("  析构后执行次数: %d（与析构前相同，线程已停止）\n", cleanup_count.load());
+}
+
+// ================= 示例 8：状态查询测试 =================
+void Example8_StateQuery() {
+    printf("\n========== Example 8: State Query Test ==========\n");
+    ThreadManager mgr;
+
+    // 未注册时
+    printf("  未注册时: %s（期望: UNREGISTERED）\n",
+           state_str(mgr.get_thread_state("task")));
+
+    // 注册后
+    mgr.register_thread("task", []() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }, ThreadMode::ONCE);
+    printf("  注册后:   %s（期望: REGISTERED）\n",
+           state_str(mgr.get_thread_state("task")));
+
+    // 启动后立刻查询（任务执行中）
+    mgr.start_thread("task");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    printf("  运行中:   %s（期望: RUNNING）\n",
+           state_str(mgr.get_thread_state("task")));
+
+    // 等待任务完成
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    printf("  完成后:   %s（期望: STOPPED）\n",
+           state_str(mgr.get_thread_state("task")));
+}

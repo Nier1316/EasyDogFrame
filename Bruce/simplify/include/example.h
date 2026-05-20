@@ -9,3 +9,7 @@ void Example1_RawCanFrameTest();
 void Example2_OnceMode();
 void Example3_LoopMode();
 void Example4_SharedData();
+void Example5_DuplicateRegister();
+void Example6_ThreadRestart();
+void Example7_AutoCleanup();
+void Example8_StateQuery();

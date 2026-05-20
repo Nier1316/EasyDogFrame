@@ -102,6 +102,11 @@ void ThreadManager::register_thread(const std::string& name, std::function<void(
  * 创建 std::thread 并绑定到 run_thread()，线程立即开始执行。
  * 启动前重置 stop_flag，支持已停止的线程重新启动。
  * 只允许从 REGISTERED 或 STOPPED 状态启动，防止重复启动同一线程。
+ *
+ * 关键细节：重启前必须先 join 旧线程。
+ * ONCE 线程执行完毕后，std::thread 对象仍然是 joinable 的。
+ * 若直接用赋值覆盖一个 joinable 的 std::thread，会触发 std::terminate()。
+ * run_thread 不持有 threads_mutex_，因此在持锁状态下 join 不会死锁。
  */
 void ThreadManager::start_thread(const std::string& name) {
     std::lock_guard<std::mutex> lock(threads_mutex_);
@@ -114,9 +119,12 @@ void ThreadManager::start_thread(const std::string& name) {
     if (s != ThreadState::REGISTERED && s != ThreadState::STOPPED)
         throw std::runtime_error("Thread is already running: " + name);
 
+    // 旧线程执行完毕后仍是 joinable，覆盖前必须先 join 回收
+    if (info->thread.joinable())
+        info->thread.join();
+
     info->stop_flag = false;
     info->state = ThreadState::REGISTERED;
-    // 将 run_thread 作为线程入口，传入裸指针（生命周期由 unique_ptr 保证）
     info->thread = std::thread(&ThreadManager::run_thread, this, info);
 }
 

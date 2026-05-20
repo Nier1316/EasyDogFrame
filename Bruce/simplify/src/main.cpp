@@ -35,9 +35,10 @@ int main(int argc, char* argv[]){
     // printf("   Demo Completed\n");
     // printf("========================================\n");
 
-    // Example2_OnceMode();
-    // Example3_LoopMode();
-    Example4_SharedData();
+    // Example5_DuplicateRegister();
+    // Example6_ThreadRestart();
+    Example7_AutoCleanup();
+    // Example8_StateQuery();
 
     return 0;
 }
