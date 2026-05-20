@@ -1,0 +1,57 @@
+[
+{
+  "directory": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/build",
+  "command": "/usr/bin/g++  -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/motor_drive -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/bsp -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/lib -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base -g -Wall -Wextra -Wpedantic -std=gnu++14 -o CMakeFiles/can_motor_app.dir/src/main.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/main.cpp",
+  "file": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/main.cpp"
+},
+{
+  "directory": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/build",
+  "command": "/usr/bin/g++  -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/motor_drive -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/bsp -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/lib -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base -g -Wall -Wextra -Wpedantic -std=gnu++14 -o CMakeFiles/can_motor_app.dir/src/example.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/example.cpp",
+  "file": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/example.cpp"
+},
+{
+  "directory": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/build",
+  "command": "/usr/bin/g++  -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/motor_drive -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/bsp -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/lib -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base -g -Wall -Wextra -Wpedantic -std=gnu++14 -o CMakeFiles/can_motor_app.dir/src/can_device.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/can_device.cpp",
+  "file": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/can_device.cpp"
+},
+{
+  "directory": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/build",
+  "command": "/usr/bin/g++  -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/motor_drive -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/bsp -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/lib -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base -g -Wall -Wextra -Wpedantic -std=gnu++14 -o CMakeFiles/can_motor_app.dir/src/bsp/bsp_can.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/bsp/bsp_can.cpp",
+  "file": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/bsp/bsp_can.cpp"
+},
+{
+  "directory": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/build",
+  "command": "/usr/bin/g++  -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/motor_drive -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/bsp -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/lib -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base -g -Wall -Wextra -Wpedantic -std=gnu++14 -o CMakeFiles/can_motor_app.dir/src/motor_drive/ele_motor.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/motor_drive/ele_motor.cpp",
+  "file": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/motor_drive/ele_motor.cpp"
+},
+{
+  "directory": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/build",
+  "command": "/usr/bin/g++  -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/motor_drive -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/bsp -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/lib -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base -g -Wall -Wextra -Wpedantic -std=gnu++14 -o CMakeFiles/can_motor_app.dir/src/base/common.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base/common.cpp",
+  "file": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base/common.cpp"
+},
+{
+  "directory": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/build",
+  "command": "/usr/bin/g++  -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/motor_drive -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/bsp -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/lib -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base -g -Wall -Wextra -Wpedantic -std=gnu++14 -o CMakeFiles/can_motor_app.dir/src/base/crc16.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base/crc16.cpp",
+  "file": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base/crc16.cpp"
+},
+{
+  "directory": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/build",
+  "command": "/usr/bin/g++  -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/motor_drive -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/bsp -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/lib -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base -g -Wall -Wextra -Wpedantic -std=gnu++14 -o CMakeFiles/can_motor_app.dir/src/base/log.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base/log.cpp",
+  "file": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base/log.cpp"
+},
+{
+  "directory": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/build",
+  "command": "/usr/bin/g++  -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/motor_drive -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/bsp -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/lib -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base -g -Wall -Wextra -Wpedantic -std=gnu++14 -o CMakeFiles/can_motor_app.dir/src/base/jsoncpp/jsoncpp.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base/jsoncpp/jsoncpp.cpp",
+  "file": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base/jsoncpp/jsoncpp.cpp"
+},
+{
+  "directory": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/build",
+  "command": "/usr/bin/g++  -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/motor_drive -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/bsp -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/lib -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base -g -Wall -Wextra -Wpedantic -std=gnu++14 -o CMakeFiles/can_motor_app.dir/src/base/md5/aw_md5.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base/md5/aw_md5.cpp",
+  "file": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base/md5/aw_md5.cpp"
+},
+{
+  "directory": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/build",
+  "command": "/usr/bin/g++  -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/motor_drive -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/include/bsp -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/lib -I/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base -g -Wall -Wextra -Wpedantic -std=gnu++14 -o CMakeFiles/can_motor_app.dir/src/base/platform/linux/network.cpp.o -c /home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base/platform/linux/network.cpp",
+  "file": "/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/src/base/platform/linux/network.cpp"
+}
+]

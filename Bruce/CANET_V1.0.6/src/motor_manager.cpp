@@ -68,20 +68,29 @@ bool MotorManager::Start() {
 
 // 停止：先通知后台线程退出，再停所有 CAN 设备
 bool MotorManager::Stop() {
+    // 先停止所有 CAN 设备，中断 ReceiveFrames 的阻塞
+    BspCan& bsp = BspCan::GetInstance();
+    bsp.StopAllDevices();
+
     {
         // 仅在设置标志位时加锁，避免持锁 join 引发死锁
         std::lock_guard<std::mutex> lock(m_mutex);
         m_is_running = false;
     }
 
-    // 等待后台线程安全退出（线程循环会检测 m_is_running 并自行 break）
+    // 等待后台线程安全退出，但设置超时以防卡死
     if (m_process_thread.joinable()) {
-        m_process_thread.join();
+        // 尝试等待线程退出，最多等待 2 秒
+        auto start = std::chrono::steady_clock::now();
+        while (m_process_thread.joinable()) {
+            m_process_thread.join();
+            auto elapsed = std::chrono::steady_clock::now() - start;
+            if (elapsed > std::chrono::seconds(2)) {
+                printf("[WARNING] Thread did not exit within timeout, forcing exit\n");
+                break;
+            }
+        }
     }
-
-    // 通过 BSP 层停止所有 CAN 设备
-    BspCan& bsp = BspCan::GetInstance();
-    bsp.StopAllDevices();
 
     printf("[INFO] MotorManager stopped\n");
     return true;
@@ -227,10 +236,12 @@ void MotorManager::ProcessCanData() {
     BspCan& bsp = BspCan::GetInstance();
 
     while (m_is_running) {
-        // 依次轮询 4 个 CAN 口；每次最多阻塞 10ms 等待数据
+        // 依次轮询 4 个 CAN 口；每次最多阻塞 1ms 等待数据，频繁检查 m_is_running
         for (uint8_t can_port = 0; can_port < 4; can_port++) {
+            if (!m_is_running) break;  // 快速响应停止信号
+
             std::vector<BspCanFrame> frames;
-            if (bsp.ReceiveFrames(can_port, frames, 10)) {
+            if (bsp.ReceiveFrames(can_port, frames, 1)) {  // 改为 1ms 超时
                 // 对每一帧：在所有电机里找到 (can_port 匹配 && rx_id 匹配) 的那一个
                 for (const auto& frame : frames) {
                     auto motors = GetAllMotors();
@@ -245,8 +256,8 @@ void MotorManager::ProcessCanData() {
             }
         }
 
-        // 主循环节流；10ms 足够应对大多数电机的状态刷新频率（≤100Hz）
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        // 主循环节流；1ms 足够应对大多数电机的状态刷新频率（≤100Hz）
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     printf("[INFO] CAN data processing thread stopped\n");

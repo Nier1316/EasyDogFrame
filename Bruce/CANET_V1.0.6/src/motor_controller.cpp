@@ -91,7 +91,7 @@ bool MotorController::EnableMotor(uint8_t can_port, uint8_t motor_id) {
                can_port, motor_id);
         return false;
     }
-
+ 
     printf("[INFO] Enable command sent: can_port=%d, motor_id=%d\n", can_port, motor_id);
     return true;
 }

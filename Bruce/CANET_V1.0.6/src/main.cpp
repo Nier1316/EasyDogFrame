@@ -19,49 +19,43 @@ MotorController* g_controller = nullptr;
  * @brief 信号处理函数：捕获 SIGINT / SIGTERM，触发优雅退出
  */
 void SignalHandler(int sig) {
-    printf("\n[INFO] Received signal %d, shutting down...\n", sig);
-    if (g_controller) {
-        g_controller->Stop();
-    }
-    exit(0);
+    printf("\n[INFO] Received signal %d, exiting immediately...\n", sig);
+    fflush(stdout);
+    fflush(stderr);
+
+    // 不等待 Stop() 完成，直接强制退出
+    _exit(0);
 }
 
-// ================= 示例 1：基本电机控制（三种模式） =================
+// ================= 示例 1：基本电机控制（阻抗模式） =================
 void Example1_BasicControl() {
     printf("\n========== Example 1: Basic Motor Control (Three Modes) ==========\n");
 
     MotorController controller;
+    g_controller = &controller;
 
     if (!controller.Initialize()) {
         printf("[ERROR] Failed to initialize controller\n");
+        g_controller = nullptr;
         return;
     }
     if (!controller.Start()) {
         printf("[ERROR] Failed to start controller\n");
+        g_controller = nullptr;
         return;
     }
 
     printf("[INFO] System started. Total motors: %d\n", controller.GetMotorCount());
 
-    // 使能电机
+    // 使能 can0 上 1 号电机
     printf("\n[ACTION] Enabling motor (can0, id=1)\n");
     controller.EnableMotor(0, 1);
     sleep(1);
 
-    // 模式 1：阻抗控制
-    printf("\n[ACTION] Impedance control: pos=0, vel=0, kp=10, kd=1, torque=0\n");
-    controller.ImpedanceControl(0, 1, 0, 0, 10, 1, 0);
-    sleep(2);
-
-    // 模式 2：速度控制
-    printf("\n[ACTION] Speed control: vel=5 rad/s, kp=10, ki=0.1\n");
-    controller.SpeedControl(0, 1, 5.0f, 10.0f, 0.1f);
-    sleep(2);
-
-    // 模式 3：位置控制
-    printf("\n[ACTION] Position control: pos=1 rad, kvp=5, kp=10, kd=1, kvi=0.1\n");
-    controller.PositionControl(0, 1, 1.0f, 5.0f, 10.0f, 1.0f, 0.1f);
-    sleep(2);
+    // 设置阻抗模式：kp=0, kd=0, pos=0, vel=0, torque=5
+    printf("\n[ACTION] Impedance control: pos=0, vel=0, kp=0, kd=0, torque=5\n");
+    controller.ImpedanceControl(0, 1, 0, 0, 0, 0, 5);
+    sleep(5);
 
     controller.PrintMotorStatus(0, 1);
 
@@ -70,78 +64,159 @@ void Example1_BasicControl() {
     sleep(1);
 
     controller.Stop();
+    g_controller = nullptr;
     printf("[INFO] Example 1 completed\n");
 }
 
-// ================= 示例 2：同一 CAN 口上的多电机协同 =================
+// ================= 示例 2：读取所有 12 个电机的状态 =================
 void Example2_MultiMotorControl() {
-    printf("\n========== Example 2: Multi-Motor Control ==========\n");
+    printf("\n========== Example 2: Read All 12 Motors Status ==========\n");
 
     MotorController controller;
+    g_controller = &controller;
     if (!controller.Initialize() || !controller.Start()) {
         printf("[ERROR] Failed to initialize/start controller\n");
+        g_controller = nullptr;
         return;
     }
     printf("[INFO] System started. Total motors: %d\n", controller.GetMotorCount());
 
-    // 使能 can0 的 3 个电机
-    printf("\n[ACTION] Enabling all motors on can0\n");
-    for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
-        controller.EnableMotor(0, motor_id);
-    }
-    sleep(1);
-
-    // 给 3 个电机分别下不同的速度控制命令
-    printf("\n[ACTION] Starting all motors on can0 with different speeds\n");
-    for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
-        float vel = 2.0f + motor_id * 1.0f;  // 3.0 / 4.0 / 5.0 rad/s
-        controller.SpeedControl(0, motor_id, vel, 10.0f, 0.1f);
-        printf("  Motor %d: vel=%.1f rad/s\n", motor_id, vel);
-    }
-
-    sleep(3);
-    controller.PrintAllMotorStatus();
-
-    printf("\n[ACTION] Disabling all motors on can0\n");
-    for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
-        controller.DisableMotor(0, motor_id);
-    }
-    sleep(1);
-
-    controller.Stop();
-    printf("[INFO] Example 2 completed\n");
-}
-
-// ================= 示例 3：跨 CAN 口控制 =================
-void Example3_MultiCanPortControl() {
-    printf("\n========== Example 3: Multi-CAN Port Control ==========\n");
-
-    MotorController controller;
-    if (!controller.Initialize() || !controller.Start()) {
-        printf("[ERROR] Failed to initialize/start controller\n");
-        return;
-    }
-    printf("[INFO] System started. Total motors: %d\n", controller.GetMotorCount());
-
-    // 在 4 个 CAN 口上各启动 1 个电机
-    printf("\n[ACTION] Starting motors on all CAN ports\n");
+    // 使能所有 12 个电机
+    printf("\n[ACTION] Enabling all 12 motors\n");
     for (uint8_t can_port = 0; can_port < 4; can_port++) {
-        controller.EnableMotor(can_port, 1);
-        float vel = 2.0f + can_port * 1.0f;
-        controller.SpeedControl(can_port, 1, vel, 10.0f, 0.1f);
-        printf("  CAN%d Motor 1: vel=%.1f rad/s\n", can_port, vel);
+        for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+            controller.EnableMotor(can_port, motor_id);
+        }
+    }
+    sleep(1);
+
+    // 给所有电机下速度控制命令
+    printf("\n[ACTION] Starting all motors with different speeds\n");
+    for (uint8_t can_port = 0; can_port < 4; can_port++) {
+        for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+            float vel = 2.0f + (can_port * 3 + motor_id) * 0.5f;
+            controller.SpeedControl(can_port, motor_id, vel, 10.0f, 0.1f);
+        }
     }
 
-    sleep(3);
-    controller.PrintAllMotorStatus();
+    sleep(2);
+
+    // 定期读取并输出所有 12 个电机的状态（扭矩、速度、位置）
+    printf("\n[ACTION] Reading motor status for 8 seconds...\n");
+    printf("%-8s %-10s %-12s %-12s %-12s\n", "Motor", "CAN Port", "Position", "Velocity", "Torque");
+    printf("%-8s %-10s %-12s %-12s %-12s\n", "------", "--------", "--------", "--------", "------");
+
+    for (int cycle = 0; cycle < 8; cycle++) {
+        for (uint8_t can_port = 0; can_port < 4; can_port++) {
+            for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+                MotorStatus status = controller.GetMotorStatus(can_port, motor_id);
+                printf("CAN%d-M%d  %-10d %-12.2f %-12.2f %-12.2f\n",
+                       can_port, motor_id,
+                       can_port * 3 + motor_id,
+                       status.position,
+                       status.velocity,
+                       status.torque);
+            }
+        }
+        printf("\n");
+        sleep(1);
+    }
 
     printf("\n[ACTION] Disabling all motors\n");
     for (uint8_t can_port = 0; can_port < 4; can_port++) {
-        controller.DisableMotor(can_port, 1);
+        for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+            controller.DisableMotor(can_port, motor_id);
+        }
     }
     sleep(1);
 
     controller.Stop();
+    g_controller = nullptr;
+    printf("[INFO] Example 2 completed\n");
+}
+
+// ================= 示例 3：读取位置并通过阻抗模式保持位置 =================
+void Example3_MultiCanPortControl() {
+    printf("\n========== Example 3: Read Position and Hold via Impedance Control ==========\n");
+
+    MotorController controller;
+    g_controller = &controller;
+    if (!controller.Initialize() || !controller.Start()) {
+        printf("[ERROR] Failed to initialize/start controller\n");
+        g_controller = nullptr;
+        return;
+    }
+    printf("[INFO] System started. Total motors: %d\n", controller.GetMotorCount());
+
+    // 使能所有 12 个电机
+    printf("\n[ACTION] Enabling all 12 motors\n");
+    for (uint8_t can_port = 0; can_port < 4; can_port++) {
+        for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+            controller.EnableMotor(can_port, motor_id);
+        }
+    }
+    sleep(1);
+
+    // 第一步：读取所有电机的当前位置
+    printf("\n[ACTION] Reading current positions of all motors\n");
+    printf("%-8s %-12s\n", "Motor", "Position");
+    printf("%-8s %-12s\n", "------", "--------");
+
+    float positions[4][4];  // positions[can_port][motor_id]
+    for (uint8_t can_port = 0; can_port < 4; can_port++) {
+        for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+            MotorStatus status = controller.GetMotorStatus(can_port, motor_id);
+            positions[can_port][motor_id] = status.position;
+            printf("CAN%d-M%d  %-12.2f\n", can_port, motor_id, status.position);
+        }
+    }
+
+    // 第二步：通过阻抗模式将位置设置为读取到的位置（保持位置）
+    printf("\n[ACTION] Setting impedance control to hold current positions\n");
+    printf("%-8s %-12s %-12s %-12s %-12s %-12s\n", "Motor", "Position", "Velocity", "Kp", "Kd", "Torque");
+    printf("%-8s %-12s %-12s %-12s %-12s %-12s\n", "------", "--------", "--------", "----", "----", "------");
+
+    for (uint8_t can_port = 0; can_port < 4; can_port++) {
+        for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+            float pos = positions[can_port][motor_id];
+            float vel = 0.0f;      // 目标速度为 0
+            float kp = 10.0f;      // 位置增益
+            float kd = 2.0f;       // 速度增益
+            float torque = 0.0f;   // 目标扭矩为 0
+
+            controller.ImpedanceControl(can_port, motor_id, pos, vel, kp, kd, torque);
+            printf("CAN%d-M%d  %-12.2f %-12.2f %-12.2f %-12.2f %-12.2f\n",
+                   can_port, motor_id, pos, vel, kp, kd, torque);
+        }
+    }
+
+    // 第三步：监测 5 秒，观察电机是否保持位置
+    printf("\n[ACTION] Monitoring motor positions for 5 seconds...\n");
+    printf("%-8s %-12s %-12s %-12s\n", "Motor", "Position", "Velocity", "Torque");
+    printf("%-8s %-12s %-12s %-12s\n", "------", "--------", "--------", "------");
+
+    for (int cycle = 0; cycle < 5; cycle++) {
+        for (uint8_t can_port = 0; can_port < 4; can_port++) {
+            for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+                MotorStatus status = controller.GetMotorStatus(can_port, motor_id);
+                printf("CAN%d-M%d  %-12.2f %-12.2f %-12.2f\n",
+                       can_port, motor_id, status.position, status.velocity, status.torque);
+            }
+        }
+        printf("\n");
+        sleep(1);
+    }
+
+    printf("\n[ACTION] Disabling all motors\n");
+    for (uint8_t can_port = 0; can_port < 4; can_port++) {
+        for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+            controller.DisableMotor(can_port, motor_id);
+        }
+    }
+    sleep(1);
+
+    controller.Stop();
+    g_controller = nullptr;
     printf("[INFO] Example 3 completed\n");
 }
 
@@ -150,8 +225,10 @@ void Example4_HealthCheck() {
     printf("\n========== Example 4: Motor Health Check ==========\n");
 
     MotorController controller;
+    g_controller = &controller;
     if (!controller.Initialize() || !controller.Start()) {
         printf("[ERROR] Failed to initialize/start controller\n");
+        g_controller = nullptr;
         return;
     }
     printf("[INFO] System started. Total motors: %d\n", controller.GetMotorCount());
@@ -190,6 +267,7 @@ void Example4_HealthCheck() {
     sleep(1);
 
     controller.Stop();
+    g_controller = nullptr;
     printf("[INFO] Example 4 completed\n");
 }
 
@@ -198,8 +276,10 @@ void Example5_LongRunning() {
     printf("\n========== Example 5: Long Running (All 12 Motors) ==========\n");
 
     MotorController controller;
+    g_controller = &controller;
     if (!controller.Initialize() || !controller.Start()) {
         printf("[ERROR] Failed to initialize/start controller\n");
+        g_controller = nullptr;
         return;
     }
     printf("[INFO] System started. Total motors: %d\n", controller.GetMotorCount());
@@ -232,6 +312,7 @@ void Example5_LongRunning() {
     sleep(1);
 
     controller.Stop();
+    g_controller = nullptr;
     printf("[INFO] Example 5 completed\n");
 }
 
