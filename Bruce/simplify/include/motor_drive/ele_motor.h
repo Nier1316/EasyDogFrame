@@ -5,6 +5,7 @@
 #include <cstdint>
 #include "ele_motor_def.h"
 #include <thread>
+#include <mutex>
 
 
 

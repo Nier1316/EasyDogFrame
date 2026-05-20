@@ -6,3 +6,6 @@
 
 
 void Example1_RawCanFrameTest();
+void Example2_OnceMode();
+void Example3_LoopMode();
+void Example4_SharedData();

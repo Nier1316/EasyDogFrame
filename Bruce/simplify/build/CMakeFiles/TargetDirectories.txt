@@ -1,3 +1,0 @@
-/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/build/CMakeFiles/can_motor_app.dir
-/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/build/CMakeFiles/edit_cache.dir
-/home/sysu/Desktop/Dog_Train/Bruce/Bruce/simplify/build/CMakeFiles/rebuild_cache.dir

@@ -13,7 +13,7 @@ cmake_minimum_required(VERSION 3.8)
 project(SimplifyCAN)
 
 # C++ 标准：使用 C++14
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ============ 输出目录 ============
@@ -46,6 +46,9 @@ set(SOURCES
 
     # BSP 层
     src/bsp/bsp_can.cpp
+
+    # 线程管理层
+    src/thread/thread_manager.cpp
 
     # 电机驱动层
     src/motor_drive/ele_motor.cpp
