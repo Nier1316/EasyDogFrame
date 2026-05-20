@@ -1,10 +1,28 @@
 #ifndef ELE_MOTOR_H
 #define ELE_MOTOR_H
 
+#include <atomic>
 #include <cstdint>
 #include "ele_motor_def.h"
+#include <thread>
+
+
 
 class EleMotor {
+private:
+    // 状态标志
+    std::atomic<uint32_t> state_version;  // 状态版本号
+    std::atomic<bool> need_sync;          // 是否需要同步
+
+    // 线程相关   
+    std::thread sync_thread;
+    std::atomic<bool> running;
+    std::mutex state_mutex;
+
+    // 同步函数
+    void sync_thread_func();              // 后台线程主函数
+    void sync_state();                    // 同步状态到电机
+
 public:
     EleMotor() = default;
     ~EleMotor() = default;
@@ -33,6 +51,7 @@ public:
     void disable();
     bool has_error() const;
     void clear_error();
+    
 };
 
 float uint_to_float(int x_int, float x_min, float x_max, int bits);
