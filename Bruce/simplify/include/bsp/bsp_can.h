@@ -13,6 +13,7 @@
 #include <mutex>
 #include <map>
 #include "data_types.h"
+#include "CANET.h"           // VCI_CAN_OBJ 等类型定义
 
 /**
  * @struct BspCanFrame
@@ -153,6 +154,22 @@ private:
     // 禁用拷贝
     BspCan(const BspCan&) = delete;
     BspCan& operator=(const BspCan&) = delete;
+
+    // ============ 私有辅助函数：格式转换 ============
+
+    /**
+     * 将 BspCanFrame 转换为 VCI_CAN_OBJ
+     * @param frame: 应用层帧格式
+     * @param vci_frame: 输出的 CANET 库帧格式
+     */
+    static void ConvertFrameToVci(const BspCanFrame& frame, VCI_CAN_OBJ& vci_frame);
+
+    /**
+     * 将 VCI_CAN_OBJ 转换为 BspCanFrame
+     * @param vci_frame: CANET 库帧格式
+     * @param frame: 输出的应用层帧格式
+     */
+    static void ConvertFrameFromVci(const VCI_CAN_OBJ& vci_frame, BspCanFrame& frame);
 
     // 前向声明
     class CanDeviceWrapper;

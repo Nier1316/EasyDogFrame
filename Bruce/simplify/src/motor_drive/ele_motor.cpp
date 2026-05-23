@@ -173,6 +173,61 @@ bool unpack_cmd(EleMotor& motor, int timeout_ms)
 	return true;
 }
 
+// 直接解包 CAN 帧数据（不再接收，只解析）
+void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
+	if (!data || dlc < 6) {
+		return;
+	}
+
+	if ((data[0] & 0x80) && (data[5] & 0x7f)) {
+		// float2bag 读写参数后，电机返回数据包解包
+		uint8_t type = data[5];
+		union {
+			uint8_t uValue[4];
+			float fValue;
+		} canRecev;
+		canRecev.uValue[0] = data[1];
+		canRecev.uValue[1] = data[2];
+		canRecev.uValue[2] = data[3];
+		canRecev.uValue[3] = data[4];
+
+		// 根据参数类型更新电机结构体
+		switch (type) {
+			case MOTOR_OR_temperature:
+				motor.current_temp = canRecev.fValue;
+				break;
+			case MOTOR_OR_angle:
+				motor.current_position = canRecev.fValue;
+				break;
+			case MOTOR_OR_velocity:
+				motor.current_speed = canRecev.fValue;
+				break;
+			case MOTOR_OR_torque:
+				motor.current_torque = canRecev.fValue;
+				break;
+			case MOTOR_OR_error_register:
+				motor.error_code = (uint16_t)canRecev.fValue;
+				break;
+			default:
+				break;
+		}
+	} else {
+		// set_motor_para_bt 设置参数后，电机返回数据包解包
+		uint16_t p_int = (data[1] << 8) | data[2];
+		uint16_t v_int = (data[3] << 4) | (data[4] >> 4);
+		uint16_t i_int = ((data[4] & 0xF) << 8) | data[5];
+
+		float p = uint_to_float(p_int, P_MIN, P_MAX, 16);
+		float v = uint_to_float(v_int, V_MIN, V_MAX, 12);
+		float t = uint_to_float(i_int, -T_MAX, T_MAX, 12);
+
+		// 更新电机结构体
+		motor.current_position = p;
+		motor.current_speed = v;
+		motor.current_torque = t;
+	}
+}
+
 ////////////////////////////用户使用函数//////////////////////////////////////
 
 /////////////////////////////底层函数////////////////////////////////

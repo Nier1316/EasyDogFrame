@@ -50,6 +50,12 @@ set(SOURCES
     # 线程管理层
     src/thread/thread_manager.cpp
 
+    # 顶层应用
+    src/RoboTasks/robot_app.cpp
+
+    # 电机管理层
+    src/motor_manager.cpp
+
     # 电机驱动层
     src/motor_drive/ele_motor.cpp
 

@@ -1,28 +1,15 @@
 #ifndef ELE_MOTOR_H
 #define ELE_MOTOR_H
 
-#include <atomic>
+#include <mutex>
 #include <cstdint>
 #include "ele_motor_def.h"
-#include <thread>
-#include <mutex>
 
 
 
 class EleMotor {
 private:
-    // 状态标志
-    std::atomic<uint32_t> state_version;  // 状态版本号
-    std::atomic<bool> need_sync;          // 是否需要同步
-
-    // 线程相关   
-    std::thread sync_thread;
-    std::atomic<bool> running;
-    std::mutex state_mutex;
-
-    // 同步函数
-    void sync_thread_func();              // 后台线程主函数
-    void sync_state();                    // 同步状态到电机
+    std::mutex state_mutex;  // 保护状态字段的并发读写
 
 public:
     EleMotor() = default;
@@ -43,6 +30,13 @@ public:
     float target_torque;      // 目标扭矩 (Nm)
     float target_position;    // 目标位置 (degree)
 
+    // 控制模式和增益参数
+    int control_mode;         // 当前控制模式 (IMPEDANCE/SPEED/POSITION)
+    float kp;                 // 刚度/位置环Kp
+    float kd;                 // 阻尼/位置环Kd
+    float ki;                 // 速度环Ki
+    float kvp;                // 位置控制速度环Kp
+
     // 状态标志
     uint16_t error_code;      // 错误码
     bool enabled;             // 使能状态
@@ -52,7 +46,7 @@ public:
     void disable();
     bool has_error() const;
     void clear_error();
-    
+
 };
 
 float uint_to_float(int x_int, float x_min, float x_max, int bits);
@@ -66,6 +60,9 @@ void set_motor_para_bt(const EleMotor& motor, float p1, float p2, float p3, floa
 
 // CAN数据解包
 bool unpack_cmd(EleMotor& motor, int timeout_ms = 100);
+
+// 直接解包 CAN 帧数据（不再接收，只解析）
+void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc);
 
 #endif // ELE_MOTOR_H
 

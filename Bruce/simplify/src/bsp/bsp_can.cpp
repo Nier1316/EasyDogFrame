@@ -118,6 +118,32 @@ bool BspCan::IsDeviceRunning(uint8_t device_idx) const {
     return it->second->m_device.IsRunning();
 }
 
+// ============ 私有辅助函数：格式转换 ============
+
+/**
+ * 将 BspCanFrame 转换为 VCI_CAN_OBJ
+ * 这个函数封装了应用层格式到硬件库格式的转换逻辑
+ */
+void BspCan::ConvertFrameToVci(const BspCanFrame& frame, VCI_CAN_OBJ& vci_frame) {
+    memset(&vci_frame, 0, sizeof(vci_frame));
+    vci_frame.ID = frame.id;
+    vci_frame.DataLen = frame.dlc;
+    vci_frame.ExternFlag = frame.is_extended;
+    vci_frame.RemoteFlag = 0;
+    memcpy(vci_frame.Data, frame.data, 8);
+}
+
+/**
+ * 将 VCI_CAN_OBJ 转换为 BspCanFrame
+ * 这个函数封装了硬件库格式到应用层格式的转换逻辑
+ */
+void BspCan::ConvertFrameFromVci(const VCI_CAN_OBJ& vci_frame, BspCanFrame& frame) {
+    frame.id = vci_frame.ID;
+    frame.dlc = vci_frame.DataLen;
+    frame.is_extended = vci_frame.ExternFlag;
+    memcpy(frame.data, vci_frame.Data, 8);
+}
+
 // ============ 数据收发 ============
 
 bool BspCan::SendFrame(uint8_t device_idx, const BspCanFrame& frame) {
@@ -129,14 +155,9 @@ bool BspCan::SendFrame(uint8_t device_idx, const BspCanFrame& frame) {
         return false;
     }
 
-    // 转换 BspCanFrame 到 VCI_CAN_OBJ
+    // 使用转换函数：BspCanFrame → VCI_CAN_OBJ
     VCI_CAN_OBJ vci_frame;
-    memset(&vci_frame, 0, sizeof(vci_frame));
-    vci_frame.ID = frame.id;
-    vci_frame.DataLen = frame.dlc;
-    vci_frame.ExternFlag = frame.is_extended;
-    vci_frame.RemoteFlag = 0;
-    memcpy(vci_frame.Data, frame.data, 8);
+    ConvertFrameToVci(frame, vci_frame);
 
     if (!it->second->m_device.SendFrame(vci_frame)) {
         printf("[ERROR] Failed to send frame on device %d\n", device_idx);
@@ -172,14 +193,11 @@ bool BspCan::ReceiveFrames(uint8_t device_idx,
         return false;
     }
 
-    // 转换 VCI_CAN_OBJ 到 BspCanFrame
+    // 使用转换函数：VCI_CAN_OBJ → BspCanFrame
     frames.clear();
     for (const auto& vci_frame : vci_frames) {
         BspCanFrame frame;
-        frame.id = vci_frame.ID;
-        frame.dlc = vci_frame.DataLen;
-        frame.is_extended = vci_frame.ExternFlag;
-        memcpy(frame.data, vci_frame.Data, 8);
+        ConvertFrameFromVci(vci_frame, frame);
         frames.push_back(frame);
     }
 
