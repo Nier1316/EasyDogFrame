@@ -2,7 +2,8 @@
 #include <unistd.h>       // sleep()
 #include <signal.h>       // signal() / SIGINT / SIGTERM
 #include "bsp/bsp_can.h"   // 示例 1 直接使用 BSP 层
-
+#include "motor_manager.h"
+#include "thread/thread_manager.h"
 
 
 void Example1_RawCanFrameTest();
@@ -13,3 +14,4 @@ void Example5_DuplicateRegister();
 void Example6_ThreadRestart();
 void Example7_AutoCleanup();
 void Example8_StateQuery();
+void Example9_BasicMotorCtr();

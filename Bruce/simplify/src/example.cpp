@@ -228,3 +228,41 @@ void Example8_StateQuery() {
     printf("  完成后:   %s（期望: STOPPED）\n",
            state_str(mgr.get_thread_state("task")));
 }
+
+void Example9_BasicMotorCtr(){
+    // 初始化
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] Failed to initialize\n");
+    }
+    
+    // 启动线程
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    
+    // 使能电机
+    motor_mgr.EnableMotor(0, 1);
+    sleep(1);  // 等待电机启动
+    
+    // 发送阻抗控制命令
+    motor_mgr.SendImpedance(0, 1, 0.0f, 0.0f, 0.0f, 0.0f, 5.0f);
+    
+    // 循环读取状态
+    for (int i = 0; i < 100; i++) {
+        MotorStatus status = motor_mgr.GetStatus(0, 1);
+        printf("Pos: %.2f, Vel: %.2f, Torque: %.2f\n",
+               status.position, status.velocity, status.torque);
+        sleep(0.01);  // 10ms
+    }
+    
+    // 禁用电机
+    motor_mgr.DisableMotor(0, 1);
+    
+    // 关闭
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+      
+}
