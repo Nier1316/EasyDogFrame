@@ -15,3 +15,6 @@ void Example6_ThreadRestart();
 void Example7_AutoCleanup();
 void Example8_StateQuery();
 void Example9_BasicMotorCtr();
+void Example10_MultiMotorTorqueControl();
+void Example11_MoveAll();
+void Example12_SinusoidalMotion();

@@ -17,11 +17,17 @@
                     "description": "Enable pretty-printing for gdb",
                     "text": "-enable-pretty-printing",
                     "ignoreFailures": true
+                },
+                {
+                    "description": "Set print format to hex",
+                    "text": "set output-radix 16",
+                    "ignoreFailures": true
                 }
             ],
             "preLaunchTask": "Build Debug",
             "miDebuggerPath": "/usr/bin/gdb",
-            "sourceMap": {}
+            "sourceMap": {},
+            "numFormat": "hex"
         },
         {
             "name": "Debug Main (GDB with Args)",
@@ -41,10 +47,16 @@
                     "description": "Enable pretty-printing for gdb",
                     "text": "-enable-pretty-printing",
                     "ignoreFailures": true
+                },
+                {
+                    "description": "Set print format to hex",
+                    "text": "set output-radix 16",
+                    "ignoreFailures": true
                 }
             ],
             "preLaunchTask": "Build Debug",
-            "miDebuggerPath": "/usr/bin/gdb"
+            "miDebuggerPath": "/usr/bin/gdb",
+            "numFormat": "hex"
         },
         {
             "name": "Attach to Process",
@@ -58,9 +70,15 @@
                     "description": "Enable pretty-printing for gdb",
                     "text": "-enable-pretty-printing",
                     "ignoreFailures": true
+                },
+                {
+                    "description": "Set print format to hex",
+                    "text": "set output-radix 16",
+                    "ignoreFailures": true
                 }
             ],
-            "miDebuggerPath": "/usr/bin/gdb"
+            "miDebuggerPath": "/usr/bin/gdb",
+            "numFormat": "hex"
         },
         {
             "name": "Debug with Valgrind",
@@ -74,7 +92,8 @@
             "MIMode": "gdb",
             "miDebuggerPath": "/usr/bin/valgrind",
             "miDebuggerArgs": "--leak-check=full --show-leak-kinds=all --log-file=valgrind.log",
-            "preLaunchTask": "Build Debug"
+            "preLaunchTask": "Build Debug",
+            "numFormat": "hex"
         }
     ],
     "compounds": [

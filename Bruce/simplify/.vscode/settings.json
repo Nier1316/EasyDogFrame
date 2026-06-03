@@ -42,6 +42,7 @@
     "debug.console": "integratedTerminal",
     "debug.inlineValues": true,
     "debug.showDebugOutput": true,
+    "debug.showHexValues": true,
     "editor.rulers": [
         80,
         120
@@ -50,5 +51,11 @@
     "editor.tabSize": 4,
     "editor.insertSpaces": true,
     "files.trimTrailingWhitespace": true,
-    "files.insertFinalNewline": true
+    "files.insertFinalNewline": true,
+    "clangd.arguments": [
+        "--compile-commands-dir=${workspaceFolder}/build",
+        "--header-insertion=iwyu",
+        "--clang-tidy"
+    ],
+    "workbench.editor.enablePreview": false
 }

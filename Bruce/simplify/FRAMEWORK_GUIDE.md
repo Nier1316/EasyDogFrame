@@ -102,6 +102,208 @@ CAN3 → 右后腿 (RR)
   - CAN3: 4004
 ```
 
+### TCP 端口配置方法
+
+#### 1. 网络配置诊断
+
+在配置 TCP 连接前，需要确保网络连接正常：
+
+```bash
+# 查看网络接口配置
+ip addr show
+
+# 测试能否 ping 通目标设备
+ping -c 3 192.168.0.178
+
+# 查看路由表
+ip route show
+
+# 查看监听的端口
+ss -tuln | grep LISTEN
+```
+
+#### 2. 修改有线网络 IP 地址
+
+如果你的网络 IP 与 CAN 设备不在同一网段，需要修改网络配置：
+
+**查看当前网络连接**：
+```bash
+nmcli connection show --active
+```
+
+**修改有线网络 IP 地址**：
+```bash
+# 修改 IP 地址
+nmcli connection modify "有线连接 1" ipv4.addresses 192.168.0.100/24
+
+# 修改网关
+nmcli connection modify "有线连接 1" ipv4.gateway 192.168.0.1
+
+# 重新启动网络连接
+nmcli connection up "有线连接 1"
+
+# 验证修改
+ip addr show enp45s0
+ping -c 3 192.168.0.178
+```
+
+**参数说明**：
+- `ipv4.addresses` — IP 地址和子网掩码（/24 表示 255.255.255.0）
+- `ipv4.gateway` — 网关地址
+- `"有线连接 1"` — 网络连接名称（可通过 `nmcli connection show` 查看）
+
+#### 3. 在代码中配置 TCP 端口
+
+**基本配置**：
+```cpp
+#include "bsp/bsp_can.h"
+
+int main() {
+    BspCan& bsp = BspCan::GetInstance();
+    
+    // 配置 CAN0 设备
+    CanDeviceConfig config;
+    config.device_idx = 0;              // 设备索引（0-3）
+    config.port = 4001;                 // TCP 端口
+    config.server_ip = "192.168.0.178"; // 服务器 IP
+    config.work_mode = TCP_CLIENT;      // 工作模式（客户端）
+    
+    // 初始化设备
+    if (!bsp.InitDevice(0, config)) {
+        printf("[ERROR] Failed to initialize device 0\n");
+        return -1;
+    }
+    
+    // 启动设备
+    if (!bsp.StartDevice(0)) {
+        printf("[ERROR] Failed to start device 0\n");
+        return -1;
+    }
+    
+    printf("[INFO] Device 0 connected successfully\n");
+    
+    // ... 使用设备 ...
+    
+    bsp.StopDevice(0);
+    return 0;
+}
+```
+
+**多设备配置**：
+```cpp
+// 配置所有 4 个 CAN 设备
+std::vector<CanDeviceConfig> configs(4);
+
+for (int i = 0; i < 4; i++) {
+    configs[i].device_idx = i;
+    configs[i].port = 4001 + i;         // 端口：4001, 4002, 4003, 4004
+    configs[i].server_ip = "192.168.0.178";
+    configs[i].work_mode = TCP_CLIENT;
+}
+
+// 初始化所有设备
+if (!bsp.InitAllDevices(configs)) {
+    printf("[ERROR] Failed to initialize devices\n");
+    return -1;
+}
+
+// 启动所有设备
+if (!bsp.StartAllDevices()) {
+    printf("[ERROR] Failed to start devices\n");
+    return -1;
+}
+```
+
+#### 4. TCP 工作模式
+
+**客户端模式**（推荐用于上位机）：
+```cpp
+config.work_mode = TCP_CLIENT;
+config.server_ip = "192.168.0.178";  // 远端服务器 IP
+config.port = 4001;                  // 远端服务器端口
+```
+
+**服务器模式**（用于设备作为服务器）：
+```cpp
+config.work_mode = TCP_SERVER;
+config.server_ip = nullptr;          // 服务器模式不需要 IP
+config.port = 4001;                  // 本机监听端口
+```
+
+#### 5. 常见问题排查
+
+**问题 1：无法 ping 通目标 IP**
+
+```bash
+# 检查网络接口是否启用
+ip link show
+
+# 检查 IP 地址是否正确
+ip addr show
+
+# 检查路由是否正确
+ip route show
+
+# 尝试修改网络 IP 到同一网段
+nmcli connection modify "有线连接 1" ipv4.addresses 192.168.0.100/24
+nmcli connection up "有线连接 1"
+```
+
+**问题 2：端口被占用**
+
+```bash
+# 查看端口是否被占用
+ss -tuln | grep 4001
+
+# 如果被占用，可以修改端口号
+config.port = 4005;  // 改用其他端口
+```
+
+**问题 3：防火墙阻止连接**
+
+```bash
+# 查看防火墙状态
+sudo ufw status
+
+# 允许特定端口
+sudo ufw allow 4001:4004/tcp
+
+# 重启防火墙
+sudo ufw reload
+```
+
+#### 6. 验证连接
+
+```cpp
+// 发送测试帧
+BspCanFrame frame;
+frame.id = 0x123;
+frame.dlc = 8;
+frame.is_extended = 0;
+for (int i = 0; i < 8; i++) {
+    frame.data[i] = i;
+}
+
+if (bsp.SendFrame(0, frame)) {
+    printf("[INFO] Frame sent successfully\n");
+} else {
+    printf("[ERROR] Failed to send frame\n");
+}
+
+// 接收测试帧
+std::vector<BspCanFrame> frames;
+if (bsp.ReceiveFrames(0, frames, 1000)) {
+    printf("[INFO] Received %zu frames\n", frames.size());
+} else {
+    printf("[INFO] No frames received (timeout)\n");
+}
+
+// 查看统计信息
+printf("[INFO] Sent: %u, Received: %u\n",
+       bsp.GetSentFrameCount(0),
+       bsp.GetReceivedFrameCount(0));
+```
+
 ---
 
 ## 快速开始

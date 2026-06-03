@@ -17,12 +17,15 @@ void EleMotor::init() {
 
 void EleMotor::enable() {
     enabled = true;
-    float2bag(*this, 0.0f, 1, MOTOR_STRAT);
+    uint8_t start_frame[8] = {0x80, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, MOTOR_STRAT};
+    BspCan::GetInstance().Can_Tx(device_idx, motor_id, start_frame, 8);
 }
 
 void EleMotor::disable() {
     enabled = false;
-    float2bag(*this, 0.0f, 1, MOTOR_STOP);
+    // 发送停止命令帧：80 FF FF FF FF FF FF FD
+    uint8_t stop_frame[8] = {0x80, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, MOTOR_STOP};
+    BspCan::GetInstance().Can_Tx(device_idx, motor_id, stop_frame, 8);
 }
 
 bool EleMotor::has_error() const {
@@ -232,10 +235,10 @@ void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
 
 /////////////////////////////底层函数////////////////////////////////
 float uint_to_float(int x_int, float x_min, float x_max, int bits) {
-     /// converts unsigned int to float, given range and number of bits /// 
-     float span = x_max - x_min; float offset = x_min; 
-     return ((float)x_int)*span/((float)((1<<bits)-1)) + offset; 
-} 
+     /// converts unsigned int to float, given range and number of bits ///
+     float span = x_max - x_min; float offset = x_min;
+     return ((float)x_int)*span/((float)((1<<bits)-1)) + offset;
+}
 
 //float转uint
 unsigned int float_to_uint(float x, float x_min, float x_max, int bits){

@@ -6,6 +6,19 @@
 #include "motor_manager.h"
 #include <cstdio>
 
+RobotApp::~RobotApp() {
+    printf("[DEBUG] RobotApp destructor called\n");
+    fflush(stdout);
+    try {
+        stop();
+    } catch (const std::exception& e) {
+        printf("[ERROR] Exception in RobotApp destructor: %s\n", e.what());
+        fflush(stdout);
+    }
+    printf("[DEBUG] RobotApp destructor finished\n");
+    fflush(stdout);
+}
+
 bool RobotApp::init() {
     // 各模块向 thread_mgr_ 注册任务函数（不启动线程）
     if (!MotorManager::GetInstance().Initialize(thread_mgr_)) {

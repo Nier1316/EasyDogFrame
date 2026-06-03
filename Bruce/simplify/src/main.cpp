@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include "RoboTasks/robot_app.h"
+#include "example.h"
 
 static RobotApp g_app;
 static volatile bool g_running = true;
@@ -14,18 +15,20 @@ int main() {
     signal(SIGINT,  signal_handler);
     signal(SIGTERM, signal_handler);
 
-    if (!g_app.init()) {
-        printf("[ERROR] RobotApp init failed\n");
-        return -1;
-    }
+    // 运行示例11 - 全电机扭矩控制（CAN0~3）
+    // printf("[INFO] Running Example11_MoveAll...\n");
+    // Example11_MoveAll();
+    // printf("[INFO] Example11 completed.\n");
 
-    g_app.start();
-    printf("[INFO] Running. Press Ctrl+C to exit.\n");
+    // 运行示例12 - 正弦周期运动控制
+    // printf("[INFO] Running Example12_SinusoidalMotion...\n");
+    // Example12_SinusoidalMotion();
+    // printf("[INFO] Example12 completed.\n");
 
-    while (g_running) {
-        sleep(1);
-    }
+    // Example10_MultiMotorTorqueControl();
+    Example9_BasicMotorCtr();
 
-    g_app.stop();
     return 0;
 }
+
+

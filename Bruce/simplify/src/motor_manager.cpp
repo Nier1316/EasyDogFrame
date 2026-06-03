@@ -127,9 +127,7 @@ void MotorManager::EnableMotor(uint8_t can_port, uint8_t motor_id) {
 
     std::lock_guard<std::mutex> lock(m_motor_mutex[can_port][motor_id - 1]);
     EleMotor& motor = m_motors[can_port][motor_id - 1];
-    motor.enabled = true;
-    // 发送启动命令
-    float2bag(motor, 0.0f, 1, MOTOR_STRAT);
+    motor.enable();
     printf("[INFO] Motor enabled: CAN%d, motor_id=%d\n", can_port, motor_id);
 }
 
@@ -140,9 +138,7 @@ void MotorManager::DisableMotor(uint8_t can_port, uint8_t motor_id) {
 
     std::lock_guard<std::mutex> lock(m_motor_mutex[can_port][motor_id - 1]);
     EleMotor& motor = m_motors[can_port][motor_id - 1];
-    motor.enabled = false;
-    // 发送停止命令
-    float2bag(motor, 0.0f, 1, MOTOR_STOP);
+    motor.disable();
     printf("[INFO] Motor disabled: CAN%d, motor_id=%d\n", can_port, motor_id);
 }
 

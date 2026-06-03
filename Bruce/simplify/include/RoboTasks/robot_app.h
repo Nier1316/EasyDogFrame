@@ -17,6 +17,9 @@
 
 class RobotApp {
 public:
+    RobotApp() = default;
+    ~RobotApp();
+
     /**
      * @brief 初始化所有模块，向 thread_mgr_ 注册所有线程（不启动）
      * @return false 表示初始化失败（如 CAN 设备连接失败）
