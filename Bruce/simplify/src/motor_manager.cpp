@@ -231,7 +231,7 @@ MotorStatus MotorManager::GetStatus(uint8_t can_port, uint8_t motor_id) const {
     return status;
 }
 
-// 预留：单次发送任务，由外部 ThreadManager 以 LOOP 模式驱动
+// 单次发送任务，由外部 ThreadManager 以 LOOP 模式驱动
 void MotorManager::SendThreadFunc() {
     for (uint8_t can_port = 0; can_port < 4; can_port++) {
         for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
@@ -248,9 +248,9 @@ void MotorManager::SendThreadFunc() {
                     break;
                 case SPEED:
                     set_motor_para_bt(motor,
-                        motor.target_speed, motor.kp, 0, 0, motor.ki, SPEED);
+                        motor.target_speed, motor.kvp, 0, 0, motor.ki, SPEED);
                     break;
-                case POSITION:
+                case POSITION: 
                     set_motor_para_bt(motor,
                         motor.target_position, motor.kvp, motor.kp,
                         motor.kd, motor.ki, POSITION);

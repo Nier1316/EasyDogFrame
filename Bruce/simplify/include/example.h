@@ -18,3 +18,4 @@ void Example9_BasicMotorCtr();
 void Example10_MultiMotorTorqueControl();
 void Example11_MoveAll();
 void Example12_SinusoidalMotion();
+void Example13_MultiMotorSinusoidalMotion();

@@ -25,8 +25,13 @@ int main() {
     // Example12_SinusoidalMotion();
     // printf("[INFO] Example12 completed.\n");
 
+    // 运行示例13 - 多电机正弦周期运动控制
+    printf("[INFO] Running Example13_MultiMotorSinusoidalMotion...\n");
+    Example13_MultiMotorSinusoidalMotion();
+    printf("[INFO] Example13 completed.\n");
+
     // Example10_MultiMotorTorqueControl();
-    Example9_BasicMotorCtr();
+    // Example9_BasicMotorCtr();
 
     return 0;
 }

@@ -18,6 +18,7 @@
 #include "data_types.h"
 #include "thread/thread_manager.h"
 #include "bsp/bsp_can.h"
+#include "can_device.h"
 
 class MotorManager {
 public:
@@ -51,6 +52,7 @@ private:
     void ReceiveThreadFunc();  // 单次 CAN 轮询，1ms 间隔
     void SendThreadFunc();     // 预留：单次发送，1ms 间隔
 
+    std::vector<std::unique_ptr<CanDevice>> m_can_devices;
     EleMotor m_motors[4][3];
     mutable std::mutex m_motor_mutex[4][3];
 };

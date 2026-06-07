@@ -1,6 +1,7 @@
 #include "ele_motor.h"
 #include "bsp_can.h"
 #include "ele_motor_def.h"
+#include "motor_calibration.h"
 #include <vector>
 
 void EleMotor::init() {
@@ -228,6 +229,10 @@ void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
 		motor.current_position = p;
 		motor.current_speed = v;
 		motor.current_torque = t;
+
+		// 应用标定参数
+		ApplyMotorCalibration(motor.device_idx, motor.motor_id,
+							  motor.current_position, motor.current_speed, motor.current_torque);
 	}
 }
 

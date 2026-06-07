@@ -537,6 +537,15 @@ void Example12_SinusoidalMotion() {
         printf("[ERROR] Failed to initialize MotorManager\n");
         return;
     }
+    // 控制参数
+    const uint8_t can_port = 0;
+    const uint8_t motor_id = 1;
+    const float Kp = 200.0f;
+    const float Kd = 20.0f;
+    const float period = 2.0f;  // 2 秒周期
+    const float amplitude = 0.5f;  // 幅度 0.5，范围 0 ~ -1
+    const int total_loops = 200;  // 200 * 100ms = 20 秒（10 个完整周期）
+
 
     // 启动线程
     thread_mgr.start_thread("motor_receive");
@@ -547,19 +556,12 @@ void Example12_SinusoidalMotion() {
 
     // 使能电机
     printf("[INFO] Enabling CAN1 motor_id=1...\n");
-    motor_mgr.EnableMotor(1, 1);
+    motor_mgr.EnableMotor(can_port, motor_id);
     sleep(1);
     printf("[INFO] Motor enabled\n");
     fflush(stdout);
 
-    // 控制参数
-    const uint8_t can_port = 1;
-    const uint8_t motor_id = 1;
-    const float Kp = 200.0f;
-    const float Kd = 15.0f;
-    const float period = 2.0f;  // 2 秒周期
-    const float amplitude = 0.5f;  // 幅度 0.5，范围 0 ~ -1
-    const int total_loops = 200;  // 200 * 100ms = 20 秒（10 个完整周期）
+
 
     printf("\n[INFO] Starting sinusoidal motion...\n");
     printf("Time(s) | Pos(rad) | Vel(rad/s) | Torque(Nm) | Actual_Pos | Actual_Vel | Actual_Torque\n");
@@ -582,7 +584,7 @@ void Example12_SinusoidalMotion() {
 
         // 发送阻抗控制命令
         motor_mgr.SendImpedance(can_port, motor_id,
-                                target_pos, target_vel, Kp, Kd, 0.0f);
+                                target_pos*(-1), target_vel, Kp, Kd, 0.0f);
 
         // 读取实际状态
         MotorStatus status = motor_mgr.GetStatus(can_port, motor_id);
@@ -613,5 +615,142 @@ void Example12_SinusoidalMotion() {
     motor_mgr.Stop();
 
     printf("[INFO] Example12 completed\n");
+    fflush(stdout);
+}
+
+/**
+ * @brief 示例13：多电机正弦周期运动控制
+ * @details 控制 4 个电机进行正弦周期运动，方向相反
+ *          - CAN0 和 CAN3 的 1 号电机：位置 0 ~ +1 rad（向正方向）
+ *          - CAN1 和 CAN2 的 1 号电机：位置 0 ~ -1 rad（向负方向）
+ *          - 周期 T = 2 秒
+ *          - Kp = 200, Kd = 15
+ *          - 运动时间 20 秒（10 个完整周期）
+ */
+void Example13_MultiMotorSinusoidalMotion() {
+    printf("\n========== Example 13: Multi-Motor Sinusoidal Motion ==========\n");
+    printf("[INFO] 4 motors sinusoidal motion control (opposite directions)\n");
+    printf("[INFO] CAN0-M1, CAN3-M1: 0 ~ +1 rad (positive direction)\n");
+    printf("[INFO] CAN1-M1, CAN2-M1: 0 ~ -1 rad (negative direction)\n");
+    printf("[INFO] Period: 2 seconds\n");
+    printf("[INFO] Kp=200, Kd=15\n");
+    printf("[INFO] Duration: 20 seconds (10 cycles)\n\n");
+
+    // 初始化
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] Failed to initialize MotorManager\n");
+        return;
+    }
+
+    // 启动线程
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+    printf("[INFO] Threads started\n");
+    fflush(stdout);
+
+    // 定义 4 个电机
+    struct MotorInfo {
+        uint8_t can_port;
+        uint8_t motor_id;
+        const char* name;
+        int direction;  // 1 for positive (0~1), -1 for negative (0~-1)
+    };
+
+    MotorInfo motors[] = {
+        {0, 1, "CAN0-M1", 1},   // 正方向
+        {1, 1, "CAN1-M1", -1},  // 负方向
+        {2, 1, "CAN2-M1", -1},  // 负方向
+        {3, 1, "CAN3-M1", 1}    // 正方向
+    };
+    int motor_count = sizeof(motors) / sizeof(motors[0]);
+
+    // 使能所有电机
+    printf("[INFO] Enabling all %d motors...\n", motor_count);
+    for (int i = 0; i < motor_count; i++) {
+        motor_mgr.EnableMotor(motors[i].can_port, motors[i].motor_id);
+    }
+    sleep(1);
+    printf("[INFO] All motors enabled\n");
+    fflush(stdout);
+
+    // 控制参数
+    const float Kp = 200.0f;
+    const float Kd = 15.0f;
+    const float period = 2.0f;
+    const float amplitude = 0.5f;
+    const int total_loops = 200;  // 20 秒
+
+    printf("\n[INFO] Starting sinusoidal motion...\n");
+    printf("Time(s) | ");
+    for (int i = 0; i < motor_count; i++) {
+        printf("%-8s ", motors[i].name);
+    }
+    printf("\n--------|");
+    for (int i = 0; i < motor_count; i++) {
+        printf("----------");
+    }
+    printf("\n");
+    fflush(stdout);
+
+    for (int loop = 0; loop < total_loops; loop++) {
+        float elapsed_time = loop * 0.1f;
+
+        printf("%7.2f | ", elapsed_time);
+
+        for (int i = 0; i < motor_count; i++) {
+            // 计算目标位置（根据方向）
+            float target_pos;
+            if (motors[i].direction > 0) {
+                // 正方向：0 ~ +1
+                target_pos = amplitude * (1.0f - cosf(M_PI * elapsed_time / period));
+            } else {
+                // 负方向：0 ~ -1
+                target_pos = -amplitude * (1.0f - cosf(M_PI * elapsed_time / period));
+            }
+
+            // 计算目标速度
+            float target_vel;
+            if (motors[i].direction > 0) {
+                target_vel = amplitude * (M_PI / period) * sinf(M_PI * elapsed_time / period);
+            } else {
+                target_vel = -amplitude * (M_PI / period) * sinf(M_PI * elapsed_time / period);
+            }
+
+            // 发送阻抗控制命令
+            motor_mgr.SendImpedance(motors[i].can_port, motors[i].motor_id,
+                                    target_pos, target_vel, Kp, Kd, 0.0f);
+
+            // 读取实际状态
+            MotorStatus status = motor_mgr.GetStatus(motors[i].can_port, motors[i].motor_id);
+
+            printf("%.2f/%.2f ", status.position, status.velocity);
+        }
+        printf("\n");
+        fflush(stdout);
+
+        usleep(100000);  // 100ms
+    }
+
+    printf("\n[INFO] Sinusoidal motion completed (20 seconds, 10 cycles)\n");
+    fflush(stdout);
+
+    // 禁用所有电机
+    printf("[INFO] Disabling all motors...\n");
+    for (int i = 0; i < motor_count; i++) {
+        motor_mgr.DisableMotor(motors[i].can_port, motors[i].motor_id);
+    }
+    printf("[INFO] All motors disabled\n");
+    fflush(stdout);
+
+    // 清理
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+
+    printf("[INFO] Example13 completed\n");
     fflush(stdout);
 }
