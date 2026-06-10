@@ -54,6 +54,16 @@ int main() {
     // printf("[INFO] Running Example16_MotorTest...\n");
     // Example16_MotorTest();
     // printf("[INFO] Example16 completed.\n");
+    
+    // 运行示例17 - SimSync 仿真集成
+    // printf("[INFO] Running Example17_SimSyncIntegration...\n");
+    // Example17_SimSyncIntegration();
+    // printf("[INFO] Example17 completed.\n");
+
+    // 运行示例18 - LEG IK Control
+    printf("[INFO] Running Example18_LegIKControl...\n");
+    Example18_LegIKControl();
+    printf("[INFO] Example18 completed.\n");
 
     return 0;
 }

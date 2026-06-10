@@ -1,4 +1,6 @@
 #include "example.h"
+#include "SimSync.h"
+#include "leg_kinematics.h"
 #include "thread/thread_manager.h"
 #include <thread>
 #include <chrono>
@@ -1065,4 +1067,319 @@ void Example16_MotorTest() {
         usleep(100000);
         elapsed += 0.1f;
     }
+}
+
+// ================= 示例 17：SimSync 仿真集成 =================
+/**
+ * @brief 连接 MATLAB 仿真，发送关节角控制四足机器狗模型
+ *
+ * 关节映射：
+ *   CAN0 = FL(左前腿) → joints[0..2]
+ *   CAN1 = FR(右前腿) → joints[3..5]
+ *   CAN2 = RL(左后腿) → joints[6..8]
+ *   CAN3 = RR(右后腿) → joints[9..11]
+ *
+ * 每个 CAN 端口 3 个电机依次为：θ₁(髋外摆), θ₂(大腿), θ₃(小腿)
+ *
+ * 使用方式：
+ *   1. 先启动 MATLAB: quadruped_realtime(12345)
+ *   2. 再运行本程序
+ */
+void Example17_SimSyncIntegration() {
+    printf("\n========== Example 17: SimSync Simulation Integration ==========\n");
+    printf("[INFO] Connecting to MATLAB simulation at 127.0.0.1:12345\n");
+    printf("[INFO] Make sure quadruped_realtime.m is running first\n\n");
+
+    SimSync sim("127.0.0.1", 12345);
+    if (!sim.connected()) {
+        printf("[ERROR] Failed to connect to simulation server.\n");
+        printf("[ERROR] Start quadruped_realtime.m in MATLAB first.\n");
+        return;
+    }
+    printf("[INFO] Connected to simulation!\n\n");
+
+    // 关节角度映射表：CAN端口 → SimSync数组偏移
+    struct LegMap {
+        uint8_t can_port;      // CAN 端口
+        uint8_t joint_offset;  // 在 joints 数组中的起始偏移
+        const char* name;
+    };
+    const LegMap legs[4] = {
+        {0, 0,  "FL"},    // CAN0 = 左前腿
+        {1, 3,  "FR"},    // CAN1 = 右前腿
+        {2, 6,  "RL"},    // CAN2 = 左后腿
+        {3, 9,  "RR"},    // CAN3 = 右后腿
+    };
+
+    float joints[12] = {0};
+
+    // 设定站立姿态（所有腿相同）
+    auto set_standing = [&]() {
+        for (int i = 0; i < 4; i++) {
+            joints[legs[i].joint_offset + 0] = 0.0f;    // θ1: 髋外摆 0°
+            joints[legs[i].joint_offset + 1] = -30.0f;   // θ2: 大腿 -30°
+            joints[legs[i].joint_offset + 2] = 60.0f;    // θ3: 小腿 60°
+        }
+    };
+
+    // ============ Phase 1: 站立姿态 ============
+    printf("[Phase 1] Standing pose (3 seconds)...\n");
+    set_standing();
+    for (int i = 0; i < 150; i++) {  // 3s × 50Hz
+        if (!sim.send_deg(joints)) {
+            printf("[ERROR] Lost connection during Phase 1.\n");
+            return;
+        }
+        usleep(20000);  // 20ms = 50Hz
+    }
+    printf("[Phase 1] Done.\n\n");
+
+    // ============ Phase 2: Trot 步态运动 ============
+    // FL(0) + RR(3) 同相，FR(1) + RL(2) 反相
+    const float PERIOD     = 2.0f;     // 步态周期（秒）
+    const float AMP_HIP    = 5.0f;     // 髋外摆幅度
+    const float AMP_THIGH  = 15.0f;    // 大腿摆动幅度
+    const float AMP_CALF   = 15.0f;    // 小腿摆动幅度
+    const float OFFSET     = 30.0f;    // 大腿向前偏移基值
+    const float CALF_BASE  = 60.0f;    // 小腿角度基值
+
+    printf("[Phase 2] Trot gait motion (20 seconds)...\n");
+    for (int frame = 0; frame < 1000; frame++) {  // 20s × 50Hz
+        float t = frame * 0.02f;
+        float phase = 2.0f * M_PI * t / PERIOD;
+
+        for (int leg = 0; leg < 4; leg++) {
+            // FL(0) 和 RR(3) 同相 → phase
+            // FR(1) 和 RL(2) 反相 → phase + π
+            float leg_phase = (leg == 1 || leg == 2) ? phase + M_PI : phase;
+            float s = sinf(leg_phase);
+
+            joints[legs[leg].joint_offset + 0] =  AMP_HIP * s;         // θ1: 髋外摆
+            joints[legs[leg].joint_offset + 1] = -OFFSET + AMP_THIGH * s;  // θ2: 大腿
+            joints[legs[leg].joint_offset + 2] =  CALF_BASE - AMP_CALF * s; // θ3: 小腿
+        }
+
+        if (!sim.send_deg(joints)) {
+            printf("[ERROR] Lost connection during Phase 2.\n");
+            return;
+        }
+
+        // 每 25 帧（0.5 秒）打印一次
+        if (frame % 25 == 0) {
+            printf("  t=%5.1f | FL:θ1=%+5.1f θ2=%+5.1f θ3=%5.1f | FR:θ1=%+5.1f θ2=%+5.1f θ3=%5.1f\n",
+                   t,
+                   joints[0], joints[1], joints[2],
+                   joints[3], joints[4], joints[5]);
+        }
+
+        usleep(20000);
+    }
+    printf("[Phase 2] Done.\n\n");
+
+    // ============ Phase 3: 回到站立姿态 ============
+    printf("[Phase 3] Return to standing pose (1 second)...\n");
+    set_standing();
+    for (int i = 0; i < 50; i++) {
+        sim.send_deg(joints);
+        usleep(20000);
+    }
+    printf("[Phase 3] Done.\n");
+
+    printf("\n[INFO] Example17 completed. Close the MATLAB figure window to stop the simulation.\n");
+    fflush(stdout);
+}
+
+/**
+ * @brief Example18: 基于 IK 的真实电机控制 + 可选仿真同步
+ *
+ * 流程:
+ *   1. 足端位置 (身体坐标系) → hip_rotation_matrix 逆变换 → 髋坐标系
+ *   2. leg_ik() 解算得关节指令角 (rad)
+ *   3. 经 ApplyMotorCalibrationInverse 后发送给真实电机
+ *   4. 可选: SimSync 同步发仿真看一眼
+ *
+ * 足端轨迹: 原地 Trot 步态 (对角线腿同相摆动)
+ */
+void Example18_LegIKControl() {
+    printf("\n========== Example 18: IK-Based Motor Control ==========\n");
+    printf("[INFO] This example controls real motors using inverse kinematics.\n");
+    printf("[INFO] Robot will perform a trot gait via foot trajectory.\n\n");
+
+    // ---- 初始化 ----
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] Failed to initialize MotorManager\n");
+        return;
+    }
+
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    // ---- 可选: 连接 MATLAB 仿真 ----
+    SimSync sim("127.0.0.1", 12345);
+    if (sim.connected()) {
+        printf("[INFO] SimSync connected to MATLAB simulation\n");
+    } else {
+        printf("[INFO] SimSync not connected (simulation visualization disabled)\n");
+    }
+
+    // ---- 使能所有 12 个电机 ----
+    printf("[INFO] Enabling all 12 motors...\n");
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 3; mi++) {
+            motor_mgr.EnableMotor(cp, mi);
+        }
+    }
+    sleep(1);
+    printf("[INFO] All motors enabled\n\n");
+    fflush(stdout);
+
+    // ---- 控制参数 ----
+    const float KP = 200.0f;
+    const float KD = 15.0f;
+    const float PERIOD = 1.0f;        // 步态周期 (秒)
+    const float STEP_LEN = 0.10f;      // 步长 (m)
+    const float STEP_HEIGHT = 0.05f;   // 抬腿高度 (m)
+    const int   HZ = 50;               // 控制频率
+    const int   TOTAL_FRAMES = 500;    // 运行 10 秒
+
+    // 站立基值: 足端在身体坐标系中的位置
+    // 计算: 用 leg_fk_all 验证过的站立姿态 [0°, -30°, 60°]
+    float stand_foot[4][3];
+    float stand_q[12];
+    for (int leg = 0; leg < 4; leg++) {
+        stand_q[leg*3 + 0] = deg2rad(0);
+        stand_q[leg*3 + 1] = deg2rad(-30);
+        stand_q[leg*3 + 2] = deg2rad(60);
+    }
+    leg_fk_all(stand_q, stand_foot);
+
+    // ---- 主循环 ----
+    printf("Time(s) | Phase | FL_z    | FR_z    | RL_z    | RR_z\n");
+    printf("--------|-------|---------|---------|---------|---------\n");
+    fflush(stdout);
+
+    for (int frame = 0; frame < TOTAL_FRAMES; frame++) {
+        float t = frame * (1.0f / HZ);
+        float phase = 2.0f * M_PI * t / PERIOD;
+
+        // 12 个关节角度 (度, 给 SimSync)
+        float sim_joints_deg[12];
+
+        for (int leg = 0; leg < 4; leg++) {
+            // 对角线腿 (FL+RR 同相, FR+RL 同相)
+            float leg_phase = (leg == FL || leg == RR) ? phase : phase + M_PI;
+            float swing = std::sin(leg_phase);
+            float lift = (1.0f - std::cos(leg_phase)) * 0.5f;  // 0→1 抬腿
+
+            // 足端位移量 (身体坐标系)
+            float dx = STEP_LEN * swing;          // X 方向摆动
+            float dy = 0.0f;                       // Y 方向(外摆)不动
+            float dz = STEP_HEIGHT * lift;         // Z 方向抬腿
+
+            float foot_target_body[3] = {
+                stand_foot[leg][0] + dx,
+                stand_foot[leg][1] + dy,
+                stand_foot[leg][2] + dz,
+            };
+
+            // 身体坐标系 → 髋坐标系
+            float p_hip[3];
+            float R[3][3], Rt[3][3];
+            hip_rotation_matrix(static_cast<LegIndex>(leg), R);
+            // 逆变换 (R^T)
+            for (int i = 0; i < 3; i++) {
+                for (int j = 0; j < 3; j++) {
+                    Rt[i][j] = R[j][i];
+                }
+            }
+            float mount_to_foot[3];
+            for (int i = 0; i < 3; i++) {
+                mount_to_foot[i] = foot_target_body[i] - LEG_MOUNT[leg][i];
+            }
+            for (int i = 0; i < 3; i++) {
+                p_hip[i] = 0;
+                for (int j = 0; j < 3; j++) {
+                    p_hip[i] += Rt[i][j] * mount_to_foot[j];
+                }
+            }
+
+            // IK 解算
+            float q_cmd[3];
+            leg_ik(p_hip, LEG_L1, LEG_L2, LEG_L3,
+                   THETA1_OFFSET, THETA2_OFFSET, THETA3_OFFSET,
+                   q_cmd);
+
+            // 钳位到限位范围
+            q_cmd[0] = clamp(q_cmd[0],
+                deg2rad(ZERO_OFFSET_THETA1_DEG + LOWER_LIMIT_THETA1_DEG),
+                deg2rad(ZERO_OFFSET_THETA1_DEG + UPPER_LIMIT_THETA1_DEG));
+            q_cmd[1] = clamp(q_cmd[1],
+                deg2rad(ZERO_OFFSET_THETA2_DEG + LOWER_LIMIT_THETA2_DEG),
+                deg2rad(ZERO_OFFSET_THETA2_DEG + UPPER_LIMIT_THETA2_DEG));
+            q_cmd[2] = clamp(q_cmd[2],
+                deg2rad(ZERO_OFFSET_THETA3_DEG + LOWER_LIMIT_THETA3_DEG),
+                deg2rad(ZERO_OFFSET_THETA3_DEG + UPPER_LIMIT_THETA3_DEG));
+
+            // 对每个关节做标定逆变换 → 发给 MotorManager
+            for (int j = 0; j < 3; j++) {
+                float pos = q_cmd[j] + (j == 0 ? THETA1_OFFSET : (j == 1 ? THETA2_OFFSET : THETA3_OFFSET));
+                float vel = 0.0f;
+                ApplyMotorCalibrationInverse(leg, j + 1, pos, vel);
+                motor_mgr.SendImpedance(leg, j + 1, pos, vel, KP, KD, 0.0f);
+            }
+
+            // SimSync 用: 指令角 (度)
+            sim_joints_deg[leg*3 + 0] = rad2deg(q_cmd[0]);
+            sim_joints_deg[leg*3 + 1] = rad2deg(q_cmd[1]);
+            sim_joints_deg[leg*3 + 2] = rad2deg(q_cmd[2]);
+        }
+
+        // 可选: 发送到仿真
+        if (sim.connected()) {
+            sim.send_deg(sim_joints_deg);
+        }
+
+        // 打印
+        if (frame % 25 == 0) {
+            MotorStatus st_fl = motor_mgr.GetStatus(FL, 1);
+            printf("%7.2f | %5.1f | %7.4f | %7.4f | %7.4f | %7.4f\n",
+                   t, phase/(2*M_PI)*PERIOD,
+                   st_fl.position, 0.0f, 0.0f, 0.0f);
+            fflush(stdout);
+        }
+
+        usleep(1000000 / HZ);  // 20ms
+    }
+
+    // ---- 归零站立 ----
+    printf("\n[INFO] Returning to standing position...\n");
+    for (int leg = 0; leg < 4; leg++) {
+        for (int j = 0; j < 3; j++) {
+            float pos = stand_q[leg*3 + j] + (j == 0 ? THETA1_OFFSET : 0);
+            float vel = 0.0f;
+            ApplyMotorCalibrationInverse(leg, j + 1, pos, vel);
+            motor_mgr.SendImpedance(leg, j + 1, pos, vel, KP, KD, 0.0f);
+        }
+    }
+    usleep(500000);
+
+    // ---- 禁用所有电机 ----
+    printf("[INFO] Disabling all motors...\n");
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 3; mi++) {
+            motor_mgr.DisableMotor(cp, mi);
+        }
+    }
+
+    // ---- 清理 ----
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+
+    printf("[INFO] Example18 completed\n");
+    fflush(stdout);
 }
