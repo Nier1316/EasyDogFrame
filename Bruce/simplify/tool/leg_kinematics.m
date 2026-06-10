@@ -45,9 +45,9 @@ L3 = 0.20;      % 小腿长度
 
 % --- θ1 髋外摆 ---
 % 零位: 腿在 YZ 平面内竖直向下 (绕 X 轴)
-ZERO_OFFSET_THETA1_DEG = 60.0;   % deg
-LOWER_LIMIT_THETA1_DEG = -30.0; % deg
-UPPER_LIMIT_THETA1_DEG =  60.0; % deg
+ZERO_OFFSET_THETA1_DEG = 30.0;   % deg
+LOWER_LIMIT_THETA1_DEG = -60.0; % deg
+UPPER_LIMIT_THETA1_DEG =  0.0; % deg
 
 % --- θ2 大腿 ---
 % 零位: 大腿在 XZ 平面内竖直向下
@@ -79,22 +79,22 @@ fprintf('连杆: L1=%.3f (髋偏), L2=%.3f (大腿), L3=%.3f (小腿)\n\n', L1, 
 
 % 零位: 腿竖直向下
 q0 = [0, 0, 0];
-p0 = fk(q0, L1, L2, L3);
+p0 = fk(q0, L1, L2, L3, theta1_offset, theta2_offset, theta3_offset);
 fprintf('零位 [0, 0, 0]:             足端 [%+.3f, %+.3f, %+.3f]  ← 期望[0, +L1, -(L2+L3)]\n', p0);
 
 % 大腿后摆 +45° (θ₂ 正=向后)
 q1 = [0, deg2rad(45), 0];
-p1 = fk(q1, L1, L2, L3);
+p1 = fk(q1, L1, L2, L3, theta1_offset, theta2_offset, theta3_offset);
 fprintf('大腿后摆 [0, +45°, 0]:      足端 [%+.3f, %+.3f, %+.3f]  ← X>0 (X+向后)\n', p1);
 
 % 站立姿态: 大腿略前摆(θ₂负), 小腿后弯(θ₃正)
 q2 = [0, deg2rad(-30), deg2rad(60)];
-p2 = fk(q2, L1, L2, L3);
+p2 = fk(q2, L1, L2, L3, theta1_offset, theta2_offset, theta3_offset);
 fprintf('站立姿态 [0, -30°, +60°]:   足端 [%+.3f, %+.3f, %+.3f]  ← X≈0 足在髋下\n', p2);
 
 % 髋外翻 +30°
 q3 = [deg2rad(30), 0, 0];
-p3 = fk(q3, L1, L2, L3);
+p3 = fk(q3, L1, L2, L3, theta1_offset, theta2_offset, theta3_offset);
 fprintf('髋外翻 [+30°, 0, 0]:       足端 [%+.3f, %+.3f, %+.3f]  ← Y>0 外翻, Z↑抬升\n', p3);
 
 %% ========== 逆运动学验证 ==========
@@ -111,8 +111,10 @@ test_positions = [
 
 for i = 1:size(test_positions, 1)
     p_target = test_positions(i, :)';
-    q_ik = ik(p_target, L1, L2, L3);
-    p_rebuild = fk(q_ik, L1, L2, L3);
+    q_ik = ik(p_target, L1, L2, L3, ...
+        theta1_offset, theta2_offset, theta3_offset);
+    p_rebuild = fk(q_ik, L1, L2, L3, ...
+        theta1_offset, theta2_offset, theta3_offset);
     err = norm(p_rebuild - p_target);
     fprintf(' 目标 [%.2f, %.2f, %.2f]  →  IK [θ₁=%+5.1f° θ₂=%+5.1f° θ₃=%+5.1f°]  →  误差 %.2e m\n', ...
         p_target(1), p_target(2), p_target(3), ...
@@ -131,7 +133,8 @@ th3 = theta3_min + (theta3_max - theta3_min) * rand(N, 1);
 
 ws = zeros(N, 3);
 for i = 1:N
-    ws(i,:) = fk([th1(i), th2(i), th3(i)], L1, L2, L3);
+    % th1/2/3 已是物理角 (ZERO_OFFSET + LIMIT), 故 offset 传 0
+    ws(i,:) = fk([th1(i), th2(i), th3(i)], L1, L2, L3, 0, 0, 0);
 end
 
 fprintf('  X 范围: [%+.3f, %+.3f] m\n', min(ws(:,1)), max(ws(:,1)));
@@ -164,33 +167,28 @@ text(0.05, -0.02, '地面', 'Color', [0.5 0.5 0.5]);
 build_gui(L1, L2, L3, ...
     LOWER_LIMIT_THETA1_DEG, UPPER_LIMIT_THETA1_DEG, ...
     LOWER_LIMIT_THETA2_DEG, UPPER_LIMIT_THETA2_DEG, ...
-    LOWER_LIMIT_THETA3_DEG, UPPER_LIMIT_THETA3_DEG);
+    LOWER_LIMIT_THETA3_DEG, UPPER_LIMIT_THETA3_DEG, ...
+    theta1_offset, theta2_offset, theta3_offset);
 
 %% ============================================================
 %                     运动学函数
 % ============================================================
 
-function p = fk(q, L1, L2, L3)
-    % 正运动学: 关节角 [θ1, θ2, θ3] → 足端位置 [px, py, pz]
+function p = fk(q_cmd, L1, L2, L3, off1, off2, off3)
+    % 正运动学: 指令角 → 足端位置
+    % 先加零位偏移得物理角, 再计算运动学
     %
-    % 用户约定: θ2,θ3 正值=向后 (大腿后摆 / 小腿后弯)
-    % 内部公式约定: θ2,θ3 正值=向前, 故入口处取反转换
-    %
-    % 腿平面内 (绕 X 旋转 θ1 后的局部坐标系):
-    %   X₁ = sin(θ2_int)*L2 + sin(θ2_int+θ3_int)*L3   (腿平面内前进方向)
-    %   Y₁ = L1                                        (侧向外翻偏移)
-    %   Z₁ = -cos(θ2_int)*L2 - cos(θ2_int+θ3_int)*L3  (竖直, 向下负)
-    %
-    % 基座标 X+ = 向后, 故 px = -X₁
-    %
-    % 绕 X 轴旋转 θ1 → 基坐标系:
-    %   [px]   [1     0       0   ] [-X₁]
-    %   [py] = [0  cos(θ1) -sin(θ1)] [Y₁ ]
-    %   [pz]   [0  sin(θ1)  cos(θ1)] [Z₁ ]
+    % 用户约定: θ2,θ3 正值=向后
+    % 内部公式约定: θ2,θ3 正值=向前, 入口取反转换
 
-    t1 = q(1);
-    t2_int = -q(2);  % 用户负=前摆 → 内部正=前摆
-    t3_int = -q(3);  % 用户负=前弯 → 内部正=前弯
+    % 指令角 → 物理角 (用户约定)
+    t1_phys = q_cmd(1) + off1;
+    t2_phys = q_cmd(2) + off2;
+    t3_phys = q_cmd(3) + off3;
+
+    % 用户约定 → 内部公式约定 (取反)
+    t2_int = -t2_phys;
+    t3_int = -t3_phys;
 
     % 腿平面内的位置分量
     A = sin(t2_int)*L2 + sin(t2_int+t3_int)*L3;   % X₁ (前向分量)
@@ -199,41 +197,38 @@ function p = fk(q, L1, L2, L3)
 
     % 基坐标系 X+ = 向后, 故取负号
     px = -A;
-    py = B*cos(t1) - C*sin(t1);
-    pz = B*sin(t1) + C*cos(t1);
+    py = B*cos(t1_phys) - C*sin(t1_phys);
+    pz = B*sin(t1_phys) + C*cos(t1_phys);
 
     p = [px; py; pz];
 end
 
-function q = ik(p_target, L1, L2, L3)
-    % 逆运动学: 足端位置 [px, py, pz] → 关节角 [θ1, θ2, θ3]
+function q_cmd = ik(p_target, L1, L2, L3, off1, off2, off3)
+    % 逆运动学: 足端位置 → 指令角
+    % 先解算物理角, 再减零位偏移得指令角
     %
     % 解析法求解步骤 (内部使用"正值=向前"的约定):
     %   Step 1: 由 (py, pz) 和 L1 求 θ1 (髋外摆)
     %   Step 2: 还原腿平面内分量, 转化为 2R 平面臂问题
     %   Step 3: 余弦定理求 θ3 (取负解 = 向后弯)
     %   Step 4: 几何法求 θ2
-    %   最后 θ2, θ3 取反, 转换为"正值=向后"的用户约定
+    %   最后 θ2, θ3 取反, 转换为"正值=向后"的用户约定得到物理角,
+    %   再减去零位偏移得到指令角
 
     px = p_target(1); py = p_target(2); pz = p_target(3);
 
-    % ---- Step 1: 求 θ1 ----
-    % 由约束 py*cos(θ1) + pz*sin(θ1) = L1
+    % ---- Step 1: 求 θ1_phys ----
     r_yz = sqrt(py^2 + pz^2);
     if r_yz < abs(L1) + 1e-9
-        % 目标太靠近原点, 近似处理
         r_yz = abs(L1) + 1e-6;
     end
-    % 非交叉解: 腿在身体外侧 (不穿过身体下方)
-    t1 = real(pi - asin(L1 / r_yz) - atan2(py, pz));
+    t1_phys = real(pi - asin(L1 / r_yz) - atan2(py, pz));
 
     % ---- Step 2: 还原腿平面内分量 ----
-    % X₁ = -px  (基座标 X+ = 向后, 腿平面 X₁+ = 向前)
     D = real(sqrt(max(r_yz^2 - L1^2, 0)));
-    A = -px;  % 转换到腿平面内前进方向
+    A = -px;
 
-    % ---- Step 3: 余弦定理求 θ3_internal ----
-    % A² + D² = L2² + L3² + 2*L2*L3*cos(θ3)
+    % ---- Step 3: 求 θ3_internal ----
     numerator = A^2 + D^2 - L2^2 - L3^2;
     denominator = 2 * L2 * L3;
 
@@ -242,7 +237,6 @@ function q = ik(p_target, L1, L2, L3)
     else
         cos_t3 = numerator / denominator;
         cos_t3 = max(-1, min(1, cos_t3));
-        % 取负解: 对应自然站立时小腿向后伸的姿态
         t3_int = -acos(cos_t3);
     end
 
@@ -259,8 +253,10 @@ function q = ik(p_target, L1, L2, L3)
         t2_int = atan2(sin_t2, cos_t2);
     end
 
-    % ---- 转换到用户约定: 正值=向后 (大腿后摆/小腿后弯) ----
-    q = [t1; -t2_int; -t3_int];
+    % 内部约定 → 用户约定 → 物理角 → 指令角
+    t2_phys = -t2_int;
+    t3_phys = -t3_int;
+    q_cmd = [t1_phys - off1; t2_phys - off2; t3_phys - off3];
 end
 
 %% ============================================================
@@ -270,7 +266,8 @@ end
 function build_gui(L1, L2, L3, ...
         LOWER_LIMIT_THETA1_DEG, UPPER_LIMIT_THETA1_DEG, ...
         LOWER_LIMIT_THETA2_DEG, UPPER_LIMIT_THETA2_DEG, ...
-        LOWER_LIMIT_THETA3_DEG, UPPER_LIMIT_THETA3_DEG)
+        LOWER_LIMIT_THETA3_DEG, UPPER_LIMIT_THETA3_DEG, ...
+        off1, off2, off3)
     % 构造带滑块和 IK 求解的交互界面
 
     fig = figure('Name', '三关节腿运动学 — 交互仿真', ...
@@ -283,7 +280,7 @@ function build_gui(L1, L2, L3, ...
     % ===== 主绘图区 =====
     ax = axes('Parent', fig, 'Units', 'pixels', ...
         'Position', [80, 120, 780, 500]);
-    draw_leg(ax, theta0, L1, L2, L3);
+    draw_leg(ax, theta0, L1, L2, L3, off1, off2, off3);
 
     % ===== 底部信息栏 =====
     info_h = uicontrol('Parent', fig, 'Style', 'text', ...
@@ -395,6 +392,7 @@ function build_gui(L1, L2, L3, ...
     % ===== 滑块回调 =====
     slider_data = struct('ax', ax, 'L', [L1, L2, L3], ...
         'info', info_h, 's1v', s1_val, 's2v', s2_val, 's3v', s3_val, ...
+        'off', [off1, off2, off3], ...
         'lim1', [LOWER_LIMIT_THETA1_DEG, UPPER_LIMIT_THETA1_DEG], ...
         'lim2', [LOWER_LIMIT_THETA2_DEG, UPPER_LIMIT_THETA2_DEG], ...
         'lim3', [LOWER_LIMIT_THETA3_DEG, UPPER_LIMIT_THETA3_DEG]);
@@ -411,6 +409,7 @@ function build_gui(L1, L2, L3, ...
         's1', s1, 's2', s2, 's3', s3, ...
         's1v', s1_val, 's2v', s2_val, 's3v', s3_val, ...
         'info', info_h, ...
+        'off', [off1, off2, off3], ...
         'lim1', [LOWER_LIMIT_THETA1_DEG, UPPER_LIMIT_THETA1_DEG], ...
         'lim2', [LOWER_LIMIT_THETA2_DEG, UPPER_LIMIT_THETA2_DEG], ...
         'lim3', [LOWER_LIMIT_THETA3_DEG, UPPER_LIMIT_THETA3_DEG]);
@@ -422,7 +421,7 @@ function build_gui(L1, L2, L3, ...
         'Callback', {@ik_cb, h_px, h_py, h_pz, s1, s2, s3});
 
     % 初始更新信息
-    update_info(info_h, theta0, L1, L2, L3);
+    update_info(info_h, theta0, L1, L2, L3, off1, off2, off3);
 end
 
 %% ---------- 滑块回调 ----------
@@ -431,10 +430,10 @@ function slider_cb(~, ~, s1, s2, s3)
     t_rad = deg2rad(t_deg);
 
     ud = get(s1, 'UserData');
-    ax = ud.ax; L = ud.L;
+    ax = ud.ax; L = ud.L; off = ud.off;
 
-    draw_leg(ax, t_rad, L(1), L(2), L(3));
-    update_info(ud.info, t_rad, L(1), L(2), L(3));
+    draw_leg(ax, t_rad, L(1), L(2), L(3), off(1), off(2), off(3));
+    update_info(ud.info, t_rad, L(1), L(2), L(3), off(1), off(2), off(3));
 
     set(ud.s1v, 'String', sprintf('%.1f°', t_deg(1)));
     set(ud.s2v, 'String', sprintf('%.1f°', t_deg(2)));
@@ -452,9 +451,9 @@ function ik_cb(~, ~, h_px, h_py, h_pz, s1, s2, s3)
     end
 
     ud = get(h_px, 'UserData');
-    ax = ud.ax; L = ud.L;
+    ax = ud.ax; L = ud.L; off = ud.off;
 
-    q_rad = ik([px; py; pz], L(1), L(2), L(3));
+    q_rad = ik([px; py; pz], L(1), L(2), L(3), off(1), off(2), off(3));
     q_deg = rad2deg(q_rad)';
 
     % 钳位到限位宏定义范围 (从 UserData 读取)
@@ -469,14 +468,14 @@ function ik_cb(~, ~, h_px, h_py, h_pz, s1, s2, s3)
     q_deg_clamped = q_deg;
 
     q_rad = deg2rad(q_deg);
-    draw_leg(ax, q_rad, L(1), L(2), L(3));
+    draw_leg(ax, q_rad, L(1), L(2), L(3), off(1), off(2), off(3));
 
     set(ud.s1v, 'String', sprintf('%.1f°', q_deg(1)));
     set(ud.s2v, 'String', sprintf('%.1f°', q_deg(2)));
     set(ud.s3v, 'String', sprintf('%.1f°', q_deg(3)));
 
     % 显示 IK 误差
-    p_actual = fk(q_rad, L(1), L(2), L(3));
+    p_actual = fk(q_rad, L(1), L(2), L(3), off(1), off(2), off(3));
     err = norm(p_actual - [px; py; pz]);
     clamped_str = '';
     if any(abs(q_deg_clamped - rad2deg(q_rad)') > 1)
@@ -496,23 +495,23 @@ function preset_cb(~, ~, s1, s2, s3, angles_deg)
 end
 
 %% ---------- 信息更新 ----------
-function update_info(h, theta, L1, L2, L3)
-    p = fk(theta, L1, L2, L3);
-    q_deg = rad2deg(theta);
+function update_info(h, theta_cmd, L1, L2, L3, off1, off2, off3)
+    p = fk(theta_cmd, L1, L2, L3, off1, off2, off3);
+    q_deg = rad2deg(theta_cmd);
     set(h, 'String', ...
         sprintf('足端 [X=%+.3f, Y=%+.3f, Z=%+.3f] m  |  关节 [θ₁=%+.1f°, θ₂=%+.1f°, θ₃=%+.1f°]  |  离地 %.0f mm', ...
         p(1), p(2), p(3), q_deg(1), q_deg(2), q_deg(3), -p(3)*1000));
 end
 
 %% ---------- 腿绘制 ----------
-function draw_leg(ax, theta, L1, L2, L3)
-    t1 = theta(1); t2 = theta(2); t3 = theta(3);
+function draw_leg(ax, theta_cmd, L1, L2, L3, off1, off2, off3)
+    t1 = theta_cmd(1); t2 = theta_cmd(2); t3 = theta_cmd(3);
 
-    % 计算关节点
+    % 计算关节点 (传入命令角, FK 内部加 offset 得物理角)
     p_hip     = [0, 0, 0];
-    p_abduct  = fk([t1, 0, 0], L1, 0, 0);
-    p_knee    = fk([t1, t2, 0], L1, L2, 0);
-    p_foot    = fk([t1, t2, t3], L1, L2, L3);
+    p_abduct  = fk([t1, 0, 0], L1, 0, 0, off1, off2, off3);
+    p_knee    = fk([t1, t2, 0], L1, L2, 0, off1, off2, off3);
+    p_foot    = fk([t1, t2, t3], L1, L2, L3, off1, off2, off3);
 
     cla(ax); hold(ax, 'on');
 
