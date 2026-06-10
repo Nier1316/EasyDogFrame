@@ -1,8 +1,10 @@
 #include <stdio.h>
 #include <unistd.h>       // sleep()
 #include <signal.h>       // signal() / SIGINT / SIGTERM
+#include <cmath>
 #include "bsp/bsp_can.h"   // 示例 1 直接使用 BSP 层
 #include "motor_manager.h"
+#include "motor_calibration.h"
 #include "thread/thread_manager.h"
 
 
@@ -19,3 +21,6 @@ void Example10_MultiMotorTorqueControl();
 void Example11_MoveAll();
 void Example12_SinusoidalMotion();
 void Example13_MultiMotorSinusoidalMotion();
+void Example14_CalibrationDetect();
+void Example15_CalibrationVerify();
+void Example16_MotorTest();

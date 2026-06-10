@@ -26,35 +26,32 @@ struct MotorCalibrationParam {
 static const MotorCalibrationParam MOTOR_CALIBRATION[4][3] = {
     // CAN0 端口 (左前腿)
     {
-        {1.0f, 1.0f, 0.0f},      // Motor 1 (Hip): 正常
-        {1.0f, 1.0f, 0.0f},      // Motor 2 (Thigh): 正常
-        {1.0f, 1.0f, 0.0f}       // Motor 3 (Calf): 正常
+        {-1.0f,  1.0f, 0.0f},      // Motor 1 (Hip)
+        { 1.0f,  1.0f, 0.0f},      // Motor 2 (Thigh)
+        {-1.0f,  1.0f, 0.0f},      // Motor 3 (Calf)
     },
-
     // CAN1 端口 (右前腿)
     {
-        {1.0f, 1.0f, 0.0f},      // Motor 1 (Hip): 正常
-        {1.0f, 1.0f, 0.0f},      // Motor 2 (Thigh): 正常
-        {1.0f, 1.0f, 0.0f}       // Motor 3 (Calf): 正常
+        { 1.0f,  1.0f, 0.0f},      // Motor 1 (Hip)
+        {-1.0f,  1.0f, 0.0f},      // Motor 2 (Thigh)
+        { 1.0f,  1.0f, 0.0f},      // Motor 3 (Calf)
     },
-
     // CAN2 端口 (左后腿)
     {
-        {1.0f, 1.0f, 0.0f},      // Motor 1 (Hip): 正常
-        {1.0f, 1.0f, 0.0f},      // Motor 2 (Thigh): 正常
-        {1.0f, 1.0f, 0.0f}       // Motor 3 (Calf): 正常
+        { 1.0f,  1.0f, 0.0f},      // Motor 1 (Hip)
+        { 1.0f,  1.0f, 0.0f},      // Motor 2 (Thigh)
+        {-1.0f,  1.0f, 0.0f},      // Motor 3 (Calf)
     },
-
     // CAN3 端口 (右后腿)
     {
-        {1.0f, 1.0f, 0.0f},      // Motor 1 (Hip): 正常
-        {1.0f, 1.0f, 0.0f},      // Motor 2 (Thigh): 正常
-        {1.0f, 1.0f, 0.0f}       // Motor 3 (Calf): 正常
-    }
+        {-1.0f,  1.0f, 0.0f},      // Motor 1 (Hip)
+        {-1.0f,  1.0f, 0.0f},      // Motor 2 (Thigh)
+        { 1.0f,  1.0f, 0.0f},      // Motor 3 (Calf)
+    },
 };
 
 /**
- * @brief 应用标定参数到电机数据
+ * @brief 应用标定参数到电机反馈数据（接收方向）
  */
 inline void ApplyMotorCalibration(uint8_t can_port, uint8_t motor_id,
                                    float& position, float& velocity, float& torque) {
@@ -64,11 +61,25 @@ inline void ApplyMotorCalibration(uint8_t can_port, uint8_t motor_id,
 
     const MotorCalibrationParam& calib = MOTOR_CALIBRATION[can_port][motor_id - 1];
 
-    // 应用缩放和偏移
     position = position * calib.pos_scale + calib.pos_offset;
     velocity = velocity * calib.vel_scale;
+}
 
-    // 注：扭矩一般不需要反向，保持原值
+/**
+ * @brief 对控制指令应用逆标定（发送方向）
+ * 上层以统一坐标系给出目标值，逆变换回电机原始坐标系后发送。
+ */
+inline void ApplyMotorCalibrationInverse(uint8_t can_port, uint8_t motor_id,
+                                          float& position, float& velocity) {
+    if (can_port >= 4 || motor_id < 1 || motor_id > 3) {
+        return;
+    }
+
+    const MotorCalibrationParam& calib = MOTOR_CALIBRATION[can_port][motor_id - 1];
+
+    // pos_scale 为 ±1，逆变换等于再乘一次；offset 需先减去再除以 scale
+    position = (position - calib.pos_offset) * calib.pos_scale;
+    velocity = velocity * calib.vel_scale;
 }
 
 #endif // MOTOR_CALIBRATION_H

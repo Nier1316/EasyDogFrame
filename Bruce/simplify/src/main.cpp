@@ -15,6 +15,16 @@ int main() {
     signal(SIGINT,  signal_handler);
     signal(SIGTERM, signal_handler);
 
+    // 运行示例9 - 基础电机控制
+    // printf("[INFO] Running Example9_BasicMotorCtr...\n");
+    // Example9_BasicMotorCtr();
+    // printf("[INFO] Example9 completed.\n");
+
+    // 运行示例10 - 多电机扭矩控制
+    // printf("[INFO] Running Example10_MultiMotorTorqueControl...\n");
+    // Example10_MultiMotorTorqueControl();
+    // printf("[INFO] Example10 completed.\n");
+
     // 运行示例11 - 全电机扭矩控制（CAN0~3）
     // printf("[INFO] Running Example11_MoveAll...\n");
     // Example11_MoveAll();
@@ -25,13 +35,25 @@ int main() {
     // Example12_SinusoidalMotion();
     // printf("[INFO] Example12 completed.\n");
 
-    // 运行示例13 - 多电机正弦周期运动控制
-    printf("[INFO] Running Example13_MultiMotorSinusoidalMotion...\n");
-    Example13_MultiMotorSinusoidalMotion();
-    printf("[INFO] Example13 completed.\n");
+    // 运行示例13 - 多电机正弦运动
+    // printf("[INFO] Running Example13_MultiMotorSinusoidalMotion...\n");
+    // Example13_MultiMotorSinusoidalMotion();
+    // printf("[INFO] Example13 completed.\n");
 
-    // Example10_MultiMotorTorqueControl();
-    // Example9_BasicMotorCtr();
+    // 运行示例14 - 标定检测
+    // printf("[INFO] Running Example14_CalibrationDetect...\n");
+    // Example14_CalibrationDetect();
+    // printf("[INFO] Example14 completed.\n");
+
+    // 运行示例15 - 标定验证
+    // printf("[INFO] Running Example15_CalibrationVerify...\n");
+    // Example15_CalibrationVerify();
+    // printf("[INFO] Example15 completed.\n");
+
+    // 运行示例16 - 电机测试
+    // printf("[INFO] Running Example16_MotorTest...\n");
+    // Example16_MotorTest();
+    // printf("[INFO] Example16 completed.\n");
 
     return 0;
 }

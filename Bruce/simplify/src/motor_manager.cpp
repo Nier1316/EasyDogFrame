@@ -3,6 +3,7 @@
  * @brief   12电机批量管理器实现
  */
 #include "motor_manager.h"
+#include "motor_calibration.h"
 #include <cstdio>
 #include <chrono>
 
@@ -240,19 +241,24 @@ void MotorManager::SendThreadFunc() {
 
             if (!motor.enabled) continue;
 
+            // 将上层统一坐标系的目标值逆标定回电机原始坐标系
+            float send_pos = motor.target_position;
+            float send_vel = motor.target_speed;
+            ApplyMotorCalibrationInverse(can_port, motor_id, send_pos, send_vel);
+
             switch (motor.control_mode) {
                 case IMPEDANCE:
                     set_motor_para_bt(motor,
-                        motor.target_position, motor.target_speed,
+                        send_pos, send_vel,
                         motor.kp, motor.kd, motor.target_torque, IMPEDANCE);
                     break;
                 case SPEED:
                     set_motor_para_bt(motor,
-                        motor.target_speed, motor.kvp, 0, 0, motor.ki, SPEED);
+                        send_vel, motor.kvp, 0, 0, motor.ki, SPEED);
                     break;
-                case POSITION: 
+                case POSITION:
                     set_motor_para_bt(motor,
-                        motor.target_position, motor.kvp, motor.kp,
+                        send_pos, motor.kvp, motor.kp,
                         motor.kd, motor.ki, POSITION);
                     break;
             }

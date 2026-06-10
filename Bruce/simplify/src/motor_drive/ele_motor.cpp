@@ -202,9 +202,13 @@ void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
 				break;
 			case MOTOR_OR_angle:
 				motor.current_position = canRecev.fValue;
+				ApplyMotorCalibration(motor.device_idx, motor.motor_id,
+									  motor.current_position, motor.current_speed, motor.current_torque);
 				break;
 			case MOTOR_OR_velocity:
 				motor.current_speed = canRecev.fValue;
+				ApplyMotorCalibration(motor.device_idx, motor.motor_id,
+									  motor.current_position, motor.current_speed, motor.current_torque);
 				break;
 			case MOTOR_OR_torque:
 				motor.current_torque = canRecev.fValue;
