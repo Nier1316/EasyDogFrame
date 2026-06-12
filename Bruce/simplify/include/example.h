@@ -26,3 +26,4 @@ void Example15_CalibrationVerify();
 void Example16_MotorTest();
 void Example17_SimSyncIntegration();
 void Example18_LegIKControl();
+void Example19_ReadAndStand();

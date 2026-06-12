@@ -1243,8 +1243,8 @@ void Example18_LegIKControl() {
     const float PERIOD = 1.0f;        // 步态周期 (秒)
     const float STEP_LEN = 0.10f;      // 步长 (m)
     const float STEP_HEIGHT = 0.05f;   // 抬腿高度 (m)
-    const int   HZ = 50;               // 控制频率
-    const int   TOTAL_FRAMES = 500;    // 运行 10 秒
+    const int   HZ = 1000;             // 控制频率 1kHz
+    const int   TOTAL_FRAMES = 10000;  // 运行 10 秒
 
     // 站立基值: 足端在身体坐标系中的位置
     // 计算: 用 leg_fk_all 验证过的站立姿态 [0°, -30°, 60°]
@@ -1324,12 +1324,10 @@ void Example18_LegIKControl() {
                 deg2rad(ZERO_OFFSET_THETA3_DEG + LOWER_LIMIT_THETA3_DEG),
                 deg2rad(ZERO_OFFSET_THETA3_DEG + UPPER_LIMIT_THETA3_DEG));
 
-            // 对每个关节做标定逆变换 → 发给 MotorManager
+            // 传物理角给 MotorManager，SendThreadFunc 内部自动做逆标定
             for (int j = 0; j < 3; j++) {
                 float pos = q_cmd[j] + (j == 0 ? THETA1_OFFSET : (j == 1 ? THETA2_OFFSET : THETA3_OFFSET));
-                float vel = 0.0f;
-                ApplyMotorCalibrationInverse(leg, j + 1, pos, vel);
-                motor_mgr.SendImpedance(leg, j + 1, pos, vel, KP, KD, 0.0f);
+                motor_mgr.SendImpedance(leg, j + 1, pos, 0.0f, KP, KD, 0.0f);
             }
 
             // SimSync 用: 指令角 (度)
@@ -1343,8 +1341,8 @@ void Example18_LegIKControl() {
             sim.send_deg(sim_joints_deg);
         }
 
-        // 打印
-        if (frame % 25 == 0) {
+        // 打印 (500ms 一次)
+        if (frame % 500 == 0) {
             MotorStatus st_fl = motor_mgr.GetStatus(FL, 1);
             printf("%7.2f | %5.1f | %7.4f | %7.4f | %7.4f | %7.4f\n",
                    t, phase/(2*M_PI)*PERIOD,
@@ -1359,10 +1357,8 @@ void Example18_LegIKControl() {
     printf("\n[INFO] Returning to standing position...\n");
     for (int leg = 0; leg < 4; leg++) {
         for (int j = 0; j < 3; j++) {
-            float pos = stand_q[leg*3 + j] + (j == 0 ? THETA1_OFFSET : 0);
-            float vel = 0.0f;
-            ApplyMotorCalibrationInverse(leg, j + 1, pos, vel);
-            motor_mgr.SendImpedance(leg, j + 1, pos, vel, KP, KD, 0.0f);
+            float pos = stand_q[leg*3 + j] + (j == 0 ? THETA1_OFFSET : (j == 1 ? THETA2_OFFSET : THETA3_OFFSET));
+            motor_mgr.SendImpedance(leg, j + 1, pos, 0.0f, KP, KD, 0.0f);
         }
     }
     usleep(500000);
@@ -1381,5 +1377,121 @@ void Example18_LegIKControl() {
     motor_mgr.Stop();
 
     printf("[INFO] Example18 completed\n");
+    fflush(stdout);
+}
+
+// ================= 示例 19：读取当前姿态并缓慢移动到站立 =================
+void Example19_ReadAndStand() {
+    printf("\n========== Example 19: Read Current Pose & Slow Stand ==========\n");
+    printf("[INFO] Phase 1: Read current joint angles\n");
+    printf("[INFO] Phase 2: Slowly interpolate to standing pose\n\n");
+
+    // ---- 初始化 ----
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] Failed to initialize MotorManager\n");
+        return;
+    }
+
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    // ---- 使能所有 12 个电机 ----
+    printf("[INFO] Enabling all 12 motors...\n");
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 3; mi++) {
+            motor_mgr.EnableMotor(cp, mi);
+        }
+    }
+    sleep(1);
+    printf("[INFO] All motors enabled\n\n");
+
+    // ======== 阶段 1：读取当前姿态 ========
+    printf("========== Phase 1: Current Joint Angles ==========\n");
+    const char* leg_names[] = {"FL(CAN0)", "FR(CAN1)", "RL(CAN2)", "RR(CAN3)"};
+    const char* joint_names[] = {"Hip", "Thigh", "Calf"};
+    float cur_phys[4][3];  // 当前物理角 (rad)
+
+    for (int leg = 0; leg < 4; leg++) {
+        printf("  %s:\n", leg_names[leg]);
+        for (int j = 0; j < 3; j++) {
+            MotorStatus st = motor_mgr.GetStatus(leg, j + 1);
+            cur_phys[leg][j] = st.position;  // 已标定的物理角 (rad)
+            printf("    %s: %7.4f rad (%6.2f°)  %s%s\n",
+                   joint_names[j],
+                   st.position,
+                   rad2deg(st.position),
+                   st.enable ? "" : " [DISABLED]",
+                   st.fault ? " [FAULT]" : "");
+        }
+    }
+    printf("\n");
+
+    // ======== 阶段 2：缓慢移动到站立姿态 ========
+    // 站立姿态 (物理角): 指令角 [0°, -30°, 60°] + 零位偏移
+    //   Hip:   0° + 30° = 30°   (0.5236 rad)
+    //   Thigh: -30° + 0° = -30° (-0.5236 rad)
+    //   Calf:  60° + 0° = 60°   (1.0472 rad)
+    printf("========== Phase 2: Moving to Standing Pose ==========\n");
+    printf("  Target: Hip=%5.1f°, Thigh=%5.1f°, Calf=%5.1f°\n\n",
+           rad2deg(THETA1_OFFSET), -30.0f, 60.0f);
+    fflush(stdout);
+
+    const float TGT_PHYS[3] = {
+        THETA1_OFFSET,       // Hip:   0.5236 rad
+        deg2rad(-30.0f),     // Thigh: -0.5236 rad
+        deg2rad(60.0f),      // Calf:   1.0472 rad
+    };
+
+    const float STAND_DURATION = 3.0f;  // 过渡时间 (秒)
+    const int   HZ = 100;               // 控制频率 100Hz
+    const int   TOTAL_FRAMES = (int)(STAND_DURATION * HZ);
+    const float KP = 200.0f;
+    const float KD = 15.0f;
+
+    for (int frame = 0; frame <= TOTAL_FRAMES; frame++) {
+        float t = (float)frame / TOTAL_FRAMES;  // 0.0 → 1.0
+
+        for (int leg = 0; leg < 4; leg++) {
+            for (int j = 0; j < 3; j++) {
+                // 线性插值 (物理角)，SendThreadFunc 内部会自动做逆标定
+                float pos = cur_phys[leg][j] + (TGT_PHYS[j] - cur_phys[leg][j]) * t;
+                motor_mgr.SendImpedance(leg, j + 1, pos, 0.0f, KP, KD, 0.0f);
+            }
+        }
+
+        if (frame % 50 == 0) {  // 每 0.5 秒打印进度
+            printf("  [Progress] %3.0f%%\n", t * 100.0f);
+            fflush(stdout);
+        }
+        usleep(1000000 / HZ);
+    }
+
+    // ---- 保持站立 ----
+    printf("\n[INFO] Holding standing pose...\n");
+    for (int leg = 0; leg < 4; leg++) {
+        for (int j = 0; j < 3; j++) {
+            motor_mgr.SendImpedance(leg, j + 1, TGT_PHYS[j], 0.0f, KP, KD, 0.0f);
+        }
+    }
+    sleep(2);
+
+    // ---- 禁用所有电机 ----
+    printf("[INFO] Disabling all motors...\n");
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 3; mi++) {
+            motor_mgr.DisableMotor(cp, mi);
+        }
+    }
+
+    // ---- 清理 ----
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+
+    printf("[INFO] Example19 completed\n");
     fflush(stdout);
 }

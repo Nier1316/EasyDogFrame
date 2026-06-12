@@ -61,9 +61,14 @@ int main() {
     // printf("[INFO] Example17 completed.\n");
 
     // 运行示例18 - LEG IK Control
-    printf("[INFO] Running Example18_LegIKControl...\n");
-    Example18_LegIKControl();
-    printf("[INFO] Example18 completed.\n");
+    // printf("[INFO] Running Example18_LegIKControl...\n");
+    // Example18_LegIKControl();
+    // printf("[INFO] Example18 completed.\n");
+
+    // 运行示例19 - 读取当前姿态并缓慢移动到站立
+    printf("[INFO] Running Example19_ReadAndStand...\n");
+    Example19_ReadAndStand();
+    printf("[INFO] Example19 completed.\n");
 
     return 0;
 }
