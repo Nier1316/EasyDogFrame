@@ -66,9 +66,14 @@ int main() {
     // printf("[INFO] Example18 completed.\n");
 
     // 运行示例19 - 读取当前姿态并缓慢移动到站立
-    printf("[INFO] Running Example19_ReadAndStand...\n");
-    Example19_ReadAndStand();
-    printf("[INFO] Example19 completed.\n");
+    // printf("[INFO] Running Example19_ReadAndStand...\n");
+    // Example19_ReadAndStand();
+    // printf("[INFO] Example19 completed.\n");
+
+    // 运行示例20 - 选择电机移动到物理零位
+    printf("[INFO] Running Example20_MoveToPhysicalZero...\n");
+    Example20_MoveToPhysicalZero();
+    printf("[INFO] Example20 completed.\n");
 
     return 0;
 }

@@ -26,27 +26,27 @@ struct MotorCalibrationParam {
 static const MotorCalibrationParam MOTOR_CALIBRATION[4][3] = {
     // CAN0 端口 (左前腿)
     {
-        {-1.0f,  1.0f, 0.0f},      // Motor 1 (Hip)
-        { 1.0f,  1.0f, 0.0f},      // Motor 2 (Thigh)
-        {-1.0f,  1.0f, 0.0f},      // Motor 3 (Calf)
+        {-1.0f,  1.0f, 0.611f},      // Motor 1 (Hip)
+        { 1.0f,  1.0f, 0.441f},      // Motor 2 (Thigh)
+        {-1.0f,  1.0f,-0.211f},      // Motor 3 (Calf)
     },
     // CAN1 端口 (右前腿)
     {
-        { 1.0f,  1.0f, 0.0f},      // Motor 1 (Hip)
-        {-1.0f,  1.0f, 0.0f},      // Motor 2 (Thigh)
-        { 1.0f,  1.0f, 0.0f},      // Motor 3 (Calf)
+        { 1.0f,  1.0f, 0.611f},      // Motor 1 (Hip)
+        {-1.0f,  1.0f, 0.441f},      // Motor 2 (Thigh)
+        { 1.0f,  1.0f,-0.211f},      // Motor 3 (Calf)
     },
     // CAN2 端口 (左后腿)
     {
-        { 1.0f,  1.0f, 0.0f},      // Motor 1 (Hip)
-        { 1.0f,  1.0f, 0.0f},      // Motor 2 (Thigh)
-        {-1.0f,  1.0f, 0.0f},      // Motor 3 (Calf)
+        { 1.0f,  1.0f, 0.611f},      // Motor 1 (Hip)
+        { 1.0f,  1.0f, 0.441f},      // Motor 2 (Thigh)
+        {-1.0f,  1.0f,-0.211f},      // Motor 3 (Calf)
     },
     // CAN3 端口 (右后腿)
     {
-        {-1.0f,  1.0f, 0.0f},      // Motor 1 (Hip)
-        {-1.0f,  1.0f, 0.0f},      // Motor 2 (Thigh)
-        { 1.0f,  1.0f, 0.0f},      // Motor 3 (Calf)
+        {-1.0f,  1.0f, 0.611f},      // Motor 1 (Hip)
+        {-1.0f,  1.0f, 0.441f},      // Motor 2 (Thigh)
+        { 1.0f,  1.0f,-0.211f},      // Motor 3 (Calf)
     },
 };
 

@@ -1495,3 +1495,119 @@ void Example19_ReadAndStand() {
     printf("[INFO] Example19 completed\n");
     fflush(stdout);
 }
+
+// ================= 示例 20：选择电机移动到物理零位 =================
+void Example20_MoveToPhysicalZero() {
+    printf("\n========== Example 20: Move Selected Motor to Physical Zero ==========\n");
+    printf("[INFO] Physical zero in kinematics:\n");
+    printf("  Motor 1 (Hip):   θ₁=0    → %.4f rad (%6.2f°)  horizontal\n",
+           THETA1_OFFSET, rad2deg(THETA1_OFFSET));
+    printf("  Motor 2 (Thigh): θ₂=0    → %.4f rad (%6.2f°)  vertical\n",
+           THETA2_OFFSET, rad2deg(THETA2_OFFSET));
+    printf("  Motor 3 (Calf):  θ₃=90°  → %.4f rad (%6.2f°)  90° (zero unreachable)\n\n",
+           deg2rad(90.0f) + THETA3_OFFSET, 90.0f);
+
+    // ---- 初始化 ----
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] Failed to initialize MotorManager\n");
+        return;
+    }
+
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    // ---- 使能所有 12 个电机 ----
+    printf("[INFO] Enabling all 12 motors...\n");
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 3; mi++) {
+            motor_mgr.EnableMotor(cp, mi);
+        }
+    }
+    usleep(200000);
+
+    // ---- 读取当前位姿并保持 ----
+    const float KP = 200.0f, KD = 15.0f;
+    float cur_pos[4][3];
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 3; mi++) {
+            MotorStatus st = motor_mgr.GetStatus(cp, mi);
+            cur_pos[cp][mi - 1] = st.position;
+            motor_mgr.SendImpedance(cp, mi, st.position, 0.0f, KP, KD, 0.0f);
+        }
+    }
+
+    // ---- 交互选择 ----
+    int can_port = -1, motor_id = -1;
+    printf("Select CAN port (0~3): ");
+    fflush(stdout);
+    if (scanf("%d", &can_port) != 1) { printf("[ERROR] Invalid input\n");   }
+    printf("Select motor ID (1~3): ");
+    fflush(stdout);
+    if (scanf("%d", &motor_id) != 1) { printf("[ERROR] Invalid input\n");   }
+
+    if (can_port >= 0 && can_port <= 3 && motor_id >= 1 && motor_id <= 3) {
+        // ---- 计算目标物理角 ----
+        float tgt_pos;
+        const char* desc;
+        if (motor_id == 1) {
+            tgt_pos = THETA1_OFFSET;
+            desc = "θ₁=0 (horizontal)";
+        } else if (motor_id == 2) {
+            tgt_pos = THETA2_OFFSET;
+            desc = "θ₂=0 (vertical)";
+        } else {
+            tgt_pos = deg2rad(90.0f) + THETA3_OFFSET;
+            desc = "θ₃=90° (zero unreachable)";
+        }
+
+        float start_pos = cur_pos[can_port][motor_id - 1];
+        printf("\n[INFO] CAN%d-M%d: %s\n", can_port, motor_id, desc);
+        printf("[INFO] Current: %.4f rad (%6.2f°)  →  Target: %.4f rad (%6.2f°)\n\n",
+               start_pos, rad2deg(start_pos), tgt_pos, rad2deg(tgt_pos));
+
+        // ---- 2 秒缓慢插值到目标 ----
+        const int HZ = 100;
+        const int FRAMES = 200;
+        for (int f = 0; f <= FRAMES; f++) {
+            float t = (float)f / FRAMES;
+            float pos = start_pos + (tgt_pos - start_pos) * t;
+            motor_mgr.SendImpedance(can_port, motor_id, pos, 0.0f, KP, KD, 0.0f);
+            if (f % 50 == 0) {
+                MotorStatus st = motor_mgr.GetStatus(can_port, motor_id);
+                printf("  [%3d%%] cmd=%.4f rad (%6.2f°), actual=%.4f rad (%6.2f°)\n",
+                       (int)(t * 100), pos, rad2deg(pos),
+                       st.position, rad2deg(st.position));
+                fflush(stdout);
+            }
+            usleep(1000000 / HZ);
+        }
+
+        // ---- 保持 2 秒 ----
+        printf("\n[INFO] Holding for 2 seconds...\n");
+        motor_mgr.SendImpedance(can_port, motor_id, tgt_pos, 0.0f, KP, KD, 0.0f);
+        sleep(2);
+
+        MotorStatus st = motor_mgr.GetStatus(can_port, motor_id);
+        printf("[INFO] Final: CAN%d-M%d = %.4f rad (%6.2f°)\n\n",
+               can_port, motor_id, st.position, rad2deg(st.position));
+    } else {
+        printf("[ERROR] CAN port must be 0~3, motor ID must be 1~3\n");
+    }
+
+    printf("[INFO] Disabling all motors...\n");
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 3; mi++) {
+            motor_mgr.DisableMotor(cp, mi);
+        }
+    }
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+
+    printf("[INFO] Example20 completed\n");
+    fflush(stdout);
+}
