@@ -1241,10 +1241,10 @@ void Example18_LegIKControl() {
     const float KP = 200.0f;
     const float KD = 15.0f;
     const float PERIOD = 1.0f;        // 步态周期 (秒)
-    const float STEP_LEN = 0.10f;      // 步长 (m)
-    const float STEP_HEIGHT = 0.05f;   // 抬腿高度 (m)
+    const float STEP_LEN = 0.25f;      // 步长 (m)
+    const float STEP_HEIGHT = 0.25f;   // 抬腿高度 (m)
     const int   HZ = 1000;             // 控制频率 1kHz
-    const int   TOTAL_FRAMES = 10000;  // 运行 10 秒
+    const int   TOTAL_FRAMES = 20000;  // 运行 10 秒
 
     // 站立基值: 足端在身体坐标系中的位置
     // 计算: 用 leg_fk_all 验证过的站立姿态 [0°, -30°, 60°]
@@ -1313,21 +1313,21 @@ void Example18_LegIKControl() {
                    THETA1_OFFSET, THETA2_OFFSET, THETA3_OFFSET,
                    q_cmd);
 
-            // 钳位到限位范围
+            // 钳位到限位范围（指令角坐标，与标定坐标系一致）
             q_cmd[0] = clamp(q_cmd[0],
-                deg2rad(ZERO_OFFSET_THETA1_DEG + LOWER_LIMIT_THETA1_DEG),
-                deg2rad(ZERO_OFFSET_THETA1_DEG + UPPER_LIMIT_THETA1_DEG));
+                deg2rad(LOWER_LIMIT_THETA1_DEG),
+                deg2rad(UPPER_LIMIT_THETA1_DEG));
             q_cmd[1] = clamp(q_cmd[1],
-                deg2rad(ZERO_OFFSET_THETA2_DEG + LOWER_LIMIT_THETA2_DEG),
-                deg2rad(ZERO_OFFSET_THETA2_DEG + UPPER_LIMIT_THETA2_DEG));
+                deg2rad(LOWER_LIMIT_THETA2_DEG),
+                deg2rad(UPPER_LIMIT_THETA2_DEG));
             q_cmd[2] = clamp(q_cmd[2],
-                deg2rad(ZERO_OFFSET_THETA3_DEG + LOWER_LIMIT_THETA3_DEG),
-                deg2rad(ZERO_OFFSET_THETA3_DEG + UPPER_LIMIT_THETA3_DEG));
+                deg2rad(LOWER_LIMIT_THETA3_DEG),
+                deg2rad(UPPER_LIMIT_THETA3_DEG));
 
-            // 传物理角给 MotorManager，SendThreadFunc 内部自动做逆标定
+            // IK 输出的指令角即为标定坐标系下的目标位置
+            // SendThreadFunc 内部自动做逆标定
             for (int j = 0; j < 3; j++) {
-                float pos = q_cmd[j] + (j == 0 ? THETA1_OFFSET : (j == 1 ? THETA2_OFFSET : THETA3_OFFSET));
-                motor_mgr.SendImpedance(leg, j + 1, pos, 0.0f, KP, KD, 0.0f);
+                motor_mgr.SendImpedance(leg, j + 1, q_cmd[j], 0.0f, KP, KD, 0.0f);
             }
 
             // SimSync 用: 指令角 (度)
@@ -1357,8 +1357,7 @@ void Example18_LegIKControl() {
     printf("\n[INFO] Returning to standing position...\n");
     for (int leg = 0; leg < 4; leg++) {
         for (int j = 0; j < 3; j++) {
-            float pos = stand_q[leg*3 + j] + (j == 0 ? THETA1_OFFSET : (j == 1 ? THETA2_OFFSET : THETA3_OFFSET));
-            motor_mgr.SendImpedance(leg, j + 1, pos, 0.0f, KP, KD, 0.0f);
+            motor_mgr.SendImpedance(leg, j + 1, stand_q[leg*3 + j], 0.0f, KP, KD, 0.0f);
         }
     }
     usleep(500000);
@@ -1431,26 +1430,24 @@ void Example19_ReadAndStand() {
     printf("\n");
 
     // ======== 阶段 2：缓慢移动到站立姿态 ========
-    // 站立姿态 (物理角): 指令角 [0°, -30°, 60°] + 零位偏移
-    //   Hip:   0° + 30° = 30°   (0.5236 rad)
-    //   Thigh: -30° + 0° = -30° (-0.5236 rad)
-    //   Calf:  60° + 0° = 60°   (1.0472 rad)
+    // 站立姿态 (标定坐标系): 指令角 [0°, -60°, 60°]
+    //   标定坐标系 0 = 物理零位
     printf("========== Phase 2: Moving to Standing Pose ==========\n");
     printf("  Target: Hip=%5.1f°, Thigh=%5.1f°, Calf=%5.1f°\n\n",
-           rad2deg(THETA1_OFFSET), -30.0f, 60.0f);
+           0.0f, -30.0f, 60.0f);
     fflush(stdout);
 
     const float TGT_PHYS[3] = {
-        THETA1_OFFSET,       // Hip:   0.5236 rad
-        deg2rad(-30.0f),     // Thigh: -0.5236 rad
-        deg2rad(60.0f),      // Calf:   1.0472 rad
+        deg2rad(0.0f),       // Hip:   0°  horizontal
+        deg2rad(-60.0f),     // Thigh: -60°
+        deg2rad(60.0f),      // Calf:   60°
     };
 
     const float STAND_DURATION = 3.0f;  // 过渡时间 (秒)
     const int   HZ = 100;               // 控制频率 100Hz
     const int   TOTAL_FRAMES = (int)(STAND_DURATION * HZ);
     const float KP = 200.0f;
-    const float KD = 15.0f;
+    const float KD = 20.0f;
 
     for (int frame = 0; frame <= TOTAL_FRAMES; frame++) {
         float t = (float)frame / TOTAL_FRAMES;  // 0.0 → 1.0
@@ -1477,7 +1474,7 @@ void Example19_ReadAndStand() {
             motor_mgr.SendImpedance(leg, j + 1, TGT_PHYS[j], 0.0f, KP, KD, 0.0f);
         }
     }
-    sleep(2);
+    sleep(20);
 
     // ---- 禁用所有电机 ----
     printf("[INFO] Disabling all motors...\n");
@@ -1499,13 +1496,10 @@ void Example19_ReadAndStand() {
 // ================= 示例 20：选择电机移动到物理零位 =================
 void Example20_MoveToPhysicalZero() {
     printf("\n========== Example 20: Move Selected Motor to Physical Zero ==========\n");
-    printf("[INFO] Physical zero in kinematics:\n");
-    printf("  Motor 1 (Hip):   θ₁=0    → %.4f rad (%6.2f°)  horizontal\n",
-           THETA1_OFFSET, rad2deg(THETA1_OFFSET));
-    printf("  Motor 2 (Thigh): θ₂=0    → %.4f rad (%6.2f°)  vertical\n",
-           THETA2_OFFSET, rad2deg(THETA2_OFFSET));
-    printf("  Motor 3 (Calf):  θ₃=90°  → %.4f rad (%6.2f°)  90° (zero unreachable)\n\n",
-           deg2rad(90.0f) + THETA3_OFFSET, 90.0f);
+    printf("[INFO] Calibrated coordinate: position 0 = physical zero\n");
+    printf("  Motor 1 (Hip):   target = 0  (horizontal)\n");
+    printf("  Motor 2 (Thigh): target = 0  (vertical)\n");
+    printf("  Motor 3 (Calf):  target = π/2  (90°, physical limit)\n\n");
 
     // ---- 初始化 ----
     MotorManager& motor_mgr = MotorManager::GetInstance();
@@ -1550,18 +1544,19 @@ void Example20_MoveToPhysicalZero() {
     if (scanf("%d", &motor_id) != 1) { printf("[ERROR] Invalid input\n");   }
 
     if (can_port >= 0 && can_port <= 3 && motor_id >= 1 && motor_id <= 3) {
-        // ---- 计算目标物理角 ----
+        // 标定坐标系下 0 = 物理零位
+        // 3号电机(小腿)物理上只能弯到90°，目标改为 -π/2
         float tgt_pos;
         const char* desc;
-        if (motor_id == 1) {
-            tgt_pos = THETA1_OFFSET;
-            desc = "θ₁=0 (horizontal)";
-        } else if (motor_id == 2) {
-            tgt_pos = THETA2_OFFSET;
-            desc = "θ₂=0 (vertical)";
+        if (motor_id == 3) {
+            tgt_pos = M_PI_2;           // 90° (小腿从物理0位到正向90°)
+            desc = "Calf 90 deg";
+        } else if (motor_id == 1) {
+            tgt_pos = 0.0f;
+            desc = "Hip horizontal";
         } else {
-            tgt_pos = deg2rad(90.0f) + THETA3_OFFSET;
-            desc = "θ₃=90° (zero unreachable)";
+            tgt_pos = 0.0f;
+            desc = "Thigh vertical";
         }
 
         float start_pos = cur_pos[can_port][motor_id - 1];
@@ -1589,7 +1584,7 @@ void Example20_MoveToPhysicalZero() {
         // ---- 保持 2 秒 ----
         printf("\n[INFO] Holding for 2 seconds...\n");
         motor_mgr.SendImpedance(can_port, motor_id, tgt_pos, 0.0f, KP, KD, 0.0f);
-        sleep(2);
+        sleep(4);
 
         MotorStatus st = motor_mgr.GetStatus(can_port, motor_id);
         printf("[INFO] Final: CAN%d-M%d = %.4f rad (%6.2f°)\n\n",

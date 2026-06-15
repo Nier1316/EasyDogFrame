@@ -83,8 +83,8 @@ enum ControlMode {
 #define KP_MAX 500.0f                  //比例增益最大值
 #define KD_MIN 0.0f                    //微分增益最小值
 #define KD_MAX 5.0f                    //微分增益最大值
-#define T_MIN -10.0f                   //扭矩最小值 (Nm)
-#define T_MAX 10.0f                    //扭矩最大值 (Nm)
+#define T_MIN -40.0f                   //扭矩最小值 (Nm)
+#define T_MAX 40.0f                    //扭矩最大值 (Nm)
 #define KI_MIN 0.0f                    //积分增益最小值
 #define KI_MAX 500.0f                  //积分增益最大值
 
