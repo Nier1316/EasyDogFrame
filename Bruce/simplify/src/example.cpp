@@ -2,6 +2,7 @@
 #include "SimSync.h"
 #include "leg_kinematics.h"
 #include "thread/thread_manager.h"
+#include "xbox_controller.h"
 #include <thread>
 #include <chrono>
 #include <cmath>
@@ -762,9 +763,9 @@ void Example14_CalibrationDetect() {
     }
 
     // 当前标定矩阵快照
-    MotorCalibrationParam current_cal[4][3];
+    MotorCalibrationParam current_cal[CAN_PORTS][MOTORS_PER_CAN];
     memcpy(current_cal, MOTOR_CALIBRATION, sizeof(MOTOR_CALIBRATION));
-    MotorCalibrationParam suggested[4][3];
+    MotorCalibrationParam suggested[CAN_PORTS][MOTORS_PER_CAN];
 
     // 初始化
     MotorManager& motor_mgr = MotorManager::GetInstance();
@@ -848,8 +849,9 @@ void Example14_CalibrationDetect() {
 
     // === 打印建议的完整标定矩阵 ===
     printf("\n\n========== Suggested Calibration Matrix ==========\n");
-    printf("static const MotorCalibrationParam MOTOR_CALIBRATION[4][3] = {\n");
-    for (uint8_t can_port = 0; can_port < 4; can_port++) {
+    printf("static const MotorCalibrationParam MOTOR_CALIBRATION[%d][%d] = {\n",
+           CAN_PORTS, MOTORS_PER_CAN);
+    for (uint8_t can_port = 0; can_port < CAN_PORTS; can_port++) {
         const char* legs[] = {"左前", "右前", "左后", "右后"};
         printf("    // CAN%d 端口 (%s腿)\n    {\n", can_port, legs[can_port]);
         for (uint8_t motor_id = 0; motor_id < 3; motor_id++) {
@@ -1443,11 +1445,11 @@ void Example19_ReadAndStand() {
         deg2rad(60.0f),      // Calf:   60°
     };
 
-    const float STAND_DURATION = 3.0f;  // 过渡时间 (秒)
+    const float STAND_DURATION = 10.0f;  // 过渡时间 (秒)
     const int   HZ = 100;               // 控制频率 100Hz
     const int   TOTAL_FRAMES = (int)(STAND_DURATION * HZ);
-    const float KP = 200.0f;
-    const float KD = 20.0f;
+    const float KP = 200.0f;    // 降低刚度减少振荡
+    const float KD = 20.0f;    // 提高阻尼抑制超调
 
     for (int frame = 0; frame <= TOTAL_FRAMES; frame++) {
         float t = (float)frame / TOTAL_FRAMES;  // 0.0 → 1.0
@@ -1501,12 +1503,26 @@ void Example20_MoveToPhysicalZero() {
     printf("  Motor 2 (Thigh): target = 0  (vertical)\n");
     printf("  Motor 3 (Calf):  target = π/2  (90°, physical limit)\n\n");
 
+    // ---- 先选择目标电机（只使能选中的电机，避免全部上电过流） ----
+    int can_port = -1, motor_id = -1;
+    printf("选择 CAN 端口 (0~3): ");
+    fflush(stdout);
+    if (scanf("%d", &can_port) != 1) { printf("[ERROR] 输入无效\n"); return; }
+    printf("选择电机 ID (1~3): ");
+    fflush(stdout);
+    if (scanf("%d", &motor_id) != 1) { printf("[ERROR] 输入无效\n"); return; }
+
+    if (!(can_port >= 0 && can_port <= 3 && motor_id >= 1 && motor_id <= 3)) {
+        printf("[ERROR] CAN 端口 0~3, 电机 ID 1~3\n");
+        return;
+    }
+
     // ---- 初始化 ----
     MotorManager& motor_mgr = MotorManager::GetInstance();
     ThreadManager thread_mgr;
 
     if (!motor_mgr.Initialize(thread_mgr)) {
-        printf("[ERROR] Failed to initialize MotorManager\n");
+        printf("[ERROR] MotorManager 初始化失败\n");
         return;
     }
 
@@ -1514,95 +1530,506 @@ void Example20_MoveToPhysicalZero() {
     thread_mgr.start_thread("motor_send");
     sleep(1);
 
-    // ---- 使能所有 12 个电机 ----
-    printf("[INFO] Enabling all 12 motors...\n");
+    // ---- 只使能选中的单个电机 ----
+    printf("[INFO] 使能 CAN%d-M%d...\n", can_port, motor_id);
+    motor_mgr.EnableMotor(can_port, motor_id);
+    usleep(300000);
+
+    // ---- 读取当前位置 ----
+    const float KP = 200.0f, KD = 10.0f;
+    MotorStatus st = motor_mgr.GetStatus(can_port, motor_id);
+    float start_pos = st.position;
+    printf("[INFO] 当前位置: %.4f rad (%.2f°)\n", start_pos, rad2deg(start_pos));
+
+    // 先发当前位置保持不动
+    motor_mgr.SendImpedance(can_port, motor_id, start_pos, 0.0f, KP, KD, 0.0f);
+    usleep(100000);
+
+    // ---- 计算目标 ----
+    float tgt_pos;
+    const char* desc;
+    if (motor_id == 3) {
+        tgt_pos = M_PI_2;           // 小腿从水平位弯曲 90°
+        desc = "小腿 90°";
+    } else if (motor_id == 1) {
+        tgt_pos = 0.0f;
+        desc = "髋水平";
+    } else {
+        tgt_pos = 0.0f;
+        desc = "大腿竖直";
+    }
+
+    printf("\n[INFO] CAN%d-M%d: %s\n", can_port, motor_id, desc);
+    printf("[INFO] 当前: %.4f rad (%.2f°)  →  目标: %.4f rad (%.2f°)\n\n",
+           start_pos, rad2deg(start_pos), tgt_pos, rad2deg(tgt_pos));
+    fflush(stdout);
+
+    // ---- 2 秒缓慢插值到目标 ----
+    const int HZ = 100;
+    const int FRAMES = 200;
+    for (int f = 0; f <= FRAMES; f++) {
+        float t = (float)f / FRAMES;
+        float pos = start_pos + (tgt_pos - start_pos) * t;
+        motor_mgr.SendImpedance(can_port, motor_id, pos, 0.0f, KP, KD, 0.0f);
+        if (f % 50 == 0) {
+            MotorStatus st_now = motor_mgr.GetStatus(can_port, motor_id);
+            printf("  [%3d%%] cmd=%.4f rad (%.2f°), actual=%.4f rad (%.2f°)\n",
+                   (int)(t * 100), pos, rad2deg(pos),
+                   st_now.position, rad2deg(st_now.position));
+            fflush(stdout);
+        }
+        usleep(1000000 / HZ);
+    }
+
+    // ---- 保持 2 秒 ----
+    printf("\n[INFO] 保持中...\n");
+    motor_mgr.SendImpedance(can_port, motor_id, tgt_pos, 0.0f, KP, KD, 0.0f);
+    sleep(2);
+
+    st = motor_mgr.GetStatus(can_port, motor_id);
+    printf("[INFO] 最终: CAN%d-M%d = %.4f rad (%.2f°)\n\n",
+           can_port, motor_id, st.position, rad2deg(st.position));
+
+    // ---- 清理 ----
+    printf("[INFO] 禁用电机...\n");
+    motor_mgr.DisableMotor(can_port, motor_id);
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+
+    printf("[INFO] Example20 完成\n");
+    fflush(stdout);
+}
+
+// ================= 示例 21：Xbox 手柄控制 =================
+void Example21_XboxControllerControl() {
+    printf("\n========== 示例 21：Xbox 手柄控制 ==========\n");
+    printf("[INFO] A键  = 起立\n");
+    printf("[INFO] LT扳机 = 升高身体  |  RT扳机 = 降低身体\n");
+    printf("[INFO] 右摇杆上下 = 轮子前进/后退\n");
+    printf("[INFO] Back键 = 退出\n\n");
+
+    // ---- 控制参数 ----
+    const float KP = 150.0f;                      // 阻抗控制刚度
+    const float KD = 20.0f;                      // 阻抗控制阻尼
+    const int   HZ = 100;                        // 主循环频率
+    const float HEIGHT_ADJUST_RATE = 0.10f;      // 扳机满程时高度调节速率 (m/s)
+    const float BODY_HEIGHT_MIN    = -0.15f;     // 最低身体高度（深蹲）
+    const float BODY_HEIGHT_MAX    =  0.10f;     // 最高身体高度（站立）
+    const float WHEEL_MAX_SPEED    =  0.5f;      // 轮子最大转速 (rad/s)
+    const float WHEEL_KP           =  5.0f;      // 轮子速度环 P 增益
+    const float WHEEL_KI           =  0.5f;      // 轮子速度环 I 增益
+    const float WHEEL_DEAD_ZONE    =  0.5f;      // 轮子摇杆死区 (rad/s)
+
+    // ---- 初始化 ----
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] MotorManager 初始化失败\n");
+        return;
+    }
+
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    // 使能腿部电机（motor_id 1~3）
+    printf("[INFO] 使能腿部电机...\n");
     for (int cp = 0; cp < 4; cp++) {
         for (int mi = 1; mi <= 3; mi++) {
             motor_mgr.EnableMotor(cp, mi);
         }
     }
+    // 使能轮电机（motor_id 4）
+    for (int cp = 0; cp < 4; cp++) {
+        motor_mgr.EnableMotor(cp, 4);
+    }
     usleep(200000);
 
-    // ---- 读取当前位姿并保持 ----
-    const float KP = 200.0f, KD = 15.0f;
-    float cur_pos[4][3];
-    for (int cp = 0; cp < 4; cp++) {
-        for (int mi = 1; mi <= 3; mi++) {
-            MotorStatus st = motor_mgr.GetStatus(cp, mi);
-            cur_pos[cp][mi - 1] = st.position;
-            motor_mgr.SendImpedance(cp, mi, st.position, 0.0f, KP, KD, 0.0f);
+    // ---- 初始化 Xbox 手柄 ----
+    XboxController controller;
+    bool controller_ok = controller.Initialize();
+    if (!controller_ok) {
+        printf("[ERROR] 未检测到 Xbox 手柄，退出\n");
+    }
+
+    // ---- 预计算站立姿态足端位置 ----
+    float stand_q[12] = {};
+    float base_foot_body[4][3] = {};
+    if (controller_ok) {
+        // 站立指令角：Hip=0°, Thigh=-30°, Calf=60°
+        for (int leg = 0; leg < 4; leg++) {
+            stand_q[leg * 3 + 0] = deg2rad(0);
+            stand_q[leg * 3 + 1] = deg2rad(-30);
+            stand_q[leg * 3 + 2] = deg2rad(60);
+        }
+        leg_fk_all(stand_q, base_foot_body);
+
+        printf("[INFO] 站立足端位置 (身体坐标系):\n");
+        for (int leg = 0; leg < 4; leg++) {
+            printf("  腿%d: [%+.4f, %+.4f, %+.4f] m\n",
+                   leg, base_foot_body[leg][0], base_foot_body[leg][1], base_foot_body[leg][2]);
         }
     }
 
-    // ---- 交互选择 ----
-    int can_port = -1, motor_id = -1;
-    printf("Select CAN port (0~3): ");
-    fflush(stdout);
-    if (scanf("%d", &can_port) != 1) { printf("[ERROR] Invalid input\n");   }
-    printf("Select motor ID (1~3): ");
-    fflush(stdout);
-    if (scanf("%d", &motor_id) != 1) { printf("[ERROR] Invalid input\n");   }
+    // ---- 状态变量 ----
+    bool standing = false;          // 是否已起立
+    float body_height = 0.0f;       // 身体高度偏移量
+    bool prev_a = false;            // A键上一帧状态（用于上升沿检测）
+    bool prev_back = false;         // Back键上一帧状态
 
-    if (can_port >= 0 && can_port <= 3 && motor_id >= 1 && motor_id <= 3) {
-        // 标定坐标系下 0 = 物理零位
-        // 3号电机(小腿)物理上只能弯到90°，目标改为 -π/2
-        float tgt_pos;
-        const char* desc;
-        if (motor_id == 3) {
-            tgt_pos = M_PI_2;           // 90° (小腿从物理0位到正向90°)
-            desc = "Calf 90 deg";
-        } else if (motor_id == 1) {
-            tgt_pos = 0.0f;
-            desc = "Hip horizontal";
-        } else {
-            tgt_pos = 0.0f;
-            desc = "Thigh vertical";
-        }
+    // ---- 阶段 1：等待 A 键起立 ----
+    if (controller_ok) {
+        printf("\n[INFO] 按下 A 键起立...\n");
+        fflush(stdout);
 
-        float start_pos = cur_pos[can_port][motor_id - 1];
-        printf("\n[INFO] CAN%d-M%d: %s\n", can_port, motor_id, desc);
-        printf("[INFO] Current: %.4f rad (%6.2f°)  →  Target: %.4f rad (%6.2f°)\n\n",
-               start_pos, rad2deg(start_pos), tgt_pos, rad2deg(tgt_pos));
+        while (!standing) {
+            controller.Poll();
+            if (!controller.IsConnected()) {
+                printf("[ERROR] 手柄断开连接\n");
+                break;
+            }
 
-        // ---- 2 秒缓慢插值到目标 ----
-        const int HZ = 100;
-        const int FRAMES = 200;
-        for (int f = 0; f <= FRAMES; f++) {
-            float t = (float)f / FRAMES;
-            float pos = start_pos + (tgt_pos - start_pos) * t;
-            motor_mgr.SendImpedance(can_port, motor_id, pos, 0.0f, KP, KD, 0.0f);
-            if (f % 50 == 0) {
-                MotorStatus st = motor_mgr.GetStatus(can_port, motor_id);
-                printf("  [%3d%%] cmd=%.4f rad (%6.2f°), actual=%.4f rad (%6.2f°)\n",
-                       (int)(t * 100), pos, rad2deg(pos),
-                       st.position, rad2deg(st.position));
+            const XboxState& state = controller.GetState();
+
+            // A键上升沿检测
+            bool a_pressed = state.a && !prev_a;
+            prev_a = state.a;
+
+            if (a_pressed) {
+                standing = true;
+                printf("[INFO] A键按下！开始起立...\n");
                 fflush(stdout);
             }
+
+            usleep(10000);
+        }
+    }
+
+    // ---- 阶段 2：2秒插值到站立姿态 ----
+    if (controller_ok && standing) {
+        const int TOTAL_INTERP_FRAMES = 200;  // 2秒 × 100Hz
+        float start_pos[4][3];
+
+        // 记录起立前各关节当前位置
+        for (int leg = 0; leg < 4; leg++) {
+            for (int j = 0; j < 3; j++) {
+                start_pos[leg][j] = motor_mgr.GetStatus(leg, j + 1).position;
+            }
+        }
+
+        // 线性插值过渡
+        for (int f = 0; f <= TOTAL_INTERP_FRAMES; f++) {
+            float t = (float)f / TOTAL_INTERP_FRAMES;
+            if (t > 1.0f) t = 1.0f;
+
+            for (int leg = 0; leg < 4; leg++) {
+                for (int j = 0; j < 3; j++) {
+                    float pos = start_pos[leg][j]
+                              + (stand_q[leg * 3 + j] - start_pos[leg][j]) * t;
+                    motor_mgr.SendImpedance(leg, j + 1, pos, 0.0f, KP, KD, 0.0f);
+                }
+            }
+
+            if (f % 50 == 0) {
+                printf("  起立中... %3.0f%%\n", t * 100.0f);
+                fflush(stdout);
+            }
+
             usleep(1000000 / HZ);
         }
 
-        // ---- 保持 2 秒 ----
-        printf("\n[INFO] Holding for 2 seconds...\n");
-        motor_mgr.SendImpedance(can_port, motor_id, tgt_pos, 0.0f, KP, KD, 0.0f);
-        sleep(4);
+        printf("[INFO] 已站立。LT/RT=高度, 右摇杆=轮子, Back=退出.\n\n");
+        fflush(stdout);
 
-        MotorStatus st = motor_mgr.GetStatus(can_port, motor_id);
-        printf("[INFO] Final: CAN%d-M%d = %.4f rad (%6.2f°)\n\n",
-               can_port, motor_id, st.position, rad2deg(st.position));
-    } else {
-        printf("[ERROR] CAN port must be 0~3, motor ID must be 1~3\n");
+        // ---- 阶段 3：主控制循环 ----
+        int frame = 0;
+        while (true) {
+            controller.Poll();
+            if (!controller.IsConnected()) {
+                printf("[INFO] 手柄断开，退出...\n");
+                break;
+            }
+
+            const XboxState& state = controller.GetState();
+
+            // Back键上升沿 → 退出
+            bool back_pressed = state.back && !prev_back;
+            prev_back = state.back;
+            if (back_pressed) {
+                printf("[INFO] Back键按下，退出...\n");
+                break;
+            }
+
+            // ---- 身体高度调节（左/右扳机） ----
+            const float TRIGGER_DEAD = 0.05f;
+            float height_delta = 0.0f;
+            if (state.left_trigger  > TRIGGER_DEAD)
+                height_delta += HEIGHT_ADJUST_RATE * state.left_trigger  / HZ;
+            if (state.right_trigger > TRIGGER_DEAD)
+                height_delta -= HEIGHT_ADJUST_RATE * state.right_trigger / HZ;
+
+            body_height += height_delta;
+            body_height = clamp(body_height, BODY_HEIGHT_MIN, BODY_HEIGHT_MAX);
+
+            // ---- 轮子控制（右摇杆 Y 轴） ----
+            float wheel_vel = -state.right_stick_y * WHEEL_MAX_SPEED;
+            if (fabsf(wheel_vel) < WHEEL_DEAD_ZONE) wheel_vel = 0.0f;
+
+            for (int cp = 0; cp < 4; cp++) {
+                motor_mgr.SendSpeed(cp, 4, wheel_vel, WHEEL_KP, WHEEL_KI);
+            }
+
+            // ---- 四腿 IK 解算并发送指令 ----
+            for (int leg = 0; leg < 4; leg++) {
+                // 根据身体高度偏移量调整足端目标 Z 分量
+                float foot_target_body[3] = {
+                    base_foot_body[leg][0],
+                    base_foot_body[leg][1],
+                    base_foot_body[leg][2] - body_height,
+                };
+
+                // 身体坐标系 → 髋坐标系: R^T × (foot_body - LEG_MOUNT)
+                float R[3][3], Rt[3][3];
+                hip_rotation_matrix(static_cast<LegIndex>(leg), R);
+                for (int i = 0; i < 3; i++)
+                    for (int j = 0; j < 3; j++)
+                        Rt[i][j] = R[j][i];
+
+                float mount_to_foot[3];
+                for (int i = 0; i < 3; i++)
+                    mount_to_foot[i] = foot_target_body[i] - LEG_MOUNT[leg][i];
+
+                float p_hip[3] = {0};
+                for (int i = 0; i < 3; i++)
+                    for (int j = 0; j < 3; j++)
+                        p_hip[i] += Rt[i][j] * mount_to_foot[j];
+
+                // IK 反解
+                float q_cmd[3];
+                leg_ik(p_hip, LEG_L1, LEG_L2, LEG_L3,
+                       THETA1_OFFSET, THETA2_OFFSET, THETA3_OFFSET, q_cmd);
+
+                // 钳位到关节限位
+                q_cmd[0] = clamp(q_cmd[0],
+                    deg2rad(LOWER_LIMIT_THETA1_DEG), deg2rad(UPPER_LIMIT_THETA1_DEG));
+                q_cmd[1] = clamp(q_cmd[1],
+                    deg2rad(LOWER_LIMIT_THETA2_DEG), deg2rad(UPPER_LIMIT_THETA2_DEG));
+                q_cmd[2] = clamp(q_cmd[2],
+                    deg2rad(LOWER_LIMIT_THETA3_DEG), deg2rad(UPPER_LIMIT_THETA3_DEG));
+
+                // 发送阻抗控制指令
+                for (int j = 0; j < 3; j++) {
+                    motor_mgr.SendImpedance(leg, j + 1, q_cmd[j], 0.0f, KP, KD, 0.0f);
+                }
+            }
+
+            // 每 0.5 秒打印状态
+            if (frame % 50 == 0) {
+                printf("  高度=%+.3fm  轮速=%.2frad/s  LT=%.2f RT=%.2f\n",
+                       body_height, wheel_vel, state.left_trigger, state.right_trigger);
+                fflush(stdout);
+            }
+
+            frame++;
+            usleep(1000000 / HZ);
+        }
+    } // 起立 & 主循环结束
+
+    // ---- 清理 ----
+    printf("[INFO] 正在关闭...\n");
+
+    // 停止轮电机
+    for (int cp = 0; cp < 4; cp++) {
+        motor_mgr.SendSpeed(cp, 4, 0.0f, 0.0f, 0.0f);
     }
 
-    printf("[INFO] Disabling all motors...\n");
+    // 禁用所有 16 个电机
     for (int cp = 0; cp < 4; cp++) {
-        for (int mi = 1; mi <= 3; mi++) {
+        for (int mi = 1; mi <= 4; mi++) {
             motor_mgr.DisableMotor(cp, mi);
         }
     }
+
+    controller.Shutdown();
     thread_mgr.stop_thread("motor_receive");
     thread_mgr.stop_thread("motor_send");
     motor_mgr.Stop();
 
-    printf("[INFO] Example20 completed\n");
+    printf("[INFO] 示例21 完成\n");
+    fflush(stdout);
+}
+
+// ================= 示例 22：起立 + 轮子阻抗模式测试 =================
+void Example22_StandAndWheelTest() {
+    printf("\n========== 示例 22：起立 + 轮子阻抗模式测试 ==========\n");
+    printf("[INFO] 阶段1: 读取当前姿态\n");
+    printf("[INFO] 阶段2: 缓慢起立\n");
+    printf("[INFO] 阶段3: 4秒后轮子以 1rad/s 滚动 (KP=3, KD=0.3)\n\n");
+
+    // ---- 初始化 ----
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] MotorManager 初始化失败\n");
+        return;
+    }
+
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    // ---- 使能所有 12 条腿电机 + 4 个轮电机 ----
+    printf("[INFO] 使能 12 条腿电机...\n");
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 3; mi++) {
+            motor_mgr.EnableMotor(cp, mi);
+        }
+    }
+    printf("[INFO] 使能 4 个轮电机...\n");
+    for (int cp = 0; cp < 4; cp++) {
+        motor_mgr.EnableMotor(cp, 4);
+    }
+    usleep(500000);  // 等轮电机完全就绪
+
+    // 读取每个轮电机当前位置，发送阻抗保持（防止空转）
+    printf("[INFO] 轮电机当前位置保持...\n");
+    float wheel_start_pos[4] = {0};
+    for (int cp = 0; cp < 4; cp++) {
+        MotorStatus st = motor_mgr.GetStatus(cp, 4);
+        wheel_start_pos[cp] = st.position;
+        motor_mgr.SendImpedance(cp, 4, st.position, 0.0f, 20.0f, 5.0f, 0.0f);
+        printf("  CAN%d-M4: %.4f rad (%.2f°)\n", cp, st.position, rad2deg(st.position));
+    }
+    fflush(stdout);
+
+    // ======== 阶段 1：等待数据就绪并读取当前姿态 ========
+    printf("========== 阶段1: 等待数据就绪 ==========\n");
+    {
+        MotorStatus st = motor_mgr.GetStatus(0, 1);
+        int retry = 0;
+        while (fabsf(st.position) < 0.001f && fabsf(st.velocity) < 0.001f && retry < 100) {
+            usleep(50000);
+            st = motor_mgr.GetStatus(0, 1);
+            retry++;
+        }
+        printf("[INFO] 等待 %d 次 (%.1f s) 后数据就绪\n", retry, retry * 0.05f);
+    }
+
+    float cur_pos[4][3];
+    printf("当前关节角度:\n");
+    for (int leg = 0; leg < 4; leg++) {
+        printf("  CAN%d: ", leg);
+        for (int j = 0; j < 3; j++) {
+            MotorStatus st = motor_mgr.GetStatus(leg, j + 1);
+            cur_pos[leg][j] = st.position;
+            printf("  M%d=%.2f°", j + 1, rad2deg(st.position));
+        }
+        printf("\n");
+    }
+    fflush(stdout);
+
+    // ======== 阶段 2：缓慢起立 ========
+    printf("\n========== 阶段2: 起立 ==========\n");
+    const float TGT[3] = { deg2rad(0.0f), deg2rad(-30.0f), deg2rad(60.0f) };
+    const float KP = 150.0f, KD = 20.0f;
+    const int   STAND_DURATION = 3;
+    const int   HZ = 100;
+    const int   TOTAL_FRAMES = STAND_DURATION * HZ;
+
+    for (int frame = 0; frame <= TOTAL_FRAMES; frame++) {
+        float t = (float)frame / TOTAL_FRAMES;
+        for (int leg = 0; leg < 4; leg++) {
+            for (int j = 0; j < 3; j++) {
+                float pos = cur_pos[leg][j] + (TGT[j] - cur_pos[leg][j]) * t;
+                motor_mgr.SendImpedance(leg, j + 1, pos, 0.0f, KP, KD, 0.0f);
+            }
+        }
+        if (frame % 50 == 0) {
+            printf("  起立中... %3.0f%%\n", t * 100.0f);
+            fflush(stdout);
+        }
+        usleep(1000000 / HZ);
+    }
+
+    // 保持站立 4 秒
+    printf("\n[INFO] 保持站立 4 秒...\n");
+    for (int sec = 1; sec <= 4; sec++) {
+        for (int leg = 0; leg < 4; leg++) {
+            for (int j = 0; j < 3; j++) {
+                motor_mgr.SendImpedance(leg, j + 1, TGT[j], 0.0f, KP, KD, 0.0f);
+            }
+        }
+        // 持续保持轮子当前位置
+        for (int cp = 0; cp < 4; cp++) {
+            motor_mgr.SendImpedance(cp, 4, wheel_start_pos[cp], 0.0f, 20.0f, 5.0f, 0.0f);
+        }
+        sleep(1);
+        printf("  %d/4 秒\n", sec);
+        fflush(stdout);
+    }
+
+    // ======== 阶段 3：轮电机阻抗模式 1rad/s (递增位置目标) ========
+    printf("\n========== 阶段3: 轮电机阻抗模式 (1rad/s, KP=3, KD=0.3) ==========\n");
+    printf("[INFO] 轮子开始滚动...\n");
+    fflush(stdout);
+
+    const float WHEEL_KP = 3.0f;
+    const float WHEEL_KD = 0.3f;
+    const float WHEEL_VEL = 1.0f;
+    const int   WHEEL_DURATION = 10;
+
+    // 以每个轮子当前位置为起始，各自递增位置目标
+    float wheel_tgt_pos[4] = { wheel_start_pos[0], wheel_start_pos[1],
+                               wheel_start_pos[2], wheel_start_pos[3] };
+    printf("[INFO] 轮子起始位置: %.2f %.2f %.2f %.2f rad\n",
+           wheel_tgt_pos[0], wheel_tgt_pos[1], wheel_tgt_pos[2], wheel_tgt_pos[3]);
+
+    // 保持腿姿态
+    for (int leg = 0; leg < 4; leg++)
+        for (int j = 0; j < 3; j++)
+            motor_mgr.SendImpedance(leg, j + 1, TGT[j], 0.0f, KP, KD, 0.0f);
+
+    const int WHEEL_HZ = 50;
+    for (int sec = 0; sec < WHEEL_DURATION; sec++) {
+        for (int f = 0; f < WHEEL_HZ; f++) {
+            for (int cp = 0; cp < 4; cp++) {
+                wheel_tgt_pos[cp] += WHEEL_VEL / WHEEL_HZ;
+                motor_mgr.SendImpedance(cp, 4, wheel_tgt_pos[cp], WHEEL_VEL, WHEEL_KP, WHEEL_KD, 0.0f);
+            }
+            usleep(1000000 / WHEEL_HZ);
+        }
+
+        // 重新发送腿姿态
+        for (int leg = 0; leg < 4; leg++)
+            for (int j = 0; j < 3; j++)
+                motor_mgr.SendImpedance(leg, j + 1, TGT[j], 0.0f, KP, KD, 0.0f);
+
+        printf("  轮子 %d/%d 秒  pos=%.2f rad\n", sec + 1, WHEEL_DURATION, wheel_tgt_pos[0]);
+        fflush(stdout);
+    }
+
+    // ---- 清理 ----
+    printf("\n[INFO] 停止并禁用所有电机...\n");
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 4; mi++) {
+            motor_mgr.SendImpedance(cp, mi, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+        }
+    }
+    usleep(500000);
+
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 4; mi++) {
+            motor_mgr.DisableMotor(cp, mi);
+        }
+    }
+
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+
+    printf("[INFO] 示例22 完成\n");
     fflush(stdout);
 }

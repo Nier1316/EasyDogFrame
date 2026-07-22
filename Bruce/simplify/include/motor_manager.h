@@ -1,9 +1,9 @@
 /**
  * @file    motor_manager.h
- * @brief   12电机批量管理器
- * @details MotorManager 是单例，管理 4×3=12 个 EleMotor 实例：
+ * @brief   16电机批量管理器
+ * @details MotorManager 是单例，管理 4×4=16 个 EleMotor 实例：
  *          - 4 路 CANET TCP 连接（CAN0~CAN3）
- *          - 每路 3 个电机（motor_id=1/2/3）
+ *          - 每路 4 个电机（motor_id=1/2/3/4，1-3 腿关节 + 4 轮电机）
  *          - 线程由外部 ThreadManager 统一管理，Initialize() 只负责注册任务函数
  *          - 线程安全：每个电机一把 std::mutex，状态读写加锁
  */
@@ -15,6 +15,7 @@
 #include <mutex>
 #include <vector>
 #include "motor_drive/ele_motor.h"
+#include "motor_calibration.h"
 #include "data_types.h"
 #include "thread/thread_manager.h"
 #include "bsp/bsp_can.h"
@@ -53,8 +54,8 @@ private:
     void SendThreadFunc();     // 预留：单次发送，1ms 间隔
 
     std::vector<std::unique_ptr<CanDevice>> m_can_devices;
-    EleMotor m_motors[4][3];
-    mutable std::mutex m_motor_mutex[4][3];
+    EleMotor m_motors[CAN_PORTS][MOTORS_PER_CAN];
+    mutable std::mutex m_motor_mutex[CAN_PORTS][MOTORS_PER_CAN];
 };
 
 #endif // MOTOR_MANAGER_H_

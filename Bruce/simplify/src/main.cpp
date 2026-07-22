@@ -66,14 +66,25 @@ int main() {
     // printf("[INFO] Example18 completed.\n");
 
     // 运行示例19 - 读取当前姿态并缓慢移动到站立
-    printf("[INFO] Running Example19_ReadAndStand...\n");
-    Example19_ReadAndStand();
-    printf("[INFO] Example19 completed.\n");
+    // printf("[INFO] Running Example19_ReadAndStand...\n");
+    // Example19_ReadAndStand();
+    // printf("[INFO] Example19 completed.\n");
 
     // 运行示例20 - 选择电机移动到物理零位
     // printf("[INFO] Running Example20_MoveToPhysicalZero...\n");
     // Example20_MoveToPhysicalZero();
     // printf("[INFO] Example20 completed.\n");
+
+
+    // 运行示例21 - Xbox 手柄控制
+    printf("[INFO] Running Example21_XboxControllerControl...\n");
+    Example21_XboxControllerControl();
+    printf("[INFO] Example21 completed.\n");
+
+    // 运行示例22 - 起立 + 轮子阻抗模式测试
+    // printf("[INFO] Running Example22_StandAndWheelTest...\n");
+    // Example22_StandAndWheelTest();
+    // printf("[INFO] Example22 completed.\n");
 
     return 0;
 }

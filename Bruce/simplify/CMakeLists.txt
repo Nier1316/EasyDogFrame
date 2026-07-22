@@ -33,6 +33,15 @@ include_directories(
 # ============ 查找依赖 ============
 find_package(Threads REQUIRED)
 
+# SDL2 — 手柄控制 (Example21)
+find_package(SDL2 QUIET)
+if(NOT SDL2_FOUND)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(SDL2 sdl2)
+    endif()
+endif()
+
 # ============ 源文件列表 ============
 set(SOURCES
     # 主程序
@@ -73,6 +82,15 @@ add_executable(can_motor_app ${SOURCES})
 
 # ============ 链接库 ============
 target_link_libraries(can_motor_app PRIVATE Threads::Threads)
+
+# 条件链接 SDL2
+if(SDL2_FOUND OR SDL2_LIBRARIES)
+    target_include_directories(can_motor_app PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(can_motor_app PRIVATE ${SDL2_LIBRARIES})
+    message(STATUS "SDL2 found: ${SDL2_LIBRARIES}")
+else()
+    message(STATUS "SDL2 not found — Example21 will not be available")
+endif()
 
 # 链接 CANET 库（根据编译类型选择 Debug 或 Release）
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")

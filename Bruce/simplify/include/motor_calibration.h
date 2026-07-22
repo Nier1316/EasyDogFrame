@@ -3,6 +3,12 @@
 
 #include <cstdint>
 
+// =====================================================================
+//  CAN 拓扑常量
+// =====================================================================
+constexpr uint8_t CAN_PORTS      = 4;  // CAN 总线数量（4 条腿）
+constexpr uint8_t MOTORS_PER_CAN = 4;  // 每条 CAN 挂载电机数（3 关节 + 1 轮电机）
+
 /**
  * @brief 电机标定参数结构
  */
@@ -15,38 +21,44 @@ struct MotorCalibrationParam {
 /**
  * @brief 电机标定矩阵
  *
- * 矩阵布局：[4 CAN 端口][3 个电机] = 12 个电机
+ * 矩阵布局：[CAN_PORTS][MOTORS_PER_CAN] = 16 个电机
  *
  * 使用方式：
- *   motor_id = 1, 2, 3 (转换为数组索引: 0, 1, 2)
+ *   motor_id = 1, 2, 3, 4 (转换为数组索引: 0, 1, 2, 3)
  *   can_port = 0, 1, 2, 3 (CAN 端口索引)
  *
  * 访问：calibration_matrix[can_port][motor_id - 1]
+ *
+ * motor_id=1 (Hip), 2 (Thigh), 3 (Calf), 4 (Wheel)
  */
-static const MotorCalibrationParam MOTOR_CALIBRATION[4][3] = {
+static const MotorCalibrationParam MOTOR_CALIBRATION[CAN_PORTS][MOTORS_PER_CAN] = {
     // CAN0 端口 (左前腿)
     {
         {-1.0f,  1.0f, 0.611f},      // Motor 1 (Hip)
         { 1.0f,  1.0f, 0.441f},      // Motor 2 (Thigh)
         {-1.0f,  1.0f, 0.211f},      // Motor 3 (Calf)
+        { -1.0f,  1.0f, 0.0f  },      // Motor 4 (Wheel) — 待实测
     },
     // CAN1 端口 (右前腿)
     {
         { 1.0f,  1.0f, 0.611f},      // Motor 1 (Hip)
-        {-1.0f,  1.0f, 0.841f},      // Motor 2 (Thigh)
+        {-1.0f,  1.0f, 0.441f},      // Motor 2 (Thigh)
         { 1.0f,  1.0f, 0.211f},      // Motor 3 (Calf)
+        {-1.0f,  1.0f, 0.0f  },      // Motor 4 (Wheel) — 与其他右后腿(CAN3)方向相反
     },
     // CAN2 端口 (左后腿)
     {
         { 1.0f,  1.0f, 0.611f},      // Motor 1 (Hip)
         { 1.0f,  1.0f, 0.441f},      // Motor 2 (Thigh)
         {-1.0f,  1.0f, 0.211f},      // Motor 3 (Calf)
+        { -1.0f,  1.0f, 0.0f  },      // Motor 4 (Wheel) — 待实测
     },
     // CAN3 端口 (右后腿)
     {
         {-1.0f,  1.0f, 0.611f},      // Motor 1 (Hip)
         {-1.0f,  1.0f, 0.441f},      // Motor 2 (Thigh)
         { 1.0f,  1.0f, 0.211f},      // Motor 3 (Calf)
+        { 1.0f,  1.0f, 0.0f  },      // Motor 4 (Wheel) — 待实测
     },
 };
 
@@ -55,7 +67,7 @@ static const MotorCalibrationParam MOTOR_CALIBRATION[4][3] = {
  */
 inline void ApplyMotorCalibration(uint8_t can_port, uint8_t motor_id,
                                    float& position, float& velocity, float& torque) {
-    if (can_port >= 4 || motor_id < 1 || motor_id > 3) {
+    if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN) {
         return;
     }
 
@@ -71,7 +83,7 @@ inline void ApplyMotorCalibration(uint8_t can_port, uint8_t motor_id,
  */
 inline void ApplyMotorCalibrationInverse(uint8_t can_port, uint8_t motor_id,
                                           float& position, float& velocity) {
-    if (can_port >= 4 || motor_id < 1 || motor_id > 3) {
+    if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN) {
         return;
     }
 

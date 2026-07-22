@@ -1,9 +1,10 @@
 /**
  * @file    motor_manager.cpp
- * @brief   12电机批量管理器实现
+ * @brief   16电机批量管理器实现
  */
 #include "motor_manager.h"
 #include "motor_calibration.h"
+#include "motor_logger.h"
 #include <cstdio>
 #include <chrono>
 
@@ -20,7 +21,7 @@ MotorManager::~MotorManager() {
     Stop();
 }
 
-// 初始化4路 CANET TCP 连接，创建12个电机对象，并向外部 ThreadManager 注册任务函数
+// 初始化4路 CANET TCP 连接，创建16个电机对象，并向外部 ThreadManager 注册任务函数
 bool MotorManager::Initialize(ThreadManager& thread_mgr) {
     printf("[INFO] MotorManager initializing...\n");
 
@@ -28,7 +29,7 @@ bool MotorManager::Initialize(ThreadManager& thread_mgr) {
     const char* server_ip = "192.168.0.178";
     const uint16_t base_port = 4001;
 
-    for (uint8_t i = 0; i < 4; i++) {
+    for (uint8_t i = 0; i < CAN_PORTS; i++) {
         // 配置 TCP 参数
         CanDeviceConfig config;
         config.device_idx = i;
@@ -51,9 +52,9 @@ bool MotorManager::Initialize(ThreadManager& thread_mgr) {
         printf("[INFO] CAN device %d initialized and started\n", i);
     }
 
-    // 2. 创建12个电机对象，配置参数
-    for (uint8_t can_port = 0; can_port < 4; can_port++) {
-        for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+    // 2. 创建16个电机对象，配置参数
+    for (uint8_t can_port = 0; can_port < CAN_PORTS; can_port++) {
+        for (uint8_t motor_id = 1; motor_id <= MOTORS_PER_CAN; motor_id++) {
             EleMotor& motor = m_motors[can_port][motor_id - 1];
             motor.device_idx = can_port;
             motor.motor_id = motor_id;
@@ -70,7 +71,10 @@ bool MotorManager::Initialize(ThreadManager& thread_mgr) {
         }
     }
 
-    // 3. 向外部 ThreadManager 注册任务函数（不在此处启动，由 RobotApp 统一启动）
+    // 3. 初始化日志系统
+    MotorLogger::GetInstance().Init();
+
+    // 4. 向外部 ThreadManager 注册任务函数（不在此处启动，由 RobotApp 统一启动）
     thread_mgr.register_thread(
         "motor_receive",
         [this]() { ReceiveThreadFunc(); },
@@ -90,8 +94,11 @@ bool MotorManager::Initialize(ThreadManager& thread_mgr) {
 void MotorManager::Stop() {
     printf("[INFO] MotorManager stopping...\n");
 
+    // 关闭日志
+    MotorLogger::GetInstance().Shutdown();
+
     // 通过 BspCan 关闭所有设备
-    for (uint8_t i = 0; i < 4; i++) {
+    for (uint8_t i = 0; i < CAN_PORTS; i++) {
         BspCan::GetInstance().StopDevice(i);
         BspCan::GetInstance().CloseDevice(i);
     }
@@ -101,14 +108,14 @@ void MotorManager::Stop() {
 
 // 单次 CAN 轮询，由 ThreadManager 以 LOOP 模式每 1ms 调用一次
 void MotorManager::ReceiveThreadFunc() {
-    for (uint8_t can_port = 0; can_port < 4; can_port++) {
+    for (uint8_t can_port = 0; can_port < CAN_PORTS; can_port++) {
         std::vector<BspCanFrame> frames;
         // 改用 BspCan 接收帧
         if (BspCan::GetInstance().ReceiveFrames(can_port, frames, 0)) {
             for (const auto& frame : frames) {
-                if (frame.id >= 51 && frame.id <= 53) {
+                if (frame.id >= 51 && frame.id <= 54) {
                     uint8_t motor_id = frame.id - 50;
-                    if (motor_id >= 1 && motor_id <= 3) {
+                    if (motor_id >= 1 && motor_id <= MOTORS_PER_CAN) {
                         std::lock_guard<std::mutex> lock(m_motor_mutex[can_port][motor_id - 1]);
                         EleMotor& motor = m_motors[can_port][motor_id - 1];
                         // 直接解包 CAN 帧数据
@@ -122,7 +129,7 @@ void MotorManager::ReceiveThreadFunc() {
 
 // 电机控制接口实现
 void MotorManager::EnableMotor(uint8_t can_port, uint8_t motor_id) {
-    if (can_port >= 4 || motor_id < 1 || motor_id > 3) {
+    if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN) {
         return;
     }
 
@@ -133,7 +140,7 @@ void MotorManager::EnableMotor(uint8_t can_port, uint8_t motor_id) {
 }
 
 void MotorManager::DisableMotor(uint8_t can_port, uint8_t motor_id) {
-    if (can_port >= 4 || motor_id < 1 || motor_id > 3) {
+    if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN) {
         return;
     }
 
@@ -144,7 +151,7 @@ void MotorManager::DisableMotor(uint8_t can_port, uint8_t motor_id) {
 }
 
 void MotorManager::SetZero(uint8_t can_port, uint8_t motor_id) {
-    if (can_port >= 4 || motor_id < 1 || motor_id > 3) {
+    if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN) {
         return;
     }
 
@@ -157,7 +164,7 @@ void MotorManager::SetZero(uint8_t can_port, uint8_t motor_id) {
 }
 
 void MotorManager::ClearError(uint8_t can_port, uint8_t motor_id) {
-    if (can_port >= 4 || motor_id < 1 || motor_id > 3) {
+    if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN) {
         return;
     }
 
@@ -171,7 +178,7 @@ void MotorManager::ClearError(uint8_t can_port, uint8_t motor_id) {
 
 void MotorManager::SendImpedance(uint8_t can_port, uint8_t motor_id,
                                   float pos, float vel, float kp, float kd, float torque) {
-    if (can_port >= 4 || motor_id < 1 || motor_id > 3) {
+    if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN) {
         return;
     }
 
@@ -187,7 +194,7 @@ void MotorManager::SendImpedance(uint8_t can_port, uint8_t motor_id,
 
 void MotorManager::SendSpeed(uint8_t can_port, uint8_t motor_id,
                               float vel, float kp, float ki) {
-    if (can_port >= 4 || motor_id < 1 || motor_id > 3) {
+    if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN) {
         return;
     }
 
@@ -201,7 +208,7 @@ void MotorManager::SendSpeed(uint8_t can_port, uint8_t motor_id,
 
 void MotorManager::SendPosition(uint8_t can_port, uint8_t motor_id,
                                  float pos, float kvp, float kp, float kd, float kvi) {
-    if (can_port >= 4 || motor_id < 1 || motor_id > 3) {
+    if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN) {
         return;
     }
 
@@ -217,7 +224,7 @@ void MotorManager::SendPosition(uint8_t can_port, uint8_t motor_id,
 
 MotorStatus MotorManager::GetStatus(uint8_t can_port, uint8_t motor_id) const {
     MotorStatus status;
-    if (can_port >= 4 || motor_id < 1 || motor_id > 3) {
+    if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN) {
         return status;
     }
 
@@ -234,17 +241,24 @@ MotorStatus MotorManager::GetStatus(uint8_t can_port, uint8_t motor_id) const {
 
 // 单次发送任务，由外部 ThreadManager 以 LOOP 模式驱动
 void MotorManager::SendThreadFunc() {
-    for (uint8_t can_port = 0; can_port < 4; can_port++) {
-        for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+    for (uint8_t can_port = 0; can_port < CAN_PORTS; can_port++) {
+        for (uint8_t motor_id = 1; motor_id <= MOTORS_PER_CAN; motor_id++) {
             std::lock_guard<std::mutex> lock(m_motor_mutex[can_port][motor_id - 1]);
             EleMotor& motor = m_motors[can_port][motor_id - 1];
 
             if (!motor.enabled) continue;
 
             // 将上层统一坐标系的目标值逆标定回电机原始坐标系
-            float send_pos = motor.target_position;
-            float send_vel = motor.target_speed;
+            float tgt_pos = motor.target_position;
+            float tgt_vel = motor.target_speed;
+            float send_pos = tgt_pos;
+            float send_vel = tgt_vel;
             ApplyMotorCalibrationInverse(can_port, motor_id, send_pos, send_vel);
+
+            // 日志: 用户目标值 → 逆标定后实际发送值
+            MotorLogger::GetInstance().LogSend(can_port, motor_id,
+                tgt_pos, tgt_vel, send_pos, send_vel,
+                motor.kp, motor.kd, motor.control_mode);
 
             switch (motor.control_mode) {
                 case IMPEDANCE:

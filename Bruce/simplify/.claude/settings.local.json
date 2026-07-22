@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /home/nuc/super_coffee_car_pro_ws/src -type f -name \"*.py\" -o -name \"*.cpp\" -o -name \"*.launch\" | head -30)",
+      "Read(//home/nuc/super_coffee_car_pro_ws/src/**)"
+    ]
+  }
+}

@@ -2,6 +2,7 @@
 #include "bsp_can.h"
 #include "ele_motor_def.h"
 #include "motor_calibration.h"
+#include "motor_logger.h"
 #include <vector>
 
 void EleMotor::init() {
@@ -200,16 +201,28 @@ void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
 			case MOTOR_OR_temperature:
 				motor.current_temp = canRecev.fValue;
 				break;
-			case MOTOR_OR_angle:
-				motor.current_position = canRecev.fValue;
+			case MOTOR_OR_angle: {
+				float raw_pos = canRecev.fValue;
+				motor.current_position = raw_pos;
+				float before[3] = {motor.current_position, motor.current_speed, motor.current_torque};
 				ApplyMotorCalibration(motor.device_idx, motor.motor_id,
 									  motor.current_position, motor.current_speed, motor.current_torque);
+				MotorLogger::GetInstance().LogRecv(motor.device_idx, motor.motor_id,
+					before[0], before[1], before[2],
+					motor.current_position, motor.current_speed, motor.current_torque);
 				break;
-			case MOTOR_OR_velocity:
-				motor.current_speed = canRecev.fValue;
+			}
+			case MOTOR_OR_velocity: {
+				float raw_vel = canRecev.fValue;
+				motor.current_speed = raw_vel;
+				float before[3] = {motor.current_position, motor.current_speed, motor.current_torque};
 				ApplyMotorCalibration(motor.device_idx, motor.motor_id,
 									  motor.current_position, motor.current_speed, motor.current_torque);
+				MotorLogger::GetInstance().LogRecv(motor.device_idx, motor.motor_id,
+					before[0], before[1], before[2],
+					motor.current_position, motor.current_speed, motor.current_torque);
 				break;
+			}
 			case MOTOR_OR_torque:
 				motor.current_torque = canRecev.fValue;
 				break;
@@ -229,14 +242,22 @@ void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
 		float v = uint_to_float(v_int, V_MIN, V_MAX, 12);
 		float t = uint_to_float(i_int, -T_MAX, T_MAX, 12);
 
-		// 更新电机结构体
+		// 更新电机结构体（原始值）
 		motor.current_position = p;
 		motor.current_speed = v;
 		motor.current_torque = t;
 
+		// 记录原始值
+		float raw_pos = p, raw_vel = v, raw_torque = t;
+
 		// 应用标定参数
 		ApplyMotorCalibration(motor.device_idx, motor.motor_id,
 							  motor.current_position, motor.current_speed, motor.current_torque);
+
+		// 日志: 原始反馈 → 标定后状态
+		MotorLogger::GetInstance().LogRecv(motor.device_idx, motor.motor_id,
+			raw_pos, raw_vel, raw_torque,
+			motor.current_position, motor.current_speed, motor.current_torque);
 	}
 }
 

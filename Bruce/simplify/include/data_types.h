@@ -24,7 +24,7 @@
  *          支持多种控制模式：阻抗控制、速度控制、位置控制、参数读写、特殊指令。
  */
 struct MotorCommand {
-    uint8_t     motor_id;      // 电机 ID（1~3，同一 CAN 口内的编号）
+    uint8_t     motor_id;      // 电机 ID（1~4，同一 CAN 口内的编号）
     uint8_t     cmd_type;      // 命令类型（MotorCommandType 枚举值）
     ControlMode mode;          // 控制模式（控制指令时有效）
 
@@ -103,9 +103,9 @@ struct CanDeviceConfig {
  */
 struct MotorConfig {
     uint8_t  can_port;     // 所在 CAN 口（0~3，对应 can0~can3）
-    uint8_t  motor_id;     // 同一 CAN 口内的电机编号（1~3）
-    uint16_t rx_id;        // 接收帧 CAN ID（电机 → 上位机，如 51/52/53）
-    uint16_t tx_id;        // 发送帧 CAN ID（上位机 → 电机，如 1/2/3）
+    uint8_t  motor_id;     // 同一 CAN 口内的电机编号（1~4）
+    uint16_t rx_id;        // 接收帧 CAN ID（电机 → 上位机，如 51/52/53/54）
+    uint16_t tx_id;        // 发送帧 CAN ID（上位机 → 电机，如 1/2/3/4）
 
     MotorConfig() : can_port(0), motor_id(0), rx_id(0), tx_id(0) {}
 
