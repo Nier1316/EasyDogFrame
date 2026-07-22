@@ -2,3 +2,4 @@ bin/
 build/
 build_debug/
 .vscode/
+log/
