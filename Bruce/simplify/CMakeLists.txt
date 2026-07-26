@@ -25,6 +25,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
 include_directories(
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/include/motor_drive
+    ${PROJECT_SOURCE_DIR}/include/math
     ${PROJECT_SOURCE_DIR}/include/bsp
     ${PROJECT_SOURCE_DIR}/lib
     ${PROJECT_SOURCE_DIR}/src/base
@@ -106,6 +107,15 @@ endif()
 # ============ 编译选项 ============
 if(UNIX)
     target_compile_options(can_motor_app PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# ============ AddressSanitizer（诊断用，默认关闭）============
+# 开启方式: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DENABLE_ASAN=ON
+option(ENABLE_ASAN "Enable AddressSanitizer for heap corruption diagnosis" OFF)
+if(ENABLE_ASAN)
+    message(STATUS "AddressSanitizer: ENABLED")
+    target_compile_options(can_motor_app PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
+    target_link_options(can_motor_app PRIVATE -fsanitize=address)
 endif()
 
 # ============ 编译信息 ============

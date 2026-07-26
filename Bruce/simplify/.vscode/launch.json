@@ -17,46 +17,10 @@
                     "description": "Enable pretty-printing for gdb",
                     "text": "-enable-pretty-printing",
                     "ignoreFailures": true
-                },
-                {
-                    "description": "Set print format to hex",
-                    "text": "set output-radix 16",
-                    "ignoreFailures": true
                 }
             ],
-            "preLaunchTask": "Build Debug",
-            "miDebuggerPath": "/usr/bin/gdb",
-            "sourceMap": {},
-            "numFormat": "hex"
-        },
-        {
-            "name": "Debug Main (GDB with Args)",
-            "type": "cppdbg",
-            "request": "launch",
-            "program": "${workspaceFolder}/bin/can_motor_app",
-            "args": [
-                "1"
-            ],
-            "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
-            "environment": [],
-            "externalConsole": false,
-            "MIMode": "gdb",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for gdb",
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                },
-                {
-                    "description": "Set print format to hex",
-                    "text": "set output-radix 16",
-                    "ignoreFailures": true
-                }
-            ],
-            "preLaunchTask": "Build Debug",
-            "miDebuggerPath": "/usr/bin/gdb",
-            "numFormat": "hex"
+            "preLaunchTask": "Compile Debug",
+            "miDebuggerPath": "/usr/bin/gdb"
         },
         {
             "name": "Attach to Process",
@@ -70,15 +34,9 @@
                     "description": "Enable pretty-printing for gdb",
                     "text": "-enable-pretty-printing",
                     "ignoreFailures": true
-                },
-                {
-                    "description": "Set print format to hex",
-                    "text": "set output-radix 16",
-                    "ignoreFailures": true
                 }
             ],
-            "miDebuggerPath": "/usr/bin/gdb",
-            "numFormat": "hex"
+            "miDebuggerPath": "/usr/bin/gdb"
         },
         {
             "name": "Debug with Valgrind",
@@ -92,16 +50,7 @@
             "MIMode": "gdb",
             "miDebuggerPath": "/usr/bin/valgrind",
             "miDebuggerArgs": "--leak-check=full --show-leak-kinds=all --log-file=valgrind.log",
-            "preLaunchTask": "Build Debug",
-            "numFormat": "hex"
-        }
-    ],
-    "compounds": [
-        {
-            "name": "Multi Debug",
-            "configurations": [
-                "Debug Main (GDB)"
-            ]
+            "preLaunchTask": "Compile Debug"
         }
     ]
 }

@@ -65,28 +65,33 @@ inline bool XboxController::Initialize() {
         return false;
     }
 
-    // 扫描已连接的手柄
-    int num_joysticks = SDL_NumJoysticks();
-    printf("[XboxController] Found %d joystick(s)\n", num_joysticks);
+    // 蓝牙手柄在 SDL_Init 之后可能还没被枚举到，重试等待最多 ~3 秒。
+    // SDL 通过事件队列发现热插拔设备，需 PumpEvents 驱动枚举。
+    const int  kMaxTries  = 30;
+    const int  kDelayMs   = 100;
+    for (int attempt = 0; attempt < kMaxTries; attempt++) {
+        SDL_PumpEvents();
+        int num_joysticks = SDL_NumJoysticks();
 
-    if (num_joysticks < 1) {
-        printf("[XboxController] No joystick found\n");
-        return false;
-    }
-
-    // 尝试以 GameController 方式打开第一个可用手柄
-    for (int i = 0; i < num_joysticks; i++) {
-        if (SDL_IsGameController(i)) {
-            controller_ = SDL_GameControllerOpen(i);
-            if (controller_) {
-                const char* name = SDL_GameControllerName(controller_);
-                printf("[XboxController] Connected: %s\n", name ? name : "Unknown");
-                return true;
+        for (int i = 0; i < num_joysticks; i++) {
+            if (SDL_IsGameController(i)) {
+                controller_ = SDL_GameControllerOpen(i);
+                if (controller_) {
+                    const char* name = SDL_GameControllerName(controller_);
+                    printf("[XboxController] Connected: %s (等待 %d ms)\n",
+                           name ? name : "Unknown", attempt * kDelayMs);
+                    return true;
+                }
             }
         }
+
+        if (attempt == 0) {
+            printf("[XboxController] 等待手柄就绪...(检测到 %d 个 joystick)\n", num_joysticks);
+        }
+        SDL_Delay(kDelayMs);
     }
 
-    printf("[XboxController] No compatible game controller found\n");
+    printf("[XboxController] No compatible game controller found（超时）\n");
     return false;
 }
 

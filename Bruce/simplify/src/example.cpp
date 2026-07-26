@@ -1,6 +1,7 @@
 #include "example.h"
 #include "SimSync.h"
 #include "leg_kinematics.h"
+#include "math/wheel_position_loop.h"
 #include "thread/thread_manager.h"
 #include "xbox_controller.h"
 #include <thread>
@@ -1616,10 +1617,15 @@ void Example21_XboxControllerControl() {
     const float HEIGHT_ADJUST_RATE = 0.10f;      // 扳机满程时高度调节速率 (m/s)
     const float BODY_HEIGHT_MIN    = -0.15f;     // 最低身体高度（深蹲）
     const float BODY_HEIGHT_MAX    =  0.10f;     // 最高身体高度（站立）
-    const float WHEEL_MAX_SPEED    =  0.5f;      // 轮子最大转速 (rad/s)
-    const float WHEEL_KP           =  5.0f;      // 轮子速度环 P 增益
-    const float WHEEL_KI           =  0.5f;      // 轮子速度环 I 增益
-    const float WHEEL_DEAD_ZONE    =  0.5f;      // 轮子摇杆死区 (rad/s)
+    // 轮电机：上位机自写位置环（见 math/wheel_position_loop.h）。电机端 kp=kd=0，
+    // 只收前馈扭矩，位置/速度环全部在上位机用反馈重算，绕开厂家有问题的控制模式。
+    const float WHEEL_TARGET_RATE  =  3.0f;      // 满摇杆时目标角推进速率 (rad/s)
+    const float WHEEL_KP           =  4.0f;      // 位置环刚度 (Nm/rad)  — 初值，实测再调
+    const float WHEEL_KD           =  0.2f;      // 位置环阻尼 (Nm/(rad/s)) — 初值，实测再调
+    const float WHEEL_MAX_TORQUE   =  3.0f;      // 轮子输出扭矩钳位 (Nm)  — 安全上限
+    const float WHEEL_DEAD_ZONE    =  0.05f;     // 轮子摇杆死区 (归一化)
+    // 回绕量程来自轮子编码量程 p_min~p_max（实测 ±12.5rad），传给位置环做 unwrap
+    const float WHEEL_POS_SPAN = limits_of(4).p_max - limits_of(4).p_min;  // 25.0
 
     // ---- 初始化 ----
     MotorManager& motor_mgr = MotorManager::GetInstance();
@@ -1678,6 +1684,12 @@ void Example21_XboxControllerControl() {
     float body_height = 0.0f;       // 身体高度偏移量
     bool prev_a = false;            // A键上一帧状态（用于上升沿检测）
     bool prev_back = false;         // Back键上一帧状态
+
+    // ---- 轮电机上位机位置环（每路 CAN 一个轮子，见 math/wheel_position_loop.h）----
+    WheelPositionLoop wheel_loop[4];
+    for (auto& w : wheel_loop) {
+        w.configure(WHEEL_KP, WHEEL_KD, WHEEL_TARGET_RATE, WHEEL_MAX_TORQUE, WHEEL_POS_SPAN);
+    }
 
     // ---- 阶段 1：等待 A 键起立 ----
     if (controller_ok) {
@@ -1773,12 +1785,19 @@ void Example21_XboxControllerControl() {
             body_height += height_delta;
             body_height = clamp(body_height, BODY_HEIGHT_MIN, BODY_HEIGHT_MAX);
 
-            // ---- 轮子控制（右摇杆 Y 轴） ----
-            float wheel_vel = -state.right_stick_y * WHEEL_MAX_SPEED;
-            if (fabsf(wheel_vel) < WHEEL_DEAD_ZONE) wheel_vel = 0.0f;
+            // ---- 轮子控制（右摇杆 Y 轴，上位机位置环，见 wheel_position_loop.h）----
+            // 摇杆归一化输入，去死区
+            float wheel_stick = -state.right_stick_y;
+            if (fabsf(wheel_stick) < WHEEL_DEAD_ZONE) wheel_stick = 0.0f;
 
+            const float dt = 1.0f / HZ;
             for (int cp = 0; cp < 4; cp++) {
-                motor_mgr.SendSpeed(cp, 4, wheel_vel, WHEEL_KP, WHEEL_KI);
+                MotorStatus st = motor_mgr.GetStatus(cp, 4);
+                // 位置环内部完成 unwrap、目标角积分、PD 算扭矩、钳位；
+                // 首帧自动用反馈对齐，避免上电瞬间大扭矩
+                float torque = wheel_loop[cp].update(st.position, st.velocity, wheel_stick, dt);
+                // 纯扭矩下发：kp=kd=0，电机端不做 PD，只执行前馈扭矩
+                motor_mgr.SendImpedance(cp, 4, 0.0f, 0.0f, 0.0f, 0.0f, torque);
             }
 
             // ---- 四腿 IK 解算并发送指令 ----
@@ -1825,10 +1844,11 @@ void Example21_XboxControllerControl() {
                 }
             }
 
-            // 每 0.5 秒打印状态
+            // 每 0.5 秒打印状态（轮子显示 CAN0：目标角/连续角，rad）
             if (frame % 50 == 0) {
-                printf("  高度=%+.3fm  轮速=%.2frad/s  LT=%.2f RT=%.2f\n",
-                       body_height, wheel_vel, state.left_trigger, state.right_trigger);
+                printf("  高度=%+.3fm  轮0 目标=%.2f 实际=%.2f rad  LT=%.2f RT=%.2f\n",
+                       body_height, wheel_loop[0].tgt_pos, wheel_loop[0].cont_pos,
+                       state.left_trigger, state.right_trigger);
                 fflush(stdout);
             }
 
@@ -1840,9 +1860,9 @@ void Example21_XboxControllerControl() {
     // ---- 清理 ----
     printf("[INFO] 正在关闭...\n");
 
-    // 停止轮电机
+    // 停止轮电机（纯扭矩通道，输出零扭矩 → 自由停转）
     for (int cp = 0; cp < 4; cp++) {
-        motor_mgr.SendSpeed(cp, 4, 0.0f, 0.0f, 0.0f);
+        motor_mgr.SendImpedance(cp, 4, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
     }
 
     // 禁用所有 16 个电机
@@ -1894,13 +1914,21 @@ void Example22_StandAndWheelTest() {
     }
     usleep(500000);  // 等轮电机完全就绪
 
-    // 读取每个轮电机当前位置，发送阻抗保持（防止空转）
+    // 轮电机统一用上位机位置环（见 math/wheel_position_loop.h），电机端 kp=kd=0 纯扭矩
     printf("[INFO] 轮电机当前位置保持...\n");
-    float wheel_start_pos[4] = {0};
+    const float WHEEL_LOOP_KP  = 4.0f;   // 位置环刚度 (Nm/rad)
+    const float WHEEL_LOOP_KD  = 0.2f;   // 位置环阻尼 (Nm/(rad/s))
+    const float WHEEL_LOOP_VEL = 1.0f;   // 阶段3滚动速率 (rad/s)
+    const float WHEEL_MAX_TQ   = 3.0f;   // 扭矩钳位 (Nm)，安全上限
+    const float WHEEL_SPAN     = limits_of(4).p_max - limits_of(4).p_min;  // unwrap 周期
+    WheelPositionLoop wheel_loop[4];
+    for (auto& w : wheel_loop)
+        w.configure(WHEEL_LOOP_KP, WHEEL_LOOP_KD, WHEEL_LOOP_VEL, WHEEL_MAX_TQ, WHEEL_SPAN);
     for (int cp = 0; cp < 4; cp++) {
         MotorStatus st = motor_mgr.GetStatus(cp, 4);
-        wheel_start_pos[cp] = st.position;
-        motor_mgr.SendImpedance(cp, 4, st.position, 0.0f, 20.0f, 5.0f, 0.0f);
+        wheel_loop[cp].reset(st.position);  // 用当前反馈对齐，避免大扭矩
+        float tau = wheel_loop[cp].update(st.position, st.velocity, 0.0f, 0.01f);
+        motor_mgr.SendImpedance(cp, 4, 0.0f, 0.0f, 0.0f, 0.0f, tau);
         printf("  CAN%d-M4: %.4f rad (%.2f°)\n", cp, st.position, rad2deg(st.position));
     }
     fflush(stdout);
@@ -1962,42 +1990,39 @@ void Example22_StandAndWheelTest() {
                 motor_mgr.SendImpedance(leg, j + 1, TGT[j], 0.0f, KP, KD, 0.0f);
             }
         }
-        // 持续保持轮子当前位置
+        // 持续保持轮子当前位置（stick=0 → 目标角不变 → 锁位）
         for (int cp = 0; cp < 4; cp++) {
-            motor_mgr.SendImpedance(cp, 4, wheel_start_pos[cp], 0.0f, 20.0f, 5.0f, 0.0f);
+            MotorStatus wst = motor_mgr.GetStatus(cp, 4);
+            float tau = wheel_loop[cp].update(wst.position, wst.velocity, 0.0f, 1.0f);
+            motor_mgr.SendImpedance(cp, 4, 0.0f, 0.0f, 0.0f, 0.0f, tau);
         }
         sleep(1);
         printf("  %d/4 秒\n", sec);
         fflush(stdout);
     }
 
-    // ======== 阶段 3：轮电机阻抗模式 1rad/s (递增位置目标) ========
-    printf("\n========== 阶段3: 轮电机阻抗模式 (1rad/s, KP=3, KD=0.3) ==========\n");
+    // ======== 阶段 3：轮电机上位机位置环滚动 (1rad/s) ========
+    printf("\n========== 阶段3: 轮电机位置环滚动 (%.0frad/s, KP=%.1f, KD=%.1f) ==========\n",
+           WHEEL_LOOP_VEL, WHEEL_LOOP_KP, WHEEL_LOOP_KD);
     printf("[INFO] 轮子开始滚动...\n");
     fflush(stdout);
 
-    const float WHEEL_KP = 3.0f;
-    const float WHEEL_KD = 0.3f;
-    const float WHEEL_VEL = 1.0f;
-    const int   WHEEL_DURATION = 10;
-
-    // 以每个轮子当前位置为起始，各自递增位置目标
-    float wheel_tgt_pos[4] = { wheel_start_pos[0], wheel_start_pos[1],
-                               wheel_start_pos[2], wheel_start_pos[3] };
-    printf("[INFO] 轮子起始位置: %.2f %.2f %.2f %.2f rad\n",
-           wheel_tgt_pos[0], wheel_tgt_pos[1], wheel_tgt_pos[2], wheel_tgt_pos[3]);
+    const int WHEEL_DURATION = 10;
 
     // 保持腿姿态
     for (int leg = 0; leg < 4; leg++)
         for (int j = 0; j < 3; j++)
             motor_mgr.SendImpedance(leg, j + 1, TGT[j], 0.0f, KP, KD, 0.0f);
 
-    const int WHEEL_HZ = 50;
+    const int   WHEEL_HZ = 50;
+    const float wheel_dt = 1.0f / WHEEL_HZ;
     for (int sec = 0; sec < WHEEL_DURATION; sec++) {
         for (int f = 0; f < WHEEL_HZ; f++) {
             for (int cp = 0; cp < 4; cp++) {
-                wheel_tgt_pos[cp] += WHEEL_VEL / WHEEL_HZ;
-                motor_mgr.SendImpedance(cp, 4, wheel_tgt_pos[cp], WHEEL_VEL, WHEEL_KP, WHEEL_KD, 0.0f);
+                // stick=1.0 → 目标角以 WHEEL_LOOP_VEL 匀速推进；位置环带 unwrap 算扭矩
+                MotorStatus wst = motor_mgr.GetStatus(cp, 4);
+                float tau = wheel_loop[cp].update(wst.position, wst.velocity, 1.0f, wheel_dt);
+                motor_mgr.SendImpedance(cp, 4, 0.0f, 0.0f, 0.0f, 0.0f, tau);
             }
             usleep(1000000 / WHEEL_HZ);
         }
@@ -2007,7 +2032,8 @@ void Example22_StandAndWheelTest() {
             for (int j = 0; j < 3; j++)
                 motor_mgr.SendImpedance(leg, j + 1, TGT[j], 0.0f, KP, KD, 0.0f);
 
-        printf("  轮子 %d/%d 秒  pos=%.2f rad\n", sec + 1, WHEEL_DURATION, wheel_tgt_pos[0]);
+        printf("  轮子 %d/%d 秒  目标=%.2f 实际=%.2f rad\n", sec + 1, WHEEL_DURATION,
+               wheel_loop[0].tgt_pos, wheel_loop[0].cont_pos);
         fflush(stdout);
     }
 

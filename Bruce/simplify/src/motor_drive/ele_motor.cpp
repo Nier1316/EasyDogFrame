@@ -63,12 +63,13 @@ void float2bag(const EleMotor& motor, float parameter, uint8_t RW, uint8_t type)
  */
 void set_motor_para_bt(const EleMotor& motor, float p1, float p2, float p3, float p4, float p5, int model){
     uint8_t temp[8];
+    const MotorLimits& lim = limits_of(motor.motor_id);                //按电机类型取限幅
     if(model == IMPEDANCE){                                            //阻抗控制模式
-        uint16_t p_int = float_to_uint(p1, P_MIN, P_MAX, 15);          //期望角度   单位：弧度
-        uint16_t v_int = float_to_uint(p2, V_MIN, V_MAX, 12);          //期望角速度 单位：弧度每秒
-        uint16_t kp_int = float_to_uint(p3, KP_MIN, KP_MAX, 12);       //刚度系数
-        uint16_t kd_int = float_to_uint(p4, KD_MIN, KD_MAX, 12);       //阻尼系数
-        uint16_t t_int = float_to_uint(p5, T_MIN, T_MAX, 12);          //扭矩前馈   单位：牛米
+        uint16_t p_int = float_to_uint(p1, lim.p_min, lim.p_max, 15);   //期望角度   单位：弧度
+        uint16_t v_int = float_to_uint(p2, lim.v_min, lim.v_max, 12);   //期望角速度 单位：弧度每秒
+        uint16_t kp_int = float_to_uint(p3, lim.kp_min, lim.kp_max, 12); //刚度系数
+        uint16_t kd_int = float_to_uint(p4, lim.kd_min, lim.kd_max, 12); //阻尼系数
+        uint16_t t_int = float_to_uint(p5, lim.t_min, lim.t_max, 12);    //扭矩前馈   单位：牛米
         temp[0] = (uint8_t)(p_int >> 8 & 0x7f);
         temp[1] = (uint8_t)(p_int & 0xFF);
         temp[2] = (uint8_t)(v_int >> 4);
@@ -79,9 +80,9 @@ void set_motor_para_bt(const EleMotor& motor, float p1, float p2, float p3, floa
         temp[7] = (uint8_t)(t_int & 0xff);
     }
     else if(model == SPEED){                                           //速度控制模式
-        uint32_t v_int = float_to_uint(p1, V_MIN, V_MAX, 31);          //期望角速度 单位：弧度每秒
-        uint16_t kvp_int = float_to_uint(p2, KP_MIN, KP_MAX, 16);      //速度环Kp
-        uint16_t kvi_int = float_to_uint(p5, KI_MIN, KI_MAX, 16);      //速度环Ki
+        uint32_t v_int = float_to_uint(p1, lim.v_min, lim.v_max, 31);   //期望角速度 单位：弧度每秒
+        uint16_t kvp_int = float_to_uint(p2, lim.kp_min, lim.kp_max, 16); //速度环Kp
+        uint16_t kvi_int = float_to_uint(p5, lim.ki_min, lim.ki_max, 16); //速度环Ki
         temp[0] = (uint8_t)(v_int >> 24 & 0x7f);
         temp[1] = (uint8_t)(v_int >> 16 & 0xFF);
         temp[2] = (uint8_t)(v_int >> 8 & 0xFF);
@@ -92,11 +93,11 @@ void set_motor_para_bt(const EleMotor& motor, float p1, float p2, float p3, floa
         temp[7] = (uint8_t)(kvi_int & 0xff);
     }
     else if(model == POSITION){                                         //位置控制模式
-        uint16_t p_int = float_to_uint(p1, P_MIN, P_MAX, 15);
-        uint16_t kvp_int = float_to_uint(p2, KP_MIN, KP_MAX, 12);       //位置环Kp
-        uint16_t kp_int = float_to_uint(p3, KP_MIN, KP_MAX, 12);        //速度环Kp
-        uint16_t kd_int = float_to_uint(p4, KD_MIN, KD_MAX, 12);        //位置环Kd
-        uint16_t kvi_int = float_to_uint(p5, KI_MIN, KI_MAX, 12);       //速度环Ki
+        uint16_t p_int = float_to_uint(p1, lim.p_min, lim.p_max, 15);
+        uint16_t kvp_int = float_to_uint(p2, lim.kp_min, lim.kp_max, 12); //位置环Kp
+        uint16_t kp_int = float_to_uint(p3, lim.kp_min, lim.kp_max, 12);  //速度环Kp
+        uint16_t kd_int = float_to_uint(p4, lim.kd_min, lim.kd_max, 12);  //位置环Kd
+        uint16_t kvi_int = float_to_uint(p5, lim.ki_min, lim.ki_max, 12); //速度环Ki
         temp[0] = (uint8_t)(p_int >> 8 & 0x7f);
         temp[1] = (uint8_t)(p_int & 0xFF);
         temp[2] = (uint8_t)(kvp_int >> 4);
@@ -164,9 +165,10 @@ bool unpack_cmd(EleMotor& motor, int timeout_ms)
 			uint16_t v_int = (data[3] << 4) | (data[4] >> 4);
 			uint16_t i_int = ((data[4] & 0xF) << 8) | data[5];
 
-			float p = uint_to_float(p_int, P_MIN, P_MAX, 16);
-			float v = uint_to_float(v_int, V_MIN, V_MAX, 12);
-			float t = uint_to_float(i_int, -T_MAX, T_MAX, 12);
+			const MotorLimits& lim = limits_of(motor.motor_id);
+			float p = uint_to_float(p_int, lim.p_min, lim.p_max, 16);
+			float v = uint_to_float(v_int, lim.v_min, lim.v_max, 12);
+			float t = uint_to_float(i_int, -lim.t_max, lim.t_max, 12);
 
 			// 更新电机结构体
 			motor.current_position = p;
@@ -238,9 +240,10 @@ void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
 		uint16_t v_int = (data[3] << 4) | (data[4] >> 4);
 		uint16_t i_int = ((data[4] & 0xF) << 8) | data[5];
 
-		float p = uint_to_float(p_int, P_MIN, P_MAX, 16);
-		float v = uint_to_float(v_int, V_MIN, V_MAX, 12);
-		float t = uint_to_float(i_int, -T_MAX, T_MAX, 12);
+		const MotorLimits& lim = limits_of(motor.motor_id);
+		float p = uint_to_float(p_int, lim.p_min, lim.p_max, 16);
+		float v = uint_to_float(v_int, lim.v_min, lim.v_max, 12);
+		float t = uint_to_float(i_int, -lim.t_max, lim.t_max, 12);
 
 		// 更新电机结构体（原始值）
 		motor.current_position = p;
@@ -266,14 +269,16 @@ void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
 /////////////////////////////底层函数////////////////////////////////
 float uint_to_float(int x_int, float x_min, float x_max, int bits) {
      /// converts unsigned int to float, given range and number of bits ///
+     // 用 1u<<bits 做无符号移位，避免 bits=31 时 1<<31 的有符号整数溢出(UB)
      float span = x_max - x_min; float offset = x_min;
-     return ((float)x_int)*span/((float)((1<<bits)-1)) + offset;
+     return ((float)x_int)*span/((float)((1u<<bits)-1u)) + offset;
 }
 
 //float转uint
 unsigned int float_to_uint(float x, float x_min, float x_max, int bits){
     /// Converts a float to an unsigned int, given range and number of bits ///
+    // 用 1u<<bits 做无符号移位，避免 bits=31 时 1<<31 的有符号整数溢出(UB)
     float span = x_max - x_min;
     float offset = x_min;
-    return ((x-offset)*(float)((unsigned int)(1<<bits)-1)/span);
+    return ((x-offset)*(float)((1u<<bits)-1u)/span);
 }

@@ -74,19 +74,47 @@ enum ControlMode {
 #define MOTOR_WR_CAN_REPLY_MAX_KP     0x61      //CAN控制最大P值
 #define MOTOR_WR_CAN_REPLY_MAX_KD     0x62      //CAN控制最大D值
 #define MOTOR_WR_VOLTAGE_MAX        0x63       //电机最大电压值
-/*控制参数范围限制*/
-#define P_MIN -12.5f                   //位置最小值 (rad)
-#define P_MAX 12.5f                    //位置最大值 (rad)
-#define V_MIN -65.0f                   //速度最小值 (rad/s)
-#define V_MAX 65.0f                    //速度最大值 (rad/s)
-#define KP_MIN 0.0f                    //比例增益最小值
-#define KP_MAX 500.0f                  //比例增益最大值
-#define KD_MIN 0.0f                    //微分增益最小值
-#define KD_MAX 500.0f                  //微分增益最大值 (与 KP_MAX 一致)
-#define T_MIN -150.0f                   //扭矩最小值 (Nm)
-#define T_MAX 150.0f                    //扭矩最大值 (Nm)
-#define KI_MIN 0.0f                    //积分增益最小值
-#define KI_MAX 500.0f                  //积分增益最大值
+/*控制参数范围限制（协议编码量程）
+ *
+ * 说明：这里的 min/max 是 float↔uint 的编码量程，必须与电机固件端一致。
+ *       原本是一组全局宏，所有电机共用。现改为按电机类型（Hip/Thigh/Calf/Wheel）
+ *       分行的结构体表 MOTOR_LIMITS，方便按类型单独调整；默认四行数值完全相同，
+ *       等于原宏值，不改变现有行为。
+ *       位宽 bits（15/12/31）是协议固定的，不放进结构体，仍在编码处以字面量给出。
+ */
+
+// 电机类型，对应同一 CAN 口内的 motor_id 1~4（映射见 motor_calibration.h）
+enum MotorType {
+	MOTOR_HIP = 0,   // motor_id=1 髋/侧摆
+	MOTOR_THIGH,     // motor_id=2 大腿
+	MOTOR_CALF,      // motor_id=3 小腿/膝
+	MOTOR_WHEEL,     // motor_id=4 轮
+	MOTOR_TYPE_NUM
+};
+
+// 单个电机的编码量程限幅
+struct MotorLimits {
+	float p_min,  p_max;    // 位置 (rad)
+	float v_min,  v_max;    // 速度 (rad/s)
+	float t_min,  t_max;    // 扭矩 (Nm)
+	float kp_min, kp_max;   // 比例增益
+	float kd_min, kd_max;   // 微分增益
+	float ki_min, ki_max;   // 积分增益
+};
+
+// 各类型电机的限幅表（默认四行相同 = 原宏值；按类型调整时改对应行即可）
+static const MotorLimits MOTOR_LIMITS[MOTOR_TYPE_NUM] = {
+	/* Hip   */ {-12.5f, 12.5f, -65.0f, 65.0f, -150.0f, 150.0f, 0.0f, 500.0f, 0.0f, 500.0f, 0.0f, 500.0f},
+	/* Thigh */ {-12.5f, 12.5f, -65.0f, 65.0f, -150.0f, 150.0f, 0.0f, 500.0f, 0.0f, 500.0f, 0.0f, 500.0f},
+	/* Calf  */ {-12.5f, 12.5f, -65.0f, 65.0f, -150.0f, 150.0f, 0.0f, 500.0f, 0.0f, 500.0f, 0.0f, 500.0f},
+	/* Wheel */ {-12.5f, 12.5f, -65.0f, 65.0f, -53.0f, 53.0f, 0.0f, 500.0f, 0.0f, 500.0f, 0.0f, 500.0f},
+};
+
+// 按 motor_id(1~4) 取限幅；越界回退到 Hip 行
+static inline const MotorLimits& limits_of(uint8_t motor_id) {
+	int idx = (motor_id >= 1 && motor_id <= MOTOR_TYPE_NUM) ? (motor_id - 1) : 0;
+	return MOTOR_LIMITS[idx];
+}
 
 
 /*电机控制命令*/

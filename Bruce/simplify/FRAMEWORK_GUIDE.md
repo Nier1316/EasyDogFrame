@@ -16,11 +16,11 @@
 
 ## 框架概述
 
-本框架是一个**分层的四足机器狗电机控制系统**，通过 CAN 总线与 12 个电机通信，支持多种控制模式（阻抗控制、速度控制、位置控制）。
+本框架是一个**分层的四足机器狗电机控制系统**，通过 CAN 总线与 16 个电机通信，支持多种控制模式（阻抗控制、速度控制、位置控制）。
 
 ### 核心特性
-- **12 电机管理**：4 路 CAN 口，每路 3 个电机（髋、大腿、小腿）
-- **多线程架构**：ThreadManager 统一管理所有后台线程
+- **16 电机管理**：4 路 CAN 口，每路 4 个电机（髋、大腿、小腿、轮）
+- **多线程架构**：ThreadManager 统一管理所有后台线程（收 + 发双线程）
 - **线程安全**：每个电机配备独立互斥锁，支持并发访问
 - **灵活的控制模式**：支持阻抗、速度、位置三种控制方式
 - **实时优先级**：支持 Linux SCHED_FIFO 实时调度
@@ -52,7 +52,7 @@
 | **ThreadManager** | `include/thread/thread_manager.h` | 线程生命周期管理、共享数据区 |
 | **CanDevice** | `include/can_device.h` | CANET 设备封装、TCP 连接管理 |
 | **EleMotor** | `include/motor_drive/ele_motor.h` | 单电机数据结构、状态管理 |
-| **MotorManager** | `include/motor_manager.h` | 12 电机批量管理、命令分发 |
+| **MotorManager** | `include/motor_manager.h` | 16 电机批量管理、命令分发 |
 | **BspCan** | `include/bsp/bsp_can.h` | CAN 收发底层接口 |
 | **DataTypes** | `include/data_types.h` | 通用数据结构定义 |
 
@@ -66,30 +66,37 @@
 CAN0 → 左前腿 (FL)
   ├─ motor_id=1 → 髋关节 (Hip)
   ├─ motor_id=2 → 大腿 (Thigh)
-  └─ motor_id=3 → 小腿 (Calf)
+  ├─ motor_id=3 → 小腿 (Calf)
+  └─ motor_id=4 → 轮 (Wheel)
 
 CAN1 → 右前腿 (FR)
   ├─ motor_id=1 → 髋关节
   ├─ motor_id=2 → 大腿
-  └─ motor_id=3 → 小腿
+  ├─ motor_id=3 → 小腿
+  └─ motor_id=4 → 轮
 
 CAN2 → 左后腿 (RL)
   ├─ motor_id=1 → 髋关节
   ├─ motor_id=2 → 大腿
-  └─ motor_id=3 → 小腿
+  ├─ motor_id=3 → 小腿
+  └─ motor_id=4 → 轮
 
 CAN3 → 右后腿 (RR)
   ├─ motor_id=1 → 髋关节
   ├─ motor_id=2 → 大腿
-  └─ motor_id=3 → 小腿
+  ├─ motor_id=3 → 小腿
+  └─ motor_id=4 → 轮
 ```
+
+> 说明：每路 CAN 挂载 4 个电机（3 关节 + 1 轮），常量定义见
+> `include/motor_calibration.h`：`CAN_PORTS = 4`、`MOTORS_PER_CAN = 4`，共 16 个电机。
 
 ### CAN 帧 ID 映射
 
 | 方向 | CAN ID | 说明 |
 |------|--------|------|
-| 上位机 → 电机 | 1, 2, 3 | 对应 motor_id |
-| 电机 → 上位机 | 51, 52, 53 | 50 + motor_id |
+| 上位机 → 电机 | 1, 2, 3, 4 | 对应 motor_id |
+| 电机 → 上位机 | 51, 52, 53, 54 | 50 + motor_id |
 
 ### TCP 连接参数
 
@@ -310,8 +317,21 @@ printf("[INFO] Sent: %u, Received: %u\n",
 
 ### 1. 编译项目
 
+**依赖前提**：
+
+- CMake ≥ 3.8、支持 C++17 的编译器（gcc/g++）
+- **SDL2 开发库**：Example21（Xbox 手柄控制）依赖 SDL2。由于 `main.cpp` 默认
+  启用的就是 Example21，缺少 SDL2 会导致编译失败
+  （`fatal error: SDL2/SDL.h: No such file or directory`）。安装：
+
+  ```bash
+  sudo apt-get install libsdl2-dev
+  ```
+
+  若不需要手柄控制，可在 `main.cpp` 中改用其它不依赖 SDL2 的示例，即可跳过此依赖。
+
 ```bash
-cd /home/nier1316/Desktop/EasyDogFrame/Bruce/simplify
+cd /home/bruce/Desktop/EasyDogFrame/Bruce/simplify
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 ```
@@ -333,13 +353,17 @@ int main() {
         return -1;
     }
     
-    // 启动接收线程（1ms 间隔）
+    // 启动收发线程（各 1ms 间隔）
+    // 注意：必须同时启动 motor_receive 和 motor_send，
+    //       只启动接收线程时，控制命令不会被下发到电机
     thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
     
     // ... 控制电机 ...
     
     // 清理资源
     thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
     motor_mgr.Stop();
     
     return 0;
@@ -455,7 +479,7 @@ can_dev.Shutdown();
 
 ### MotorManager — 电机管理
 
-**职责**：管理 12 个电机，提供统一的控制接口
+**职责**：管理 16 个电机，提供统一的控制接口
 
 **关键特性**：
 - 单例模式
@@ -502,7 +526,7 @@ public:
 
 ```cpp
 struct MotorCommand {
-    uint8_t     motor_id;      // 电机 ID（1~3）
+    uint8_t     motor_id;      // 电机 ID（1~4，同一 CAN 口内的编号）
     uint8_t     cmd_type;      // 命令类型（MotorCommandType 枚举）
     ControlMode mode;          // 控制模式
     
@@ -601,8 +625,9 @@ int main() {
         return -1;
     }
     
-    // 启动接收线程
+    // 启动收发线程
     thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
     
     // 使能 CAN0 上的电机 1
     motor_mgr.EnableMotor(0, 1);
@@ -624,6 +649,7 @@ int main() {
     
     // 清理
     thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
     motor_mgr.Stop();
     
     return 0;
@@ -633,9 +659,9 @@ int main() {
 ### 示例 2：多电机同时控制
 
 ```cpp
-// 使能所有 12 个电机
+// 使能所有 16 个电机（每路 motor_id 1~4）
 for (int can_port = 0; can_port < 4; can_port++) {
-    for (int motor_id = 1; motor_id <= 3; motor_id++) {
+    for (int motor_id = 1; motor_id <= 4; motor_id++) {
         motor_mgr.EnableMotor(can_port, motor_id);
     }
 }
@@ -644,7 +670,7 @@ sleep(1);
 
 // 所有电机归零
 for (int can_port = 0; can_port < 4; can_port++) {
-    for (int motor_id = 1; motor_id <= 3; motor_id++) {
+    for (int motor_id = 1; motor_id <= 4; motor_id++) {
         motor_mgr.SendImpedance(can_port, motor_id,
                                 0.0f, 0.0f, 10.0f, 1.0f, 0.0f);
     }
@@ -1087,17 +1113,27 @@ gdb ./bin/can_motor_app
 
 ---
 
-### Q1: 如何判断电机是否已连接？
+### Q1: 如何判断电机是否已连接 / 有响应？
 
-**A**: 检查 `MotorStatus` 中的 `ack` 标志：
+**A**: 注意：`MotorStatus` 结构体虽然定义了 `ack` / `fault` 字段，但当前
+`MotorManager::GetStatus`（`src/motor_manager.cpp`）**并未填充这两个字段**，它们恒为
+默认值 `false`，不能用来判断连接状态。
+
+判断电机是否有响应，建议用以下两种方式之一：
+
 ```cpp
+// 方式 1：检查使能状态（GetStatus 会填充 enable）
 MotorStatus status = motor_mgr.GetStatus(0, 1);
-if (status.ack) {
-    printf("Motor is connected\n");
-} else {
-    printf("Motor is not responding\n");
+if (status.enable) {
+    printf("Motor is enabled\n");
 }
+
+// 方式 2：观察反馈值是否更新（收到电机反馈帧后 position/velocity 会变化），
+//         或在接收线程侧统计 BspCan 的接收帧计数来确认链路是否有数据
 ```
+
+> 若确实需要 `ack` / `fault` 语义，需在 `GetStatus` 中补充对应字段的赋值
+> （数据来源见 `data_types.h` 中 `MotorStatus` 各字段的 bit 定义注释）。
 
 ### Q2: 电机报错怎么处理？
 
@@ -1166,7 +1202,7 @@ printf("Thread state: %d\n", (int)state);
 #### 1.1 快速编译（Release 模式）
 
 ```bash
-cd /home/nier1316/Desktop/EasyDogFrame/Bruce/simplify
+cd /home/bruce/Desktop/EasyDogFrame/Bruce/simplify
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 ```
@@ -1245,21 +1281,28 @@ tail -f app.log
 pkill can_motor_app
 ```
 
-#### 2.3 带参数运行（如果支持）
+#### 2.3 选择要运行的示例
+
+当前 `src/main.cpp` 的入口是 `int main()`，**不接收命令行参数**。要运行哪个示例，
+是通过在 `main.cpp` 中注释/取消注释对应的示例调用来硬编码选择的：
+
+```cpp
+// src/main.cpp —— 取消注释想运行的示例，注释掉其余的
+// Example9_BasicMotorCtr();        // 基础电机控制
+// Example11_MoveAll();             // 全电机扭矩控制
+// Example19_ReadAndStand();        // 读取姿态并缓慢站立
+Example21_XboxControllerControl();  // Xbox 手柄控制（需要 SDL2，见下）
+```
+
+修改后需要重新编译：
 
 ```bash
-# 基础电机控制
-./bin/can_motor_app 1
-
-# 使能所有电机
-./bin/can_motor_app 2
-
-# 全关节归零
-./bin/can_motor_app 3
-
-# 站立姿态
-./bin/can_motor_app 4
+cmake --build build -j$(nproc)
+./bin/can_motor_app
 ```
+
+> 如需支持 `./bin/can_motor_app <编号>` 这种命令行选择方式，需自行改造
+> `main.cpp` 加入 `argc/argv` 解析。当前版本不支持。
 
 #### 2.4 优雅停止程序
 
@@ -1379,7 +1422,7 @@ CMake Error: The source directory does not appear to contain CMakeLists.txt.
 **解决方案**：
 ```bash
 # 确保在项目根目录
-cd /home/nier1316/Desktop/EasyDogFrame/Bruce/simplify
+cd /home/bruce/Desktop/EasyDogFrame/Bruce/simplify
 ls CMakeLists.txt  # 确认文件存在
 ```
 
@@ -1429,6 +1472,26 @@ chmod +x ./bin/can_motor_app
 sudo ./bin/can_motor_app
 ```
 
+#### 错误 5：找不到 SDL2 头文件
+
+```
+fatal error: SDL2/SDL.h: No such file or directory
+```
+
+**原因**：Example21（Xbox 手柄控制）依赖 SDL2，而 `main.cpp` 默认启用 Example21。
+
+**解决方案**：
+```bash
+# 安装 SDL2 开发库
+sudo apt-get install libsdl2-dev
+
+# 重新配置并编译（必须重跑 cmake 才能检测到新装的 SDL2）
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
+```
+
+或在 `src/main.cpp` 中改用其它不依赖 SDL2 的示例。
+
 ### 5. 性能优化
 
 #### 5.1 编译优化选项
@@ -1469,7 +1532,7 @@ taskset -p $$
 
 ```bash
 # 1. 进入项目目录
-cd /home/nier1316/Desktop/EasyDogFrame/Bruce/simplify
+cd /home/bruce/Desktop/EasyDogFrame/Bruce/simplify
 
 # 2. 清理旧编译
 rm -rf build bin
@@ -1498,17 +1561,27 @@ cmake --build build -j$(nproc)
 ```
 simplify/
 ├── include/
-│   ├── motor_manager.h          # 电机管理器
-│   ├── can_device.h             # CAN 设备
-│   ├── data_types.h             # 数据结构定义
+│   ├── motor_manager.h          # 电机管理器（16 电机）
+│   ├── can_device.h             # CAN 设备（VCI_CAN_OBJ 封装）
+│   ├── data_types.h             # 数据结构定义（MotorStatus / CanDeviceConfig 等）
+│   ├── motor_calibration.h      # 电机标定参数、CAN_PORTS/MOTORS_PER_CAN 常量
+│   ├── motor_logger.h           # 收发日志（CSV，输出到 log/）
+│   ├── leg_kinematics.h         # 腿部运动学
+│   ├── xbox_controller.h        # Xbox 手柄封装（依赖 SDL2）
+│   ├── SimSync.h                # 仿真同步
+│   ├── example.h
 │   ├── thread/
 │   │   └── thread_manager.h     # 线程管理器
 │   ├── motor_drive/
 │   │   ├── ele_motor.h          # 单电机
 │   │   └── ele_motor_def.h      # 电机参数定义
-│   └── bsp/
-│       └── bsp_can.h            # CAN 底层接口
+│   ├── bsp/
+│   │   └── bsp_can.h            # CAN 底层接口（BspCanFrame，实际收发主路径）
+│   └── RoboTasks/
+│       └── robot_app.h          # 顶层应用
 ├── src/
+│   ├── main.cpp                 # 入口（硬编码选择示例）
+│   ├── example.cpp              # 示例 Example9~22
 │   ├── motor_manager.cpp
 │   ├── can_device.cpp
 │   ├── motor_drive/
@@ -1517,11 +1590,21 @@ simplify/
 │   │   └── thread_manager.cpp
 │   ├── bsp/
 │   │   └── bsp_can.cpp
-│   ├── main.cpp
-│   └── example.cpp
+│   ├── RoboTasks/
+│   │   └── robot_app.cpp        # 顶层应用实现
+│   └── base/                    # 基础库（CMakeLists SOURCES 中一并编译）
+│       ├── common.cpp
+│       ├── crc16.cpp
+│       ├── log.cpp
+│       ├── jsoncpp/jsoncpp.cpp
+│       ├── md5/aw_md5.cpp
+│       └── platform/linux/network.cpp
 ├── CMakeLists.txt
 └── FRAMEWORK_GUIDE.md           # 本文档
 ```
+
+> 注：`src/base/` 下还包含 BleConfigLib / DTUCloudConfigLib / serial 等厂商库文件，
+> 上表只列出了参与当前编译（`CMakeLists.txt` 的 `SOURCES`）的核心文件。
 
 ---
 
