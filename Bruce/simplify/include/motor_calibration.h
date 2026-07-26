@@ -44,7 +44,7 @@ static const MotorCalibrationParam MOTOR_CALIBRATION[CAN_PORTS][MOTORS_PER_CAN] 
         { 1.0f,  1.0f, 0.611f},      // Motor 1 (Hip)
         {-1.0f,  1.0f, 0.441f},      // Motor 2 (Thigh)
         { 1.0f,  1.0f, 0.211f},      // Motor 3 (Calf)
-        {-1.0f,  1.0f, 0.0f  },      // Motor 4 (Wheel) — 与其他右后腿(CAN3)方向相反
+        {1.0f,  1.0f, 0.0f  },      // Motor 4 (Wheel) — 与其他右后腿(CAN3)方向相反
     },
     // CAN2 端口 (左后腿)
     {
@@ -57,7 +57,8 @@ static const MotorCalibrationParam MOTOR_CALIBRATION[CAN_PORTS][MOTORS_PER_CAN] 
     {
         {-1.0f,  1.0f, 0.611f},      // Motor 1 (Hip)
         {-1.0f,  1.0f, 0.441f},      // Motor 2 (Thigh)
-        { 1.0f,  1.0f, 0.211f},      // Motor 3 (Calf)
+        { 1.0f,  1.0f, 0.211f},
+           // Motor 3 (Calf)
         { 1.0f,  1.0f, 0.0f  },      // Motor 4 (Wheel) — 待实测
     },
 };
@@ -75,6 +76,8 @@ inline void ApplyMotorCalibration(uint8_t can_port, uint8_t motor_id,
 
     position = position * calib.pos_scale + calib.pos_offset;
     velocity = velocity * calib.vel_scale;
+    // 反馈扭矩与位置同坐标系，一并翻转，保证收发对称
+    torque = torque * calib.pos_scale;
 }
 
 /**
@@ -82,7 +85,8 @@ inline void ApplyMotorCalibration(uint8_t can_port, uint8_t motor_id,
  * 上层以统一坐标系给出目标值，逆变换回电机原始坐标系后发送。
  */
 inline void ApplyMotorCalibrationInverse(uint8_t can_port, uint8_t motor_id,
-                                          float& position, float& velocity) {
+                                          float& position, float& velocity,
+                                          float* torque = nullptr) {
     if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN) {
         return;
     }
@@ -92,6 +96,11 @@ inline void ApplyMotorCalibrationInverse(uint8_t can_port, uint8_t motor_id,
     // pos_scale 为 ±1，逆变换等于再乘一次；offset 需先减去再除以 scale
     position = (position - calib.pos_offset) * calib.pos_scale;
     velocity = velocity * calib.vel_scale;
+    // 前馈扭矩与位置同坐标系：pos_scale 翻转方向时，扭矩必须一起翻，
+    // 否则上层基于标定后反馈算出的扭矩会朝反方向使劲，形成正反馈发散。
+    if (torque) {
+        *torque = *torque * calib.pos_scale;
+    }
 }
 
 #endif // MOTOR_CALIBRATION_H

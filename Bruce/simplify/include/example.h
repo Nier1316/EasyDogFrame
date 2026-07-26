@@ -30,3 +30,4 @@ void Example19_ReadAndStand();
 void Example20_MoveToPhysicalZero();
 void Example21_XboxControllerControl();
 void Example22_StandAndWheelTest();
+void Example23_SingleCanKeyboardControl();

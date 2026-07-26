@@ -44,8 +44,11 @@ public:
         std::string send_path = std::string("log/send_") + stamp + ".csv";
         std::string recv_path = std::string("log/recv_") + stamp + ".csv";
 
+        std::string sendcan_path = std::string("log/sendcan_") + stamp + ".csv";
+
         m_send_file = fopen(send_path.c_str(), "w");
         m_recv_file = fopen(recv_path.c_str(), "w");
+        m_sendcan_file = fopen(sendcan_path.c_str(), "w");
 
         if (m_send_file) {
             fprintf(m_send_file,
@@ -54,6 +57,14 @@ public:
                 "send_pos_raw,send_vel_raw,"
                 "kp,kd,mode\n");
             fflush(m_send_file);
+        }
+
+        if (m_sendcan_file) {
+            // 编码后、真正上线的 8 字节 CAN 数据（十六进制），便于逐帧核对
+            fprintf(m_sendcan_file,
+                "elapsed_ms,can_port,motor_id,mode,"
+                "d0,d1,d2,d3,d4,d5,d6,d7\n");
+            fflush(m_sendcan_file);
         }
 
         if (m_recv_file) {
@@ -66,8 +77,8 @@ public:
 
         m_start_time = std::chrono::steady_clock::now();
         m_initialized = true;
-        printf("[INFO] MotorLogger initialized: %s, %s\n",
-               send_path.c_str(), recv_path.c_str());
+        printf("[INFO] MotorLogger initialized: %s, %s, %s\n",
+               send_path.c_str(), recv_path.c_str(), sendcan_path.c_str());
     }
 
     // 记录发送指令: 用户目标值 → 逆标定后实际发送值
@@ -85,6 +96,21 @@ public:
             tgt_pos_cal, tgt_vel_cal,
             send_pos_raw, send_vel_raw,
             kp, kd, mode);
+    }
+
+    // 记录发送到电机的原始 CAN 帧: 编码后、Can_Tx 前的 8 字节
+    void LogSendCan(uint8_t can_port, uint8_t motor_id, int mode,
+                    const uint8_t* data) {
+        if (!m_initialized || !m_sendcan_file) return;
+        std::lock_guard<std::mutex> lock(m_mutex);
+
+        int64_t elapsed = ElapsedMs();
+        fprintf(m_sendcan_file,
+            "%ld,%d,%d,%d,"
+            "0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X\n",
+            elapsed, can_port, motor_id, mode,
+            data[0], data[1], data[2], data[3],
+            data[4], data[5], data[6], data[7]);
     }
 
     // 记录接收反馈: 原始值 → 标定后值
@@ -107,6 +133,7 @@ public:
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_send_file) fflush(m_send_file);
         if (m_recv_file) fflush(m_recv_file);
+        if (m_sendcan_file) fflush(m_sendcan_file);
     }
 
     // 关闭日志文件
@@ -114,6 +141,7 @@ public:
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_send_file) { fclose(m_send_file); m_send_file = nullptr; }
         if (m_recv_file) { fclose(m_recv_file); m_recv_file = nullptr; }
+        if (m_sendcan_file) { fclose(m_sendcan_file); m_sendcan_file = nullptr; }
         m_initialized = false;
     }
 
@@ -131,6 +159,7 @@ private:
     std::mutex m_mutex;
     FILE* m_send_file = nullptr;
     FILE* m_recv_file = nullptr;
+    FILE* m_sendcan_file = nullptr;
     std::chrono::steady_clock::time_point m_start_time;
     bool m_initialized = false;
 };

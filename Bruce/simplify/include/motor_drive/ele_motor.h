@@ -31,7 +31,13 @@ public:
     float target_position;    // 目标位置 (degree)
 
     // 控制模式和增益参数
-    int control_mode;         // 当前控制模式 (IMPEDANCE/SPEED/POSITION)
+    int control_mode;         // 期望控制模式 (IMPEDANCE/SPEED/POSITION)
+    // 电机固件侧当前生效的控制模式。-1 = 未知/未同步。
+    // set_motor_para_bt 的字节布局随模式而变，若固件模式与 control_mode 不一致，
+    // 电机会按错误的布局解释帧（例如把零速指令读成 -65rad/s + 满负前馈扭矩）。
+    // 因此下发控制帧前必须先用 float2bag(.., MOTOR_WR_CONTROL_MODE) 同步固件模式。
+    int hw_control_mode;
+    int mode_settle_ticks;    // 写模式后暂停下发控制帧的剩余周期数（等固件生效）
     float kp;                 // 刚度/位置环Kp
     float kd;                 // 阻尼/位置环Kd
     float ki;                 // 速度环Ki

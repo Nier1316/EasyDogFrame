@@ -82,9 +82,14 @@ int main() {
     // printf("[INFO] Example21 completed.\n");
 
     // 运行示例22 - 起立 + 轮子阻抗模式测试
-    printf("[INFO] Running Example22_StandAndWheelTest...\n");
-    Example22_StandAndWheelTest();
-    printf("[INFO] Example22 completed.\n");
+    // printf("[INFO] Running Example22_StandAndWheelTest...\n");
+    // Example22_StandAndWheelTest();
+    // printf("[INFO] Example22 completed.\n");
+
+    // 运行示例23 - 单路 CAN 键盘控制（选路 + 站立 + ↑↓高度 + ←→轮子）
+    printf("[INFO] Running Example23_SingleCanKeyboardControl...\n");
+    Example23_SingleCanKeyboardControl();
+    printf("[INFO] Example23 completed.\n");
 
     return 0;
 }

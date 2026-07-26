@@ -15,6 +15,13 @@ void EleMotor::init() {
     target_position = 0.0f;
     error_code = 0;
     enabled = false;
+    kp = 0.0f;
+    kd = 0.0f;
+    ki = 0.0f;
+    kvp = 0.0f;
+    control_mode = IMPEDANCE;  // 原先未初始化，是未定义值
+    hw_control_mode = -1;      // 未知 → 首次下发必定先同步固件模式
+    mode_settle_ticks = 0;
 }
 
 void EleMotor::enable() {
@@ -107,6 +114,9 @@ void set_motor_para_bt(const EleMotor& motor, float p1, float p2, float p3, floa
         temp[6] = (uint8_t)(((kd_int & 0xF) << 4) | (kvi_int >> 8));
         temp[7] = (uint8_t)(kvi_int & 0xff);
     }
+
+    // 记录编码后、真正上线的原始 CAN 帧（含轮电机 motor_id=4）
+    MotorLogger::GetInstance().LogSendCan(motor.device_idx, motor.motor_id, model, temp);
 
     BspCan::GetInstance().Can_Tx(motor.device_idx, motor.motor_id, temp, 8);
 }

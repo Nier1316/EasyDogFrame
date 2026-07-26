@@ -201,7 +201,7 @@ void MotorManager::SendSpeed(uint8_t can_port, uint8_t motor_id,
     std::lock_guard<std::mutex> lock(m_motor_mutex[can_port][motor_id - 1]);
     EleMotor& motor = m_motors[can_port][motor_id - 1];
     motor.target_speed = vel;
-    motor.kp = kp;
+    motor.kvp = kp;  // SPEED 下发路径读 kvp，不是 kp
     motor.ki = ki;
     motor.control_mode = SPEED;
 }
@@ -239,6 +239,9 @@ MotorStatus MotorManager::GetStatus(uint8_t can_port, uint8_t motor_id) const {
     return status;
 }
 
+// 写固件控制模式后等待其生效的周期数（发送线程 1ms/周期 → 约 20ms）
+static const int MODE_SETTLE_TICKS = 20;
+
 // 单次发送任务，由外部 ThreadManager 以 LOOP 模式驱动
 void MotorManager::SendThreadFunc() {
     for (uint8_t can_port = 0; can_port < CAN_PORTS; can_port++) {
@@ -248,12 +251,29 @@ void MotorManager::SendThreadFunc() {
 
             if (!motor.enabled) continue;
 
+            // 固件模式必须与期望模式一致，否则电机会用错误的字节布局解释控制帧。
+            // 不一致时先写模式，之后等 MODE_SETTLE_TICKS 个周期再发新布局的控制帧。
+            if (motor.hw_control_mode != motor.control_mode) {
+                float2bag(motor, (float)motor.control_mode, 1, MOTOR_WR_CONTROL_MODE);
+                motor.hw_control_mode = motor.control_mode;
+                motor.mode_settle_ticks = MODE_SETTLE_TICKS;
+                printf("[INFO] CAN%d motor%d 切换固件控制模式 -> %d\n",
+                       can_port, motor_id, motor.control_mode);
+                continue;
+            }
+            // 固件模式刚变更，等其生效后再下发新布局的控制帧
+            if (motor.mode_settle_ticks > 0) {
+                motor.mode_settle_ticks--;
+                continue;
+            }
+
             // 将上层统一坐标系的目标值逆标定回电机原始坐标系
             float tgt_pos = motor.target_position;
             float tgt_vel = motor.target_speed;
             float send_pos = tgt_pos;
             float send_vel = tgt_vel;
-            ApplyMotorCalibrationInverse(can_port, motor_id, send_pos, send_vel);
+            float send_torque = motor.target_torque;
+            ApplyMotorCalibrationInverse(can_port, motor_id, send_pos, send_vel, &send_torque);
 
             // 日志: 用户目标值 → 逆标定后实际发送值
             MotorLogger::GetInstance().LogSend(can_port, motor_id,
@@ -264,7 +284,7 @@ void MotorManager::SendThreadFunc() {
                 case IMPEDANCE:
                     set_motor_para_bt(motor,
                         send_pos, send_vel,
-                        motor.kp, motor.kd, motor.target_torque, IMPEDANCE);
+                        motor.kp, motor.kd, send_torque, IMPEDANCE);
                     break;
                 case SPEED:
                     set_motor_para_bt(motor,
