@@ -2,13 +2,18 @@
     "configurations": [
         {
             "name": "Linux",
+            "compileCommands": "${workspaceFolder}/build/compile_commands.json",
             "includePath": [
                 "${workspaceFolder}/include",
                 "${workspaceFolder}/include/motor_drive",
+                "${workspaceFolder}/include/math",
                 "${workspaceFolder}/include/thread",
                 "${workspaceFolder}/include/bsp",
                 "${workspaceFolder}/include/RoboTasks",
+                "${workspaceFolder}/lib",
+                "${workspaceFolder}/src/base",
                 "/usr/include",
+                "/usr/include/SDL2",
                 "/usr/local/include"
             ],
             "defines": [

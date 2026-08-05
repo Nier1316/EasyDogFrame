@@ -21,88 +21,16 @@
  *
  * 物理角 = ZERO_OFFSET + 指令角
  * 指令角 ∈ [LOWER_LIMIT, UPPER_LIMIT]
+ *
+ * 本文件只放解算算法。连杆尺寸、关节限位、控制参数等所有可调数值
+ * 都在 robot_calibration.h。
  */
 #pragma once
 
 #include <cmath>
 #include <cstdint>
 
-// =====================================================================
-//  连杆参数 (单位: 米) — 根据实际硬件修改
-// =====================================================================
-constexpr float LEG_L1 = 0.12f;   // 髋侧向偏移量
-constexpr float LEG_L2 = 0.35f;   // 大腿长度
-constexpr float LEG_L3 = 0.35f;   // 小腿长度
-
-// =====================================================================
-//  身体尺寸 (单位: 米)
-// =====================================================================
-constexpr float BODY_LENGTH = 0.30f;   // 身体长度 (X方向)
-constexpr float BODY_WIDTH  = 0.12f;   // 身体宽度 (Y方向)
-constexpr float BODY_HEIGHT = 0.06f;   // 身体高度 (Z方向)
-
-// =====================================================================
-//  腿安装位置 (在身体坐标系中)
-//  每行: [x, y, z]   x正=向前, y正=向左, z正=向上
-// =====================================================================
-constexpr float LEG_MOUNT[4][3] = {
-    { BODY_LENGTH/2,  BODY_WIDTH/2, 0 },   // FL (左前)
-    { BODY_LENGTH/2, -BODY_WIDTH/2, 0 },   // FR (右前)
-    {-BODY_LENGTH/2,  BODY_WIDTH/2, 0 },   // RL (左后)
-    {-BODY_LENGTH/2, -BODY_WIDTH/2, 0 },   // RR (右后)
-};
-
-// =====================================================================
-//  关节零位偏移 & 限位宏
-//  可直接用于电机控制：物理角 = ZERO_OFFSET + 指令角
-//  设置电机时传物理角，ApplyMotorCalibrationInverse 会自动转换
-// =====================================================================
-
-// --- θ1 髋外摆 ---
-constexpr float ZERO_OFFSET_THETA1_DEG = 30.0f;
-constexpr float LOWER_LIMIT_THETA1_DEG = -60.0f;
-constexpr float UPPER_LIMIT_THETA1_DEG =   0.0f;
-
-// --- θ2 大腿 ---
-constexpr float ZERO_OFFSET_THETA2_DEG = 0.0f;
-constexpr float LOWER_LIMIT_THETA2_DEG = -45.0f;
-constexpr float UPPER_LIMIT_THETA2_DEG =  90.0f;
-
-// --- θ3 小腿 ---
-constexpr float ZERO_OFFSET_THETA3_DEG = 0.0f;
-constexpr float LOWER_LIMIT_THETA3_DEG = 60.0f;
-constexpr float UPPER_LIMIT_THETA3_DEG = 180.0f;
-
-// 弧度版本（解算内部使用）
-constexpr float THETA1_OFFSET = ZERO_OFFSET_THETA1_DEG * (M_PI / 180.0f);
-constexpr float THETA2_OFFSET = ZERO_OFFSET_THETA2_DEG * (M_PI / 180.0f);
-constexpr float THETA3_OFFSET = ZERO_OFFSET_THETA3_DEG * (M_PI / 180.0f);
-
-// =====================================================================
-//  角度工具
-// =====================================================================
-constexpr float rad2deg(float rad) { return rad * (180.0f / M_PI); }
-constexpr float deg2rad(float deg) { return deg * (M_PI / 180.0f); }
-
-inline float clamp(float v, float lo, float hi) {
-    return (v < lo) ? lo : (v > hi) ? hi : v;
-}
-
-// =====================================================================
-//  腿编号
-// =====================================================================
-enum LegIndex : uint8_t {
-    FL = 0,  // 左前 (CAN0)
-    FR = 1,  // 右前 (CAN1)
-    RL = 2,  // 左后 (CAN2)
-    RR = 3,  // 右后 (CAN3)
-};
-
-enum JointIndex : uint8_t {
-    HIP   = 0,  // θ₁ 髋外摆 (motor_id=1)
-    THIGH = 1,  // θ₂ 大腿   (motor_id=2)
-    CALF  = 2,  // θ₃ 小腿   (motor_id=3)
-};
+#include "robot_calibration.h"   // 连杆/限位/控制参数 + 角度工具 + 腿关节编号
 
 // =====================================================================
 //  单腿正运动学

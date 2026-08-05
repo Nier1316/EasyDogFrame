@@ -12,9 +12,12 @@
 cmake_minimum_required(VERSION 3.8)
 project(SimplifyCAN)
 
-# C++ 标准：使用 C++14
+# C++ 标准：使用 C++17
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# 导出 compile_commands.json，供 clangd / cpptools 解析头文件路径
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # ============ 输出目录 ============
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)

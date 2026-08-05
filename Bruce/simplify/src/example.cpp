@@ -1613,17 +1613,12 @@ void Example21_XboxControllerControl() {
     printf("[INFO] Back键 = 退出\n\n");
 
     // ---- 控制参数 ----
-    const float KP = 150.0f;                      // 阻抗控制刚度
-    const float KD = 20.0f;                      // 阻抗控制阻尼
-    const int   HZ = 100;                        // 主循环频率
-    const float HEIGHT_ADJUST_RATE = 0.10f;      // 扳机满程时高度调节速率 (m/s)
-    const float BODY_HEIGHT_MIN    = -0.15f;     // 最低身体高度（深蹲）
-    const float BODY_HEIGHT_MAX    =  0.10f;     // 最高身体高度（站立）
-    // 轮电机：厂家速度控制模式（SPEED）。上位机只给目标角速度，电机端闭速度环。
-    const float WHEEL_MAX_SPEED    =  3.0f;      // 满摇杆时目标角速度 (rad/s)
-    const float WHEEL_KVP          =  1.0f;      // 速度环 Kp — 初值，实测再调
-    const float WHEEL_KVI          =  0.0f;      // 速度环 Ki — 初值，实测再调
-    const float WHEEL_DEAD_ZONE    =  0.05f;     // 轮子摇杆死区 (归一化)
+    // 关节 kp/kd/重力前馈已移到 include/motor_calibration.h 的 JOINT_IMPEDANCE 表，
+    // 按 [can_port][joint] 逐关节可调，用 GetJointImpedance(leg, j+1) 取。
+    // 控制周期、机身高度范围、轮电机参数见 robot_calibration.h §5，
+    // 此处不再重复定义（同名局部常量会遮蔽表中的值，改表不生效）。
+    const int   HZ = CONTROL_HZ;                 // 主循环频率
+    const float WHEEL_DEAD_ZONE = 0.05f;         // 轮子摇杆死区 (归一化，仅本例使用)
 
     // ---- 初始化 ----
     MotorManager& motor_mgr = MotorManager::GetInstance();
@@ -1662,11 +1657,11 @@ void Example21_XboxControllerControl() {
     float stand_q[12] = {};
     float base_foot_body[4][3] = {};
     if (controller_ok) {
-        // 站立指令角：Hip=0°, Thigh=-30°, Calf=60°
+        // 站立指令角见 robot_calibration.h §5 STAND_*_DEG
         for (int leg = 0; leg < 4; leg++) {
-            stand_q[leg * 3 + 0] = deg2rad(0);
-            stand_q[leg * 3 + 1] = deg2rad(-30);
-            stand_q[leg * 3 + 2] = deg2rad(60);
+            stand_q[leg * 3 + 0] = deg2rad(STAND_HIP_DEG);
+            stand_q[leg * 3 + 1] = deg2rad(STAND_THIGH_DEG);
+            stand_q[leg * 3 + 2] = deg2rad(STAND_CALF_DEG);
         }
         leg_fk_all(stand_q, base_foot_body);
 
@@ -1713,7 +1708,7 @@ void Example21_XboxControllerControl() {
 
     // ---- 阶段 2：2秒插值到站立姿态 ----
     if (controller_ok && standing) {
-        const int TOTAL_INTERP_FRAMES = 200;  // 2秒 × 100Hz
+        const int TOTAL_INTERP_FRAMES = STAND_INTERP_FRAMES;  // 见 robot_calibration.h §5
         float start_pos[4][3];
 
         // 记录起立前各关节当前位置
@@ -1732,7 +1727,10 @@ void Example21_XboxControllerControl() {
                 for (int j = 0; j < 3; j++) {
                     float pos = start_pos[leg][j]
                               + (stand_q[leg * 3 + j] - start_pos[leg][j]) * t;
-                    motor_mgr.SendImpedance(leg, j + 1, pos, 0.0f, KP, KD, 0.0f);
+                    const JointImpedanceParam& ip = GetJointImpedance(leg, j + 1);
+                    // 前馈随插值系数 t 渐入，避免起立结束切主循环时扭矩跳变
+                    motor_mgr.SendImpedance(leg, j + 1, pos, 0.0f,
+                                            ip.kp, ip.kd, ip.tau_ff * t);
                 }
             }
 
@@ -1825,9 +1823,11 @@ void Example21_XboxControllerControl() {
                 q_cmd[2] = clamp(q_cmd[2],
                     deg2rad(LOWER_LIMIT_THETA3_DEG), deg2rad(UPPER_LIMIT_THETA3_DEG));
 
-                // 发送阻抗控制指令
+                // 发送阻抗控制指令（kp/kd/前馈见 JOINT_IMPEDANCE 表）
                 for (int j = 0; j < 3; j++) {
-                    motor_mgr.SendImpedance(leg, j + 1, q_cmd[j], 0.0f, KP, KD, 0.0f);
+                    const JointImpedanceParam& ip = GetJointImpedance(leg, j + 1);
+                    motor_mgr.SendImpedance(leg, j + 1, q_cmd[j], 0.0f,
+                                            ip.kp, ip.kd, ip.tau_ff);
                 }
             }
 
@@ -2114,9 +2114,9 @@ void Example23_SingleCanKeyboardControl() {
     const float HEIGHT_STEP  = 0.002f;       // 每帧按住方向键的高度调节量 (m)
     const float BODY_HEIGHT_MIN = -0.15f;    // 最低（深蹲）
     const float BODY_HEIGHT_MAX =  0.10f;    // 最高（站立）
-    const float WHEEL_SPEED  = 0.5f;         // 轮子正/反转角速度 (rad/s)
-    const float WHEEL_KVP    = 1.0f;         // 速度环 Kp — 初值，实测再调
-    const float WHEEL_KVI    = 0.0f;         // 速度环 Ki — 初值，实测再调
+    const float WHEEL_SPEED  = 1.5f;         // 轮子正/反转角速度 (rad/s)
+    const float WHEEL_KVP    = 3.0f;         // 速度环 Kp — 初值，实测再调
+    const float WHEEL_KVI    = 0.3f;         // 速度环 Ki — 初值，实测再调
     // 松开方向键后轮子指令保持的帧数（终端无按键释放事件，用超时判定停止）
     const int   WHEEL_HOLD_FRAMES = 8;
 

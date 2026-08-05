@@ -77,9 +77,9 @@ int main() {
 
 
     // 运行示例21 - Xbox 手柄控制
-    // printf("[INFO] Running Example21_XboxControllerControl...\n");
-    // Example21_XboxControllerControl();
-    // printf("[INFO] Example21 completed.\n");
+    printf("[INFO] Running Example21_XboxControllerControl...\n");
+    Example21_XboxControllerControl();
+    printf("[INFO] Example21 completed.\n");
 
     // 运行示例22 - 起立 + 轮子阻抗模式测试
     // printf("[INFO] Running Example22_StandAndWheelTest...\n");
@@ -87,9 +87,9 @@ int main() {
     // printf("[INFO] Example22 completed.\n");
 
     // 运行示例23 - 单路 CAN 键盘控制（选路 + 站立 + ↑↓高度 + ←→轮子）
-    printf("[INFO] Running Example23_SingleCanKeyboardControl...\n");
-    Example23_SingleCanKeyboardControl();
-    printf("[INFO] Example23 completed.\n");
+    // printf("[INFO] Running Example23_SingleCanKeyboardControl...\n");
+    // Example23_SingleCanKeyboardControl();
+    // printf("[INFO] Example23 completed.\n");
 
     return 0;
 }
