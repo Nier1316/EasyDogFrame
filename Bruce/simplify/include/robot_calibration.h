@@ -89,18 +89,30 @@ constexpr float LEG_MOUNT[4][3] = {
 //  调站立姿态时优先把这两个角挪进区间内部。
 // =====================================================================
 
+// ---- 零位偏移的唯一真值来源 ----
+// 零位偏移由电机层 motor_calibration.h 的 MOTOR_CALIBRATION[].pos_offset 定义，
+// 收发每一帧都过那条路径。此处必须与其保持一致，否则 FK/IK 预测的足端位置
+// 与电机实际到达的位置会有偏差（曾出现 Hip 差 5°、Thigh 差 25°、Calf 差 12°）。
+// 直接用弧度字面量换算，改电机层时这三行必须同步改。
+constexpr float HIP_POS_OFFSET_RAD   = 0.611f;   // == MOTOR_CALIBRATION[*][0].pos_offset
+constexpr float THIGH_POS_OFFSET_RAD = 0.441f;   // == MOTOR_CALIBRATION[*][1].pos_offset
+constexpr float CALF_POS_OFFSET_RAD  = 0.211f;   // == MOTOR_CALIBRATION[*][2].pos_offset
+
 // --- θ1 髋外摆 ---
-constexpr float ZERO_OFFSET_THETA1_DEG = 30.0f;
+constexpr float ZERO_OFFSET_THETA1_DEG = rad2deg(HIP_POS_OFFSET_RAD);    // 35.01°
 constexpr float LOWER_LIMIT_THETA1_DEG = -60.0f;
 constexpr float UPPER_LIMIT_THETA1_DEG =   0.0f;
 
 // --- θ2 大腿 ---
-constexpr float ZERO_OFFSET_THETA2_DEG = 0.0f;
-constexpr float LOWER_LIMIT_THETA2_DEG = -45.0f;
+// 下界原为 −45°，但 Example19 实测站稳的姿态需要 −60°（见 §5 STAND_THIGH_DEG）。
+// 若仍用 −45°，Example21 主循环的 clamp（example.cpp:1822）会把站立指令削掉 15°，
+// 站姿被悄悄改成一个站不住的姿态。放宽到 −70° 给 IK 留调节余量。
+constexpr float ZERO_OFFSET_THETA2_DEG = rad2deg(THIGH_POS_OFFSET_RAD);  // 25.27°
+constexpr float LOWER_LIMIT_THETA2_DEG = -70.0f;
 constexpr float UPPER_LIMIT_THETA2_DEG =  90.0f;
 
 // --- θ3 小腿 ---
-constexpr float ZERO_OFFSET_THETA3_DEG = 0.0f;
+constexpr float ZERO_OFFSET_THETA3_DEG = rad2deg(CALF_POS_OFFSET_RAD);   // 12.09°
 constexpr float LOWER_LIMIT_THETA3_DEG =  60.0f;
 constexpr float UPPER_LIMIT_THETA3_DEG = 180.0f;
 
@@ -117,13 +129,20 @@ constexpr float THETA3_OFFSET = deg2rad(ZERO_OFFSET_THETA3_DEG);
 constexpr int   CONTROL_HZ = 100;                 // 主控制循环频率 (Hz)
 
 // ---- 站立姿态指令角 (deg) ----
-// 四条腿共用。注意 §4 的限位警告：θ₁/θ₃ 当前压在边界上。
+// 四条腿共用。取自 Example19_ReadAndStand 实测能站稳的一组值
+// （2026-08-05 日志 recv_20260805_172828：Thigh 仅塌 1.6~1.8°，扭矩 5~6.6 N·m，
+//   占限幅 5~6%，四腿高度对称）。
+// 注意 Thigh 是 −60° 而非 −30°：Example19 的 printf 里误写成 −30，
+// 但 TGT_PHYS 实际下发 −60，日志已证实。照 printf 抄会得到站不起来的姿态。
+// θ₁ 仍压在 §4 的 UPPER_LIMIT_THETA1_DEG=0 边界上，Hip 扭矩 8~12 N·m
+// 是三关节里最吃力的一个，属已知待改项。
 constexpr float STAND_HIP_DEG   =   0.0f;
-constexpr float STAND_THIGH_DEG = -30.0f;
+constexpr float STAND_THIGH_DEG = -60.0f;
 constexpr float STAND_CALF_DEG  =  60.0f;
 
 // ---- 起立过程 ----
-constexpr int   STAND_INTERP_FRAMES = 200;        // 插值帧数，200/100Hz = 2 s
+// Example19 用 10 s 慢速插值能站稳；2 s 过快，惯量冲击大容易失稳。
+constexpr int   STAND_INTERP_FRAMES = 1000;       // 1000/100Hz = 10 s
 
 // ---- 机身高度调节（相对站立姿态的偏移量，m）----
 // 与 §3 的 BODY_SIZE_HEIGHT 无关：这里是运行时可调的离地高度偏移。
@@ -135,6 +154,16 @@ constexpr float HEIGHT_ADJUST_RATE =  0.10f;      // 扳机满程时调节速率
 constexpr float WHEEL_MAX_SPEED = 3.0f;           // 满摇杆目标角速度 (rad/s)
 constexpr float WHEEL_KVP       = 1.0f;           // 速度环 Kp —— 初值，待实测
 constexpr float WHEEL_KVI       = 0.0f;           // 速度环 Ki —— 初值，待实测
+
+// ---- 差速转向 ----
+// 左右两侧轮速给不同值实现原地/行进转向：
+//   左侧(CAN0 FL, CAN2 RL) = 前进分量 + 转向分量
+//   右侧(CAN1 FR, CAN3 RR) = 前进分量 − 转向分量
+// 方向位由 MOTOR_CALIBRATION 的 vel_scale 处理，故此处四轮同号即同向。
+constexpr float WHEEL_MAX_TURN  = 2.0f;           // 满摇杆转向分量 (rad/s)
+// 前进+转向叠加后可能超过单轮上限，按比例缩回以保住转向意图
+// （直接钳位会让转弯半径随速度漂移）。
+constexpr float WHEEL_SPEED_CAP = 4.0f;           // 单轮合成速度上限 (rad/s)
 
 // =====================================================================
 //  §6  参数辨识 —— 动力学与驱动参数

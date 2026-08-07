@@ -97,37 +97,41 @@ struct JointImpedanceParam
  * 3) 首次只填实测值的 50%，确认位置误差变小（方向对）后再补足；
  *    若误差反而变大，立即断电并把符号翻过来。
  *
- * ---- 实测参考值（2026-08-04，四腿悬空且机身未水平，仅供数量级参考）----
- *   前腿 Thigh ≈ −3, Calf ≈ +2      后腿 Thigh ≈ −16, Calf ≈ +16
- * 落地后载荷分布变化很大，必须重新测量。
+ * ---- 实测参考值（2026-08-05，Example19 站稳，recv_20260805_172828）----
+ *   Hip ≈ +7~+12   Thigh ≈ −5~−6.6   Calf ≈ −8.7~+4.0（后腿 Calf 变号）
+ * 注意量级：站稳时保持扭矩只有个位数到十几 N·m，占限幅 5~9%。
+ * 填 40~60 这种量级会让关节直接顶过去——tau_ff 是前馈，不受位置误差约束。
  *
- * 默认全 0 = 保持改动前行为，填之前不会改变现有表现。
+ * kp/kd = 200/20 取自 Example19 实测站稳值。
+ * tau_ff 默认全 0 = 纯位置误差驱动，与 Example19 行为一致（它也没用前馈）。
+ * Example19 在 tau_ff=0 下 Thigh 仅塌 1.6~1.8°，说明该姿态几何上省力，
+ * 前馈不是必需项；若要减小残余误差再按上面量级小步填入。
  */
 static const JointImpedanceParam JOINT_IMPEDANCE[CAN_PORTS][3] = {
     //                kp      kd   tau_ff
     // CAN0 端口 (左前腿)
     {
-        {150.0f, 20.0f, 20.0f}, // Motor 1 (Hip)
-        {150.0f, 20.0f, 60.0f}, // Motor 2 (Thigh)
-        {150.0f, 20.0f, 40.0f}, // Motor 3 (Calf)
+        {200.0f, 20.0f,  0.0f}, // Motor 1 (Hip)
+        {200.0f, 20.0f,  0.0f}, // Motor 2 (Thigh)
+        {200.0f, 20.0f,  0.0f}, // Motor 3 (Calf)
     },
     // CAN1 端口 (右前腿)
     {
-        {150.0f, 20.0f, 20.0f}, // Motor 1 (Hip)
-        {150.0f, 20.0f, 60.0f}, // Motor 2 (Thigh)
-        {150.0f, 20.0f, 40.0f}, // Motor 3 (Calf)
+        {200.0f, 20.0f,  0.0f}, // Motor 1 (Hip)
+        {200.0f, 20.0f,  0.0f}, // Motor 2 (Thigh)
+        {200.0f, 20.0f,  0.0f}, // Motor 3 (Calf)
     },
     // CAN2 端口 (左后腿)
     {
-        {150.0f, 20.0f, 20.0f}, // Motor 1 (Hip)
-        {150.0f, 20.0f, 60.0f}, // Motor 2 (Thigh)
-        {150.0f, 20.0f, 40.0f}, // Motor 3 (Calf)
+        {200.0f, 20.0f,  0.0f}, // Motor 1 (Hip)
+        {200.0f, 20.0f,  0.0f}, // Motor 2 (Thigh)
+        {200.0f, 20.0f,  0.0f}, // Motor 3 (Calf)
     },
     // CAN3 端口 (右后腿)
     {
-        {150.0f, 20.0f, 20.0f}, // Motor 1 (Hip)
-        {150.0f, 20.0f, 60.0f}, // Motor 2 (Thigh)
-        {150.0f, 20.0f, 40.0f}, // Motor 3 (Calf)
+        {200.0f, 20.0f,  0.0f}, // Motor 1 (Hip)
+        {200.0f, 20.0f,  0.0f}, // Motor 2 (Thigh)
+        {200.0f, 20.0f,  0.0f}, // Motor 3 (Calf)
     },
 };
 

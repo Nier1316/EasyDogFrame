@@ -1607,9 +1607,10 @@ void Example20_MoveToPhysicalZero() {
 // ================= 示例 21：Xbox 手柄控制 =================
 void Example21_XboxControllerControl() {
     printf("\n========== 示例 21：Xbox 手柄控制 ==========\n");
-    printf("[INFO] A键  = 起立\n");
+    printf("[INFO] A键  = 起立（记录按下时的姿态作为返回点）\n");
+    printf("[INFO] B键  = 缓慢回到起立前的初始姿态\n");
     printf("[INFO] LT扳机 = 升高身体  |  RT扳机 = 降低身体\n");
-    printf("[INFO] 右摇杆上下 = 轮子前进/后退\n");
+    printf("[INFO] 右摇杆上下 = 前进/后退  |  右摇杆左右 = 差速转向\n");
     printf("[INFO] Back键 = 退出\n\n");
 
     // ---- 控制参数 ----
@@ -1676,7 +1677,12 @@ void Example21_XboxControllerControl() {
     bool standing = false;          // 是否已起立
     float body_height = 0.0f;       // 身体高度偏移量
     bool prev_a = false;            // A键上一帧状态（用于上升沿检测）
+    bool prev_b = false;            // B键上一帧状态
     bool prev_back = false;         // Back键上一帧状态
+
+    // 按下 A 键那一刻的关节姿态，B 键据此原路返回。
+    // 必须在起立阶段之外声明：主循环里 B 键要用到它。
+    float start_pos[4][3] = {};
 
     // ---- 阶段 1：等待 A 键起立 ----
     if (controller_ok) {
@@ -1698,7 +1704,18 @@ void Example21_XboxControllerControl() {
 
             if (a_pressed) {
                 standing = true;
-                printf("[INFO] A键按下！开始起立...\n");
+                // 在按下的这一刻记录姿态：此时电机还没被起立指令推动，
+                // 读到的就是真正的初始位置，B 键返回的目标即为此。
+                for (int leg = 0; leg < 4; leg++) {
+                    for (int j = 0; j < 3; j++) {
+                        start_pos[leg][j] = motor_mgr.GetStatus(leg, j + 1).position;
+                    }
+                }
+                printf("[INFO] A键按下！已记录初始姿态，开始起立...\n");
+                for (int leg = 0; leg < 4; leg++) {
+                    printf("  腿%d 初始角: [%+.4f, %+.4f, %+.4f] rad\n",
+                           leg, start_pos[leg][0], start_pos[leg][1], start_pos[leg][2]);
+                }
                 fflush(stdout);
             }
 
@@ -1709,14 +1726,7 @@ void Example21_XboxControllerControl() {
     // ---- 阶段 2：2秒插值到站立姿态 ----
     if (controller_ok && standing) {
         const int TOTAL_INTERP_FRAMES = STAND_INTERP_FRAMES;  // 见 robot_calibration.h §5
-        float start_pos[4][3];
-
-        // 记录起立前各关节当前位置
-        for (int leg = 0; leg < 4; leg++) {
-            for (int j = 0; j < 3; j++) {
-                start_pos[leg][j] = motor_mgr.GetStatus(leg, j + 1).position;
-            }
-        }
+        // start_pos 已在 A 键按下时记录，此处直接用
 
         // 线性插值过渡
         for (int f = 0; f <= TOTAL_INTERP_FRAMES; f++) {
@@ -1764,6 +1774,55 @@ void Example21_XboxControllerControl() {
                 break;
             }
 
+            // B键上升沿 → 缓慢回到 A 键按下时记录的初始姿态
+            bool b_pressed = state.b && !prev_b;
+            prev_b = state.b;
+            if (b_pressed) {
+                printf("[INFO] B键按下！缓慢回到初始姿态...\n");
+                fflush(stdout);
+
+                // 先停轮子：坐下过程中轮子不该继续转
+                for (int cp = 0; cp < 4; cp++) {
+                    motor_mgr.SendSpeed(cp, 4, 0.0f, WHEEL_KVP, WHEEL_KVI);
+                }
+
+                // 从"当前实际位置"而非站立目标插值：手柄调过高度后
+                // 两者已不同，用实际位置起步才不会有跳变。
+                float from_pos[4][3];
+                for (int leg = 0; leg < 4; leg++) {
+                    for (int j = 0; j < 3; j++) {
+                        from_pos[leg][j] = motor_mgr.GetStatus(leg, j + 1).position;
+                    }
+                }
+
+                for (int f = 0; f <= STAND_INTERP_FRAMES; f++) {
+                    float t = (float)f / STAND_INTERP_FRAMES;
+                    if (t > 1.0f) t = 1.0f;
+
+                    for (int leg = 0; leg < 4; leg++) {
+                        for (int j = 0; j < 3; j++) {
+                            float pos = from_pos[leg][j]
+                                      + (start_pos[leg][j] - from_pos[leg][j]) * t;
+                            const JointImpedanceParam& ip = GetJointImpedance(leg, j + 1);
+                            // 前馈随 t 渐出，落地后不再顶着前馈
+                            motor_mgr.SendImpedance(leg, j + 1, pos, 0.0f,
+                                                    ip.kp, ip.kd,
+                                                    ip.tau_ff * (1.0f - t));
+                        }
+                    }
+
+                    if (f % 100 == 0) {
+                        printf("  回落中... %3.0f%%\n", t * 100.0f);
+                        fflush(stdout);
+                    }
+                    usleep(1000000 / HZ);
+                }
+
+                printf("[INFO] 已回到初始姿态，退出主循环\n");
+                fflush(stdout);
+                break;
+            }
+
             // ---- 身体高度调节（左/右扳机） ----
             const float TRIGGER_DEAD = 0.05f;
             float height_delta = 0.0f;
@@ -1775,15 +1834,33 @@ void Example21_XboxControllerControl() {
             body_height += height_delta;
             body_height = clamp(body_height, BODY_HEIGHT_MIN, BODY_HEIGHT_MAX);
 
-            // ---- 轮子控制（右摇杆 Y 轴，厂家速度模式 SPEED）----
-            // 摇杆归一化输入，去死区，映射到目标角速度
-            float wheel_stick = -state.right_stick_y;
-            if (fabsf(wheel_stick) < WHEEL_DEAD_ZONE) wheel_stick = 0.0f;
+            // ---- 轮子控制（右摇杆：Y 轴前后，X 轴左右转，SPEED 模式）----
+            // 摇杆归一化输入，各自去死区
+            float fwd_stick  = -state.right_stick_y;   // 上推为正 = 前进
+            float turn_stick =  state.right_stick_x;   // 右推为正 = 右转
+            if (fabsf(fwd_stick)  < WHEEL_DEAD_ZONE) fwd_stick  = 0.0f;
+            if (fabsf(turn_stick) < WHEEL_DEAD_ZONE) turn_stick = 0.0f;
 
-            float wheel_speed = wheel_stick * WHEEL_MAX_SPEED;
-            for (int cp = 0; cp < 4; cp++) {
-                motor_mgr.SendSpeed(cp, 4, wheel_speed, WHEEL_KVP, WHEEL_KVI);
+            // 差速：右转时左侧加速、右侧减速。X 轴单独推即原地转向。
+            float v_fwd  = fwd_stick  * WHEEL_MAX_SPEED;
+            float v_turn = turn_stick * WHEEL_MAX_TURN;
+            float v_left  = v_fwd + v_turn;
+            float v_right = v_fwd - v_turn;
+
+            // 合成速度可能超过单轮上限。按同一比例缩放两侧而非各自钳位，
+            // 否则左右差值被改变，转弯半径会随速度漂移。
+            float v_peak = fmaxf(fabsf(v_left), fabsf(v_right));
+            if (v_peak > WHEEL_SPEED_CAP) {
+                float scale = WHEEL_SPEED_CAP / v_peak;
+                v_left  *= scale;
+                v_right *= scale;
             }
+
+            // CAN0(FL)/CAN2(RL) 为左侧，CAN1(FR)/CAN3(RR) 为右侧
+            motor_mgr.SendSpeed(0, 4, v_left,  WHEEL_KVP, WHEEL_KVI);
+            motor_mgr.SendSpeed(2, 4, v_left,  WHEEL_KVP, WHEEL_KVI);
+            motor_mgr.SendSpeed(1, 4, v_right, WHEEL_KVP, WHEEL_KVI);
+            motor_mgr.SendSpeed(3, 4, v_right, WHEEL_KVP, WHEEL_KVI);
 
             // ---- 四腿 IK 解算并发送指令 ----
             for (int leg = 0; leg < 4; leg++) {
@@ -1834,8 +1911,11 @@ void Example21_XboxControllerControl() {
             // 每 0.5 秒打印状态（轮子显示目标角速度与 CAN0 反馈速度）
             if (frame % 50 == 0) {
                 MotorStatus w0 = motor_mgr.GetStatus(0, 4);
-                printf("  高度=%+.3fm  轮 目标=%.2f 轮0实测=%.2f rad/s  LT=%.2f RT=%.2f\n",
-                       body_height, wheel_speed, w0.velocity,
+                MotorStatus w1 = motor_mgr.GetStatus(1, 4);
+                printf("  高度=%+.3fm  轮目标 左=%+.2f 右=%+.2f  "
+                       "实测 轮0=%+.2f 轮1=%+.2f rad/s  LT=%.2f RT=%.2f\n",
+                       body_height, v_left, v_right,
+                       w0.velocity, w1.velocity,
                        state.left_trigger, state.right_trigger);
                 fflush(stdout);
             }
