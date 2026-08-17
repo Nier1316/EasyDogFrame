@@ -38,8 +38,20 @@ bool CLog::Open()
 
     m_fp = fopen(m_filepath.c_str(), m_fileopenmode.c_str());
 
+    // "r+" 要求文件必须已存在，首次运行必然失败。
+    // 厂商库 libCANET_TCP 用 SetFileName("CANET.log", "r+") 调进来，
+    // 于是每次全新环境启动都打印一行 "The log file open failed!"。
+    // 这种情况下退回 "a+" 创建文件，语义（追加写）与 r+ 一致。
+    if (!m_fp && m_fileopenmode.find('r') != std::string::npos) {
+        m_fp = fopen(m_filepath.c_str(), "a+");
+        if (m_fp) {
+            m_fileopenmode = "a+";
+        }
+    }
+
     if (!m_fp) {
-        printf("[ERR] The log file open failed! \n");
+        printf("[ERR] The log file open failed: %s (mode %s)\n",
+               m_filepath.c_str(), m_fileopenmode.c_str());
         return false;
     }
 
@@ -92,13 +104,15 @@ void CLog::Write(int level, const char* fmt, ...)
     vfprintf(m_fp, fmt, args);
     va_end(args);
 
-    fseek(m_fp, -1, SEEK_END);
-    char c = fgetc(m_fp);
-    if (c != '\n') {
-        fseek(m_fp, 0, SEEK_END);
-        fprintf(m_fp, "\n");
+    // 补换行：空文件时 fseek(-1, SEEK_END) 会失败，此时不必补
+    if (fseek(m_fp, -1, SEEK_END) == 0) {
+        char c = (char)fgetc(m_fp);
+        if (c != '\n') {
+            fseek(m_fp, 0, SEEK_END);
+            fprintf(m_fp, "\n");
+        }
     }
-    fflush(m_fp);    
+    fflush(m_fp);
 }
 
 

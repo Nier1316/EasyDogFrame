@@ -102,12 +102,30 @@ struct MotorLimits {
 	float ki_min, ki_max;   // 积分增益
 };
 
-// 各类型电机的限幅表（默认四行相同 = 原宏值；按类型调整时改对应行即可）
+// 各类型电机的限幅表
+//
+// ★ 数值来源：2026-08-07 用 Example24_ReadMotorParams 从固件寄存器实测读回，
+//   不再是猜测值。读回寄存器与本表字段的对应关系：
+//     0x60 CAN_REPLY_MAX_Torque   → t_max
+//     0x5F CAN_REPLY_MAX_Velocity → v_max
+//     0x61 CAN_REPLY_MAX_KP       → kp_max
+//     0x62 CAN_REPLY_MAX_KD       → kd_max
+//
+//   改动前 vs 固件实测：
+//     v_max  关节 65 → 3    （差 21.7 倍！速度反馈/指令全部错这个倍数）
+//     v_max  轮   65 → 48
+//     t_max  轮   53 → 52
+//     kd_max 全部 500 → 100（差 5 倍，与厂商 motor_rw_api.c 的 KD_MAX 一致）
+//
+//   量程不匹配的后果：float↔uint 编解码两侧不一致，收发数值全错。
+//   例如关节 v_max 用 65 而固件是 3，解码出的速度是真值的 21.7 倍。
+//   ki_max 固件无对应寄存器可读，暂留 500 待厂商确认。
 static const MotorLimits MOTOR_LIMITS[MOTOR_TYPE_NUM] = {
-	/* Hip   */ {-12.5f, 12.5f, -65.0f, 65.0f, -150.0f, 150.0f, 0.0f, 500.0f, 0.0f, 500.0f, 0.0f, 500.0f},
-	/* Thigh */ {-12.5f, 12.5f, -65.0f, 65.0f, -150.0f, 150.0f, 0.0f, 500.0f, 0.0f, 500.0f, 0.0f, 500.0f},
-	/* Calf  */ {-12.5f, 12.5f, -65.0f, 65.0f, -150.0f, 150.0f, 0.0f, 500.0f, 0.0f, 500.0f, 0.0f, 500.0f},
-	/* Wheel */ {-12.5f, 12.5f, -65.0f, 65.0f, -53.0f, 53.0f, 0.0f, 500.0f, 0.0f, 500.0f, 0.0f, 500.0f},
+	//            p_min   p_max   v_min  v_max   t_min    t_max   kp     kp_max  kd    kd_max  ki    ki_max
+	/* Hip   */ {-12.5f, 12.5f,  -3.0f,  3.0f, -150.0f, 150.0f, 0.0f, 500.0f, 0.0f, 100.0f, 0.0f, 500.0f},
+	/* Thigh */ {-12.5f, 12.5f,  -3.0f,  3.0f, -150.0f, 150.0f, 0.0f, 500.0f, 0.0f, 100.0f, 0.0f, 500.0f},
+	/* Calf  */ {-12.5f, 12.5f,  -3.0f,  3.0f, -150.0f, 150.0f, 0.0f, 500.0f, 0.0f, 100.0f, 0.0f, 500.0f},
+	/* Wheel */ {-12.5f, 12.5f, -48.0f, 48.0f,  -52.0f,  52.0f, 0.0f, 500.0f, 0.0f, 100.0f, 0.0f, 500.0f},
 };
 
 // 按 motor_id(1~4) 取限幅；越界回退到 Hip 行

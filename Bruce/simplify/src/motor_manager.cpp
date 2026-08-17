@@ -56,17 +56,15 @@ bool MotorManager::Initialize(ThreadManager& thread_mgr) {
     for (uint8_t can_port = 0; can_port < CAN_PORTS; can_port++) {
         for (uint8_t motor_id = 1; motor_id <= MOTORS_PER_CAN; motor_id++) {
             EleMotor& motor = m_motors[can_port][motor_id - 1];
-            motor.device_idx = can_port;
+            // 状态字段统一由 init() 负责，不在此处逐个手抄：
+            // 原先手抄漏了 control_mode / hw_control_mode / mode_settle_ticks，
+            // 靠 static 单例的零初始化碰巧得到 hw_control_mode=0，
+            // 与 control_mode=IMPEDANCE(0) 相等 → 模式同步判断永远不成立，
+            // MOTOR_WR_CONTROL_MODE 一次都没发过，等于假设固件默认就是阻抗模式。
+            // init() 里 hw_control_mode=-1（未知），首次下发前必定真正同步一次。
+            motor.init();
+            motor.device_idx = can_port;   // 身份字段不属于状态，init() 不管
             motor.motor_id = motor_id;
-            motor.enabled = false;
-            motor.error_code = 0;
-            motor.current_speed = 0;
-            motor.current_torque = 0;
-            motor.current_position = 0;
-            motor.current_temp = 0;
-            motor.target_speed = 0;
-            motor.target_torque = 0;
-            motor.target_position = 0;
             printf("[INFO] Motor created: CAN%d, motor_id=%d\n", can_port, motor_id);
         }
     }
@@ -125,6 +123,48 @@ void MotorManager::ReceiveThreadFunc() {
             }
         }
     }
+}
+
+// 写固件控制模式后等待其生效的周期数（发送线程 1ms/周期 → 约 20ms）
+static const int MODE_SETTLE_TICKS = 20;
+
+// 在使能之前把固件控制模式写下去。
+//
+// 为什么需要单独提供这个接口：SendThreadFunc 的第一行是
+// `if (!motor.enabled) continue;`，模式同步写在它之后，所以未使能的电机
+// 永远发不出模式帧。仅靠 SendSpeed/SendImpedance 设置 control_mode 字段，
+// 真正的 0x5B 帧只会在使能之后才上总线——等于"先使能、后写模式"。
+// 后果：电机在固件默认模式（阻抗）下被使能，固件拿一个未知的位置目标
+// 去闭环，轮电机会在使能瞬间就转起来（实测 CAN1）。
+void MotorManager::SetControlMode(uint8_t can_port, uint8_t motor_id, int mode) {
+    if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(m_motor_mutex[can_port][motor_id - 1]);
+    EleMotor& motor = m_motors[can_port][motor_id - 1];
+    motor.control_mode = mode;
+    // 直接在调用线程发帧，不经过 SendThreadFunc，因此不受 enabled 限制
+    float2bag(motor, (float)mode, 1, MOTOR_WR_CONTROL_MODE);
+    // 标记已同步，避免 SendThreadFunc 使能后再写一次（多一次瞬态）
+    motor.hw_control_mode = mode;
+    // 计时在使能后才开始递减（SendThreadFunc 跳过未使能电机），
+    // 相当于使能后再留一段窗口给固件生效
+    motor.mode_settle_ticks = MODE_SETTLE_TICKS;
+    printf("[INFO] CAN%d motor%d 预写固件控制模式 -> %d\n", can_port, motor_id, mode);
+}
+
+// 读固件参数寄存器。回帧由接收线程解包，未识别的类型会打印
+// "[PARAM] CANx motory type=0xNN value=..."（见 ele_motor.cpp 的 default 分支）。
+// 与 SetControlMode 同理：直接在调用线程发帧，因此使能前也能读。
+void MotorManager::ReadParam(uint8_t can_port, uint8_t motor_id, uint8_t type) {
+    if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(m_motor_mutex[can_port][motor_id - 1]);
+    EleMotor& motor = m_motors[can_port][motor_id - 1];
+    float2bag(motor, 0.0f, 0, type);   // RW=0 读，参数值置 0
 }
 
 // 电机控制接口实现
@@ -238,9 +278,6 @@ MotorStatus MotorManager::GetStatus(uint8_t can_port, uint8_t motor_id) const {
     status.error_code = motor.error_code;
     return status;
 }
-
-// 写固件控制模式后等待其生效的周期数（发送线程 1ms/周期 → 约 20ms）
-static const int MODE_SETTLE_TICKS = 20;
 
 // 单次发送任务，由外部 ThreadManager 以 LOOP 模式驱动
 void MotorManager::SendThreadFunc() {

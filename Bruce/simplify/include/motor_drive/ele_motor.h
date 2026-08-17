@@ -70,5 +70,9 @@ bool unpack_cmd(EleMotor& motor, int timeout_ms = 100);
 // 直接解包 CAN 帧数据（不再接收，只解析）
 void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc);
 
+// 参数回帧详细打印开关。置 true 时连角度/速度/扭矩回帧也打印，
+// 用于查看使能前的原始读数；常态运行务必保持 false（1kHz 会淹没终端）。
+extern bool g_param_verbose;
+
 #endif // ELE_MOTOR_H
 

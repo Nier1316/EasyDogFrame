@@ -91,6 +91,11 @@ int main() {
     // Example23_SingleCanKeyboardControl();
     // printf("[INFO] Example23 completed.\n");
 
+    // 运行示例24 - 只读固件参数诊断（不使能电机，安全）
+    // printf("[INFO] Running Example24_ReadMotorParams...\n");
+    // Example24_ReadMotorParams();
+    // printf("[INFO] Example24 completed.\n");
+
     return 0;
 }
 

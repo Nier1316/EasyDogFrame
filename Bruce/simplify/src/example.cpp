@@ -1634,16 +1634,29 @@ void Example21_XboxControllerControl() {
     thread_mgr.start_thread("motor_send");
     sleep(1);
 
-    // 使能腿部电机（motor_id 1~3）
-    printf("[INFO] 使能腿部电机...\n");
+    // 先把 16 个电机的固件模式全部写好，再使能。
+    // SetControlMode 直接发 0x5B 帧、不经发送线程，所以未使能也能写进去。
+    // 若省掉这步，电机会在固件默认模式（阻抗）下被使能，固件拿一个未知的
+    // 位置目标去闭环——实测 CAN1 轮电机在使能瞬间就转起来。
+    printf("[INFO] 预写固件控制模式（关节=阻抗，轮=速度）...\n");
     for (int cp = 0; cp < 4; cp++) {
         for (int mi = 1; mi <= 3; mi++) {
+            motor_mgr.SetControlMode(cp, mi, IMPEDANCE);
+        }
+        motor_mgr.SetControlMode(cp, 4, SPEED);
+    }
+    usleep(100000);   // 留 100ms 给固件写入生效（远大于 20ms 的 settle 窗口）
+
+    // 轮电机目标速度归零，避免使能后速度环拿到未定义目标
+    for (int cp = 0; cp < 4; cp++) {
+        motor_mgr.SendSpeed(cp, 4, 0.0f, WHEEL_KVP, WHEEL_KVI);
+    }
+
+    printf("[INFO] 使能全部电机...\n");
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 4; mi++) {
             motor_mgr.EnableMotor(cp, mi);
         }
-    }
-    // 使能轮电机（motor_id 4）
-    for (int cp = 0; cp < 4; cp++) {
-        motor_mgr.EnableMotor(cp, 4);
     }
     usleep(200000);
 
@@ -2335,5 +2348,110 @@ void Example23_SingleCanKeyboardControl() {
     motor_mgr.Stop();
 
     printf("[INFO] 示例23 完成\n");
+    fflush(stdout);
+}
+
+// ================= 示例 24：只读固件参数诊断 =================
+// 全程不使能任何电机，只发读参数帧，安全可反复运行。
+// 用途：
+//   1) 核对固件量程与 MOTOR_LIMITS 是否一致（kd_max 项目写 500，厂商参考是 100）
+//   2) 读上电初始速度反馈，判断 CAN1 轮电机 -43 rad/s 的假速度是否与使能无关
+//   3) 读固件当前控制模式，确认上电默认值
+void Example24_ReadMotorParams() {
+    printf("\n========== 示例 24：只读固件参数诊断（不使能电机）==========\n");
+    printf("[INFO] 全程不使能电机，可反复运行。\n");
+    printf("[INFO] 重点：使能前的速度读数——判断 CAN1 轮电机的假速度\n");
+    printf("       是否与使能动作无关（若上电即为非零，则属固件自身状态）。\n\n");
+
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] MotorManager 初始化失败\n");
+        return;
+    }
+
+    // 只启接收线程：发送线程会跳过未使能电机，本例也不需要它
+    thread_mgr.start_thread("motor_receive");
+    // 打开详细打印，让角度/速度/扭矩回帧也显示原始值
+    g_param_verbose = true;
+    sleep(1);
+
+    // ---- 第一步：上电后立即读速度，这是本次诊断的核心判据 ----
+    printf("---------- 关键判据：使能前的轮电机速度 (0x10) ----------\n");
+    printf("[INFO] 连读 5 轮，观察是否有非零值及其衰减趋势\n");
+    for (int round = 0; round < 5; round++) {
+        printf("  --- 第 %d 轮 ---\n", round + 1);
+        fflush(stdout);
+        for (int cp = 0; cp < 4; cp++) {
+            motor_mgr.ReadParam(cp, 4, MOTOR_OR_velocity);
+            usleep(60000);
+        }
+        usleep(200000);
+    }
+
+    struct ParamItem { uint8_t type; const char* name; };
+    const ParamItem items[] = {
+        // 本次新增：定位 CAN1 差异
+        { MOTOR_WR_Velfilter_constant,     "★角速度低通滤波常数" },
+        { MOTOR_WR_Major,                  "★电机型号" },
+        { MOTOR_OR_We,                     "★电角速度" },
+        { MOTOR_OR_Iq,                     "★Q轴电流 A" },
+        { MOTOR_OR_Te,                     "★电磁转矩 Nm" },
+        { MOTOR_OR_Angel,                  "★电角度" },
+        // 状态与量程
+        { MOTOR_WR_CONTROL_MODE,           "控制模式(0阻抗/1速度/2位置)" },
+        { MOTOR_OR_velocity,               "当前角速度 rad/s" },
+        { MOTOR_OR_angle,                  "当前角度 rad" },
+        { MOTOR_OR_torque,                 "当前扭矩 Nm" },
+        { MOTOR_OR_error_register,         "错误寄存器" },
+        { MOTOR_OR_error_history_register, "历史错误寄存器" },
+        { MOTOR_OR_temperature,            "温度 C" },
+        { MOTOR_WR_CAN_REPLY_MAX_Torque,   "量程 t_max Nm" },
+        { MOTOR_WR_CAN_REPLY_MAX_Velocity, "量程 v_max rad/s" },
+        { MOTOR_WR_CAN_REPLY_MAX_KP,       "量程 kp_max" },
+        { MOTOR_WR_CAN_REPLY_MAX_KD,       "量程 kd_max" },
+        { MOTOR_WR_Current_Limit,          "最大电流限制 A" },
+        { MOTOR_WR_KT_OUT,                 "转矩系数 A/Nm" },
+        { MOTOR_WR_GR,                     "减速比" },
+        { MOTOR_WR_J,                      "转动惯量" },
+        { MOTOR_WR_B,                      "粘滞系数" },
+        { MOTOR_WR_Tf,                     "静摩擦力矩 Nm" },
+        { MOTOR_WR_CAN_Timeout,            "CAN 超时周期数" },
+    };
+    const int n_items = sizeof(items) / sizeof(items[0]);
+
+    // ---- 第二步：轮电机四路横向对比，★项用于定位 CAN1 差异 ----
+    printf("\n---------- 轮电机 (motor_id=4) 四路对比 ----------\n");
+    for (int i = 0; i < n_items; i++) {
+        printf("\n>>> %s (type=0x%02X)\n", items[i].name, items[i].type);
+        fflush(stdout);
+        for (int cp = 0; cp < 4; cp++) {
+            motor_mgr.ReadParam(cp, 4, items[i].type);
+            usleep(80000);   // 避免多路输出交织
+        }
+    }
+
+    // ---- 第三步：CAN0 关节电机作参照 ----
+    printf("\n---------- 参照：CAN0 关节电机 ----------\n");
+    for (int mi = 1; mi <= 3; mi++) {
+        printf("\n>>> CAN0 motor%d\n", mi);
+        fflush(stdout);
+        for (int i = 0; i < n_items; i++) {
+            motor_mgr.ReadParam(0, mi, items[i].type);
+            usleep(80000);
+        }
+    }
+
+    g_param_verbose = false;
+    printf("\n[INFO] 读取完毕。核对要点：\n");
+    printf("  1) 第一步里 CAN1 轮速度若非零 → 假速度与使能无关，属固件状态\n");
+    printf("  2) ★滤波常数(0x5C) 四路是否相同 → 不同则解释 tau≈13.3ms 的衰减\n");
+    printf("  3) ★型号(0x50) 四路是否相同 → 不同说明硬件批次差异\n");
+    printf("  4) 量程各项与 MOTOR_LIMITS（ele_motor_def.h）是否一致\n");
+
+    thread_mgr.stop_thread("motor_receive");
+    motor_mgr.Stop();
+    printf("\n[INFO] 示例24 完成（未使能任何电机）\n");
     fflush(stdout);
 }

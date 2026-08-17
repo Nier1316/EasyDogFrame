@@ -31,3 +31,5 @@ void Example20_MoveToPhysicalZero();
 void Example21_XboxControllerControl();
 void Example22_StandAndWheelTest();
 void Example23_SingleCanKeyboardControl();
+// 只读诊断：不使能任何电机，读固件量程/模式/上电初始反馈
+void Example24_ReadMotorParams();

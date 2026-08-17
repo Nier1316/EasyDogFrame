@@ -29,6 +29,17 @@ public:
     bool Initialize(ThreadManager& thread_mgr);
     void Stop();  // 关闭 CAN 设备（线程由外部 ThreadManager 统一停止）
 
+    // 在使能之前写固件控制模式（IMPEDANCE/SPEED/POSITION）。
+    // 必须在 EnableMotor 之前调用：发送线程会跳过未使能的电机，
+    // 单靠 SendSpeed/SendImpedance 设字段，模式帧要等使能后才发得出去，
+    // 电机会先在固件默认模式下被使能而意外运动。
+    void SetControlMode(uint8_t can_port, uint8_t motor_id, int mode);
+
+    // 读固件参数寄存器（type 见 ele_motor_def.h 的 MOTOR_OR_* / MOTOR_WR_*）。
+    // 异步：回帧由接收线程打印 "[PARAM] CANx motory type=0xNN value=..."。
+    // 使能前也可调用，用于核对固件量程与上电初始状态。
+    void ReadParam(uint8_t can_port, uint8_t motor_id, uint8_t type);
+
     void EnableMotor(uint8_t can_port, uint8_t motor_id);
     void DisableMotor(uint8_t can_port, uint8_t motor_id);
     void SetZero(uint8_t can_port, uint8_t motor_id);

@@ -61,6 +61,9 @@ public:
 
         if (m_sendcan_file) {
             // 编码后、真正上线的 8 字节 CAN 数据（十六进制），便于逐帧核对
+            // mode 列含义：0/1/2 = 阻抗/速度/位置控制帧（set_motor_para_bt）
+            //              -1 = 参数读写帧（float2bag）
+            //              -2 = 使能帧，-3 = 失能帧
             fprintf(m_sendcan_file,
                 "elapsed_ms,can_port,motor_id,mode,"
                 "d0,d1,d2,d3,d4,d5,d6,d7\n");

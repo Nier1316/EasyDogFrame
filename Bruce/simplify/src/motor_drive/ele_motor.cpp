@@ -27,6 +27,9 @@ void EleMotor::init() {
 void EleMotor::enable() {
     enabled = true;
     uint8_t start_frame[8] = {0x80, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, MOTOR_STRAT};
+    // 使能帧原先不记日志，导致 sendcan 里完全看不到使能时刻——
+    // 排查"使能瞬间轮电机就转"只能靠推断。mode 列用 -2 标记使能帧。
+    MotorLogger::GetInstance().LogSendCan(device_idx, motor_id, -2, start_frame);
     BspCan::GetInstance().Can_Tx(device_idx, motor_id, start_frame, 8);
 }
 
@@ -34,6 +37,8 @@ void EleMotor::disable() {
     enabled = false;
     // 发送停止命令帧：80 FF FF FF FF FF FF FD
     uint8_t stop_frame[8] = {0x80, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, MOTOR_STOP};
+    // mode 列用 -3 标记失能帧
+    MotorLogger::GetInstance().LogSendCan(device_idx, motor_id, -3, stop_frame);
     BspCan::GetInstance().Can_Tx(device_idx, motor_id, stop_frame, 8);
 }
 
@@ -55,6 +60,11 @@ void EleMotor::clear_error() {
 void float2bag(const EleMotor& motor, float parameter, uint8_t RW, uint8_t type){
     unsigned char *pdata = (unsigned char *)&parameter;
     uint8_t temp[8] = {0x80,*pdata++,*pdata++,*pdata++,*pdata++,RW,type,0xEC};//小端模式
+
+    // 参数读写帧也记进 sendcan 日志：写控制模式(0x5B)、清错、归零都走这里，
+    // 原先不记录，排查模式切换瞬态时只能从 send 日志的 mode 列反推时刻。
+    // mode 列填 -1 以区别于 set_motor_para_bt 的 0/1/2。
+    MotorLogger::GetInstance().LogSendCan(motor.device_idx, motor.motor_id, -1, temp);
 
     BspCan::GetInstance().Can_Tx(motor.device_idx, motor.motor_id, temp, 8);
 }
@@ -190,6 +200,9 @@ bool unpack_cmd(EleMotor& motor, int timeout_ms)
 	return true;
 }
 
+// 参数回帧详细打印开关，见 unpack_frame 内的说明。默认关闭。
+bool g_param_verbose = false;
+
 // 直接解包 CAN 帧数据（不再接收，只解析）
 void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
 	if (!data || dlc < 6) {
@@ -207,6 +220,14 @@ void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
 		canRecev.uValue[1] = data[2];
 		canRecev.uValue[2] = data[3];
 		canRecev.uValue[3] = data[4];
+
+		// 诊断开关：置 1 时把所有参数回帧都打印出来。
+		// 默认 0——角度/速度/扭矩走正常解包路径不打印，否则 1kHz 会淹没终端。
+		// 需要看使能前的原始读数（如判断速度反馈是否上电即为假值）时开启。
+		if (g_param_verbose) {
+			printf("[PARAM] CAN%d motor%d type=0x%02X value=%.6f\n",
+				   motor.device_idx, motor.motor_id, type, canRecev.fValue);
+		}
 
 		// 根据参数类型更新电机结构体
 		switch (type) {
@@ -242,6 +263,13 @@ void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
 				motor.error_code = (uint16_t)canRecev.fValue;
 				break;
 			default:
+				// 其余寄存器（量程 0x60~0x62、控制模式 0x5B、电流限制 0x56、
+				// 转矩系数 0x49 等）原先在此静默丢弃，读回来什么都看不到。
+				// 这些不是周期性回帧，无论 verbose 与否都打印。
+				if (!g_param_verbose) {
+					printf("[PARAM] CAN%d motor%d type=0x%02X value=%.6f\n",
+						   motor.device_idx, motor.motor_id, type, canRecev.fValue);
+				}
 				break;
 		}
 	} else {
