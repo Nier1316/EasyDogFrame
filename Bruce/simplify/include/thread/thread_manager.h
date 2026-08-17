@@ -53,8 +53,7 @@ enum class ThreadState {
     UNREGISTERED,  // 未在 ThreadManager 中注册
     REGISTERED,    // 已注册，尚未启动
     RUNNING,       // 线程正在运行
-    STOPPED,       // 线程已停止（可重新启动）
-    ERROR          // 线程内部发生异常（预留）
+    STOPPED        // 线程已停止（可重新启动）
 };
 
 /**

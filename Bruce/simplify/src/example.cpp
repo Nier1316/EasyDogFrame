@@ -75,7 +75,6 @@ static const char* state_str(ThreadState s) {
         case ThreadState::REGISTERED:   return "REGISTERED";
         case ThreadState::RUNNING:      return "RUNNING";
         case ThreadState::STOPPED:      return "STOPPED";
-        case ThreadState::ERROR:        return "ERROR";
         default:                        return "UNKNOWN";
     }
 }
@@ -275,9 +274,9 @@ void Example9_BasicMotorCtr(){
 
         // 每 100 次循环输出一次（减少输出频率，避免刷屏）
         if (i % 100 == 0) {
-            printf("[%d] CAN%d-M1 - Pos: %.4f rad, Vel: %.4f rad/s, Torque: %.4f Nm, Error: 0x%02x, ACK: %d, Fault: %d, Enable: %d\n",
+            printf("[%d] CAN%d-M1 - Pos: %.4f rad, Vel: %.4f rad/s, Torque: %.4f Nm, Error: 0x%02x, Enable: %d\n",
                    i, canlabel,status.position, status.velocity, status.torque, status.error_code,
-                   status.ack, status.fault, status.enable);
+                   status.enable);
             fflush(stdout);  // 立即刷新输出缓冲区
             output_count++;
         }
@@ -1429,7 +1428,7 @@ void Example19_ReadAndStand() {
                    st.position,
                    rad2deg(st.position),
                    st.enable ? "" : " [DISABLED]",
-                   st.fault ? " [FAULT]" : "");
+                   st.error_code ? " [FAULT]" : "");
         }
     }
     printf("\n");

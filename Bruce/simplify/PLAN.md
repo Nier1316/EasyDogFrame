@@ -1,5 +1,7 @@
 # 四足机器狗12关节控制系统 — 实现计划
 
+> ⚠️ **本文档为历史实现计划，已过时。** 实际代码已演进为 **16 电机**（4 路 CAN × 4 电机：髋/大腿/小腿 3 关节 + 轮电机）；`RobotDog` 四足语义层始终未实现；收发线程由 `MotorManager` 注册到外部 `ThreadManager` 驱动。现状以 `FACT.md`、`FRAMEWORK_GUIDE.md`、`MOTOR_MANAGER_GUIDE.md` 为准。
+
 ## 目标
 
 在 `simplify` 目录现有 CAN 通信基础设施上，新增 `MotorManager`（12电机批量管理）和 `RobotDog`（四足语义接口），实现关节层控制。
@@ -26,10 +28,10 @@ TCP: 192.168.0.178, 端口 4001~4004
 | 文件 | 作用 |
 |------|------|
 | `include/motor_drive/ele_motor.h` | 单电机数据结构 + 控制/解包函数声明 |
-| `src/motor_drive/ele_motor.cpp` | `set_motor_para_bt()` 编码发送、`unpack_cmd()` 解包 |
+| `src/motor_drive/ele_motor.cpp` | `set_motor_para_bt()` 编码发送、`unpack_frame()` 解包 |
 | `include/bsp/bsp_can.h` | CAN 收发抽象层（单例） |
 | `src/bsp/bsp_can.cpp` | `Can_Tx()` / `ReceiveFrames()` 实现 |
-| `include/data_types.h` | `MotorStatus` / `MotorCommand` / `CanDeviceConfig` |
+| `include/data_types.h` | `MotorStatus` / `CanDeviceConfig` |
 | `include/motor_drive/ele_motor_def.h` | 参数范围宏、控制命令宏 |
 
 ---

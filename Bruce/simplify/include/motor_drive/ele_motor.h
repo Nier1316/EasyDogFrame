@@ -50,8 +50,6 @@ public:
     void init();
     void enable();
     void disable();
-    bool has_error() const;
-    void clear_error();
 
 };
 
@@ -63,9 +61,6 @@ void float2bag(const EleMotor& motor, float parameter, uint8_t RW, uint8_t type)
 
 // 电机控制指令
 void set_motor_para_bt(const EleMotor& motor, float p1, float p2, float p3, float p4, float p5, int model);
-
-// CAN数据解包
-bool unpack_cmd(EleMotor& motor, int timeout_ms = 100);
 
 // 直接解包 CAN 帧数据（不再接收，只解析）
 void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc);

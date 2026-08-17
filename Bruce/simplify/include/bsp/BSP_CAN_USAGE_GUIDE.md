@@ -185,24 +185,6 @@ bsp.CloseDevice(0);
 
 ---
 
-#### `bool IsDeviceRunning(uint8_t device_idx) const`
-
-查询设备是否运行中。
-
-**参数**：
-- `device_idx` - 设备索引
-
-**返回值**：运行中返回 true，否则返回 false
-
-**示例**：
-```cpp
-if (bsp.IsDeviceRunning(0)) {
-    printf("Device 0 is running\n");
-}
-```
-
----
-
 ### 3. 数据收发
 
 #### `bool SendFrame(uint8_t device_idx, const BspCanFrame& frame)`
@@ -275,94 +257,7 @@ if (bsp.ReceiveFrames(0, frames, 100)) {
 
 ---
 
-### 4. 状态查询
-
-#### `uint32_t GetReceivedFrameCount(uint8_t device_idx) const`
-
-获取设备接收帧计数。
-
-**参数**：
-- `device_idx` - 设备索引
-
-**返回值**：接收帧数
-
-**示例**：
-```cpp
-uint32_t rx_count = bsp.GetReceivedFrameCount(0);
-printf("Received %u frames\n", rx_count);
-```
-
----
-
-#### `uint32_t GetSentFrameCount(uint8_t device_idx) const`
-
-获取设备发送帧计数。
-
-**参数**：
-- `device_idx` - 设备索引
-
-**返回值**：发送帧数
-
-**示例**：
-```cpp
-uint32_t tx_count = bsp.GetSentFrameCount(0);
-printf("Sent %u frames\n", tx_count);
-```
-
----
-
-### 5. 全局控制
-
-#### `bool InitAllDevices(const std::vector<CanDeviceConfig>& configs)`
-
-初始化所有设备。
-
-**参数**：
-- `configs` - 所有设备的配置列表
-
-**返回值**：全部成功返回 true，否则返回 false
-
-**示例**：
-```cpp
-std::vector<CanDeviceConfig> configs(2);
-configs[0].device_idx = 0;
-configs[0].port = 4001;
-configs[0].work_mode = TCP_CLIENT;
-
-configs[1].device_idx = 1;
-configs[1].port = 4002;
-configs[1].work_mode = TCP_CLIENT;
-
-bsp.InitAllDevices(configs);
-```
-
----
-
-#### `bool StartAllDevices()`
-
-启动所有设备。
-
-**返回值**：全部成功返回 true，否则返回 false
-
-**示例**：
-```cpp
-bsp.StartAllDevices();
-```
-
----
-
-#### `bool StopAllDevices()`
-
-停止所有设备。
-
-**返回值**：全部成功返回 true，否则返回 false
-
-**示例**：
-```cpp
-bsp.StopAllDevices();
-```
-
----
+### 4. 全局控制
 
 #### `void ShutdownAll()`
 
@@ -437,12 +332,7 @@ int main() {
         }
     }
     
-    // 6. 查询统计信息
-    printf("[INFO] Sent: %u frames, Received: %u frames\n",
-           bsp.GetSentFrameCount(0),
-           bsp.GetReceivedFrameCount(0));
-    
-    // 7. 停止设备
+    // 6. 停止设备
     bsp.StopDevice(0);
     
     return 0;
@@ -497,16 +387,20 @@ int main() {
     configs[1].server_ip = "192.168.0.179";
     configs[1].work_mode = TCP_CLIENT;
     
-    // 初始化所有设备
-    if (!bsp.InitAllDevices(configs)) {
-        printf("[ERROR] Failed to initialize devices\n");
-        return -1;
+    // 逐设备初始化
+    for (const auto& cfg : configs) {
+        if (!bsp.InitDevice(cfg.device_idx, cfg)) {
+            printf("[ERROR] Failed to initialize device %d\n", cfg.device_idx);
+            return -1;
+        }
     }
     
-    // 启动所有设备
-    if (!bsp.StartAllDevices()) {
-        printf("[ERROR] Failed to start devices\n");
-        return -1;
+    // 逐设备启动
+    for (const auto& cfg : configs) {
+        if (!bsp.StartDevice(cfg.device_idx)) {
+            printf("[ERROR] Failed to start device %d\n", cfg.device_idx);
+            return -1;
+        }
     }
     
     // 在设备 0 上发送数据
@@ -517,8 +411,10 @@ int main() {
     uint8_t data1[8] = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17};
     bsp.Can_Tx(1, 0x200, data1, 8);
     
-    // 停止所有设备
-    bsp.StopAllDevices();
+    // 逐设备停止
+    for (const auto& cfg : configs) {
+        bsp.StopDevice(cfg.device_idx);
+    }
     
     return 0;
 }

@@ -8,7 +8,7 @@
 //test commit
 // 构造：仅记录设备索引，不做任何 IO；真正打开设备放到 Initialize
 CanDevice::CanDevice(uint8_t device_idx)
-    : m_device_idx(device_idx), m_is_running(false), m_received_count(0) {
+    : m_device_idx(device_idx), m_is_running(false) {
 }
 
 // 析构：确保设备被正确关闭（Stop + CloseDevice），避免泄漏底层句柄
@@ -49,17 +49,19 @@ bool CanDevice::Start() {
     return true;
 }
 
-// 停止 CAN 通道；失败仅告警不抛错，以免阻塞后续 CloseDevice
+// 停止 CAN 通道；返回复位是否成功。失败仅告警，仍置 m_is_running=false，
+// 以便后续 CloseDevice 继续收尾。
 bool CanDevice::Stop() {
     std::lock_guard<std::mutex> lock(m_mutex);
 
-    if (VCI_ResetCAN(VCI_CANETE, m_device_idx, 0) != STATUS_OK) {
+    bool ok = (VCI_ResetCAN(VCI_CANETE, m_device_idx, 0) == STATUS_OK);
+    if (!ok) {
         printf("[WARNING] Failed to reset CAN device %d\n", m_device_idx);
     }
 
     m_is_running = false;
     printf("[INFO] CAN device %d stopped\n", m_device_idx);
-    return true;
+    return ok;
 }
 
 // 彻底收尾：先 Stop 释放 CAN 通道，再 Close 释放底层句柄
@@ -98,7 +100,6 @@ bool CanDevice::ReceiveFrames(std::vector<VCI_CAN_OBJ>& frames, int timeout_ms) 
         for (ULONG i = 0; i < cnt; i++) {
             frames.push_back(buffer[i]);
         }
-        m_received_count += cnt;  // 累计计数，便于统计吞吐
         return true;
     }
 

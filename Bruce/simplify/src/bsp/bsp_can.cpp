@@ -8,19 +8,6 @@
 #include <cstdio>
 #include <cstring>
 
-/**
- * @class CanDeviceWrapper
- * @brief 对 CanDevice 的包装，用于 BspCan 内部管理
- */
-class BspCan::CanDeviceWrapper {
-public:
-    CanDeviceWrapper(uint8_t device_idx)
-        : m_device(device_idx), m_sent_count(0) {}
-
-    CanDevice m_device;
-    uint32_t m_sent_count;
-};
-
 // ============ 单例实现 ============
 
 BspCan& BspCan::GetInstance() {
@@ -45,13 +32,13 @@ bool BspCan::InitDevice(uint8_t device_idx, const CanDeviceConfig& config) {
         return false;
     }
 
-    auto wrapper = std::make_unique<CanDeviceWrapper>(device_idx);
-    if (!wrapper->m_device.Initialize(config)) {
+    auto device = std::make_unique<CanDevice>(device_idx);
+    if (!device->Initialize(config)) {
         printf("[ERROR] Failed to initialize device %d\n", device_idx);
         return false;
     }
 
-    m_devices[device_idx] = std::move(wrapper);
+    m_devices[device_idx] = std::move(device);
     printf("[INFO] BSP: Device %d initialized\n", device_idx);
     return true;
 }
@@ -65,7 +52,7 @@ bool BspCan::StartDevice(uint8_t device_idx) {
         return false;
     }
 
-    if (!it->second->m_device.Start()) {
+    if (!it->second->Start()) {
         printf("[ERROR] Failed to start device %d\n", device_idx);
         return false;
     }
@@ -83,7 +70,7 @@ bool BspCan::StopDevice(uint8_t device_idx) {
         return false;
     }
 
-    if (!it->second->m_device.Stop()) {
+    if (!it->second->Stop()) {
         printf("[ERROR] Failed to stop device %d\n", device_idx);
         return false;
     }
@@ -101,21 +88,10 @@ bool BspCan::CloseDevice(uint8_t device_idx) {
         return false;
     }
 
-    it->second->m_device.Shutdown();
+    it->second->Shutdown();
     m_devices.erase(it);
     printf("[INFO] BSP: Device %d closed\n", device_idx);
     return true;
-}
-
-bool BspCan::IsDeviceRunning(uint8_t device_idx) const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-
-    auto it = m_devices.find(device_idx);
-    if (it == m_devices.end()) {
-        return false;
-    }
-
-    return it->second->m_device.IsRunning();
 }
 
 // ============ 私有辅助函数：格式转换 ============
@@ -159,12 +135,11 @@ bool BspCan::SendFrame(uint8_t device_idx, const BspCanFrame& frame) {
     VCI_CAN_OBJ vci_frame;
     ConvertFrameToVci(frame, vci_frame);
 
-    if (!it->second->m_device.SendFrame(vci_frame)) {
+    if (!it->second->SendFrame(vci_frame)) {
         printf("[ERROR] Failed to send frame on device %d\n", device_idx);
         return false;
     }
 
-    it->second->m_sent_count++;
     return true;
 }
 
@@ -189,7 +164,7 @@ bool BspCan::ReceiveFrames(uint8_t device_idx,
     }
 
     std::vector<VCI_CAN_OBJ> vci_frames;
-    if (!it->second->m_device.ReceiveFrames(vci_frames, timeout_ms)) {
+    if (!it->second->ReceiveFrames(vci_frames, timeout_ms)) {
         return false;
     }
 
@@ -204,73 +179,13 @@ bool BspCan::ReceiveFrames(uint8_t device_idx,
     return true;
 }
 
-// ============ 状态查询 ============
-
-uint32_t BspCan::GetReceivedFrameCount(uint8_t device_idx) const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-
-    auto it = m_devices.find(device_idx);
-    if (it == m_devices.end()) {
-        return 0;
-    }
-
-    return it->second->m_device.GetReceivedFrameCount();
-}
-
-uint32_t BspCan::GetSentFrameCount(uint8_t device_idx) const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-
-    auto it = m_devices.find(device_idx);
-    if (it == m_devices.end()) {
-        return 0;
-    }
-
-    return it->second->m_sent_count;
-}
-
 // ============ 全局控制 ============
-
-bool BspCan::InitAllDevices(const std::vector<CanDeviceConfig>& configs) {
-    for (size_t i = 0; i < configs.size(); i++) {
-        if (!InitDevice(i, configs[i])) {
-            printf("[ERROR] Failed to initialize device %zu\n", i);
-            return false;
-        }
-    }
-    return true;
-}
-
-bool BspCan::StartAllDevices() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-
-    for (auto& pair : m_devices) {
-        if (!pair.second->m_device.Start()) {
-            printf("[ERROR] Failed to start device %d\n", pair.first);
-            return false;
-        }
-    }
-    printf("[INFO] BSP: All devices started\n");
-    return true;
-}
-
-bool BspCan::StopAllDevices() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-
-    for (auto& pair : m_devices) {
-        if (!pair.second->m_device.Stop()) {
-            printf("[ERROR] Failed to stop device %d\n", pair.first);
-            return false;
-        }
-    }
-    printf("[INFO] BSP: All devices stopped\n");
-    return true;
-}
 
 void BspCan::ShutdownAll() {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     for (auto& pair : m_devices) {
-        pair.second->m_device.Shutdown();
+        pair.second->Shutdown();
     }
     m_devices.clear();
     printf("[INFO] BSP: All devices shutdown\n");

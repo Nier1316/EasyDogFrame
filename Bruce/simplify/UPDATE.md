@@ -77,3 +77,22 @@
 - `src/motor_manager.cpp`
   - 修正 `SendThreadFunc()` 中 SPEED 模式参数错误：`motor.kp` → `motor.kvp`（速度环 Kp 字段）
 
+---
+
+## 2026-08-17 | 冗余代码清理
+
+### 删除
+
+- `src/base/` 整目录：`common`、`crc16`、`log`、`md5`、`jsoncpp`、`network`、`serial`、`BleConfigLib`、`DTUCloudConfigLib`（均为死代码，应用层从未引用）。
+- `data_types.h`：`MotorCommand`、`MotorConfig`、`ErrorCode` 三个死类型；`MotorStatus` 的 `ack`/`fault` 字段（从不赋值，故障改由 `error_code` 表示）。
+- `ele_motor`：`unpack_cmd()`、`has_error()`、`clear_error()`（死函数）。
+- `BspCan`/`CanDevice`：`CanDeviceWrapper` 中间层、`IsDeviceRunning()`、`GetReceivedFrameCount()`、`GetSentFrameCount()`、`InitAllDevices()`、`StartAllDevices()`、`StopAllDevices()`、`m_is_opened`、`m_received_count`。
+- `ThreadState::ERROR` 枚举值。
+
+### 修改
+
+- `robot_calibration.h`：零位偏移改为直接引用 `MOTOR_CALIBRATION[0][*].pos_offset`，`MOTOR_CALIBRATION` 改为 `constexpr`，消除双份常量。
+- `unpack_frame()`：复用 `unionFloat`，不再手写匿名 union。
+- `CanDevice::Stop()`：改为返回 `VCI_ResetCAN` 的实际结果。
+- `MotorManager`：移除残留的 `m_can_devices` 成员，设备初始化仅走 `BspCan` 单例。
+

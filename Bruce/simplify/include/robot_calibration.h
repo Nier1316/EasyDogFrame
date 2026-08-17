@@ -23,6 +23,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include "motor_calibration.h"
 
 // =====================================================================
 //  §0  角度工具
@@ -93,10 +94,11 @@ constexpr float LEG_MOUNT[4][3] = {
 // 零位偏移由电机层 motor_calibration.h 的 MOTOR_CALIBRATION[].pos_offset 定义，
 // 收发每一帧都过那条路径。此处必须与其保持一致，否则 FK/IK 预测的足端位置
 // 与电机实际到达的位置会有偏差（曾出现 Hip 差 5°、Thigh 差 25°、Calf 差 12°）。
-// 直接用弧度字面量换算，改电机层时这三行必须同步改。
-constexpr float HIP_POS_OFFSET_RAD   = 0.611f;   // == MOTOR_CALIBRATION[*][0].pos_offset
-constexpr float THIGH_POS_OFFSET_RAD = 0.441f;   // == MOTOR_CALIBRATION[*][1].pos_offset
-constexpr float CALF_POS_OFFSET_RAD  = 0.211f;   // == MOTOR_CALIBRATION[*][2].pos_offset
+// 直接引用电机层 MOTOR_CALIBRATION 的零位偏移，保持单一真值来源，
+// 改电机层时此处自动跟随，无需再手动同步。
+constexpr float HIP_POS_OFFSET_RAD   = MOTOR_CALIBRATION[0][0].pos_offset;
+constexpr float THIGH_POS_OFFSET_RAD = MOTOR_CALIBRATION[0][1].pos_offset;
+constexpr float CALF_POS_OFFSET_RAD  = MOTOR_CALIBRATION[0][2].pos_offset;
 
 // --- θ1 髋外摆 ---
 constexpr float ZERO_OFFSET_THETA1_DEG = rad2deg(HIP_POS_OFFSET_RAD);    // 35.01°

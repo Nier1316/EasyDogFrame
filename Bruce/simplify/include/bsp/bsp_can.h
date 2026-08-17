@@ -13,6 +13,7 @@
 #include <mutex>
 #include <map>
 #include "data_types.h"
+#include "can_device.h"
 #include "CANET.h"           // VCI_CAN_OBJ 等类型定义
 
 /**
@@ -67,13 +68,6 @@ public:
      */
     bool CloseDevice(uint8_t device_idx);
 
-    /**
-     * 查询设备是否运行中
-     * @param device_idx: 设备索引
-     * @return: 运行中返回 true
-     */
-    bool IsDeviceRunning(uint8_t device_idx) const;
-
     // ============ 数据收发 ============
 
     /**
@@ -105,42 +99,7 @@ public:
                        std::vector<BspCanFrame>& frames,
                        int timeout_ms = 100);
 
-    // ============ 状态查询 ============
-
-    /**
-     * 获取设备接收帧计数
-     * @param device_idx: 设备索引
-     * @return: 接收帧数
-     */
-    uint32_t GetReceivedFrameCount(uint8_t device_idx) const;
-
-    /**
-     * 获取设备发送帧计数
-     * @param device_idx: 设备索引
-     * @return: 发送帧数
-     */
-    uint32_t GetSentFrameCount(uint8_t device_idx) const;
-
     // ============ 全局控制 ============
-
-    /**
-     * 初始化所有设备
-     * @param configs: 所有设备的配置列表
-     * @return: 全部成功返回 true
-     */
-    bool InitAllDevices(const std::vector<CanDeviceConfig>& configs);
-
-    /**
-     * 启动所有设备
-     * @return: 全部成功返回 true
-     */
-    bool StartAllDevices();
-
-    /**
-     * 停止所有设备
-     * @return: 全部成功返回 true
-     */
-    bool StopAllDevices();
 
     /**
      * 关闭所有设备并释放资源
@@ -171,11 +130,8 @@ private:
      */
     static void ConvertFrameFromVci(const VCI_CAN_OBJ& vci_frame, BspCanFrame& frame);
 
-    // 前向声明
-    class CanDeviceWrapper;
-
     // 内部实现细节（对外隐藏）
-    std::map<uint8_t, std::unique_ptr<CanDeviceWrapper>> m_devices;
+    std::map<uint8_t, std::unique_ptr<CanDevice>> m_devices;
     mutable std::mutex m_mutex;
 };
 

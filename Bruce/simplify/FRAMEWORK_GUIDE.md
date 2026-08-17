@@ -208,16 +208,20 @@ for (int i = 0; i < 4; i++) {
     configs[i].work_mode = TCP_CLIENT;
 }
 
-// 初始化所有设备
-if (!bsp.InitAllDevices(configs)) {
-    printf("[ERROR] Failed to initialize devices\n");
-    return -1;
+// 逐设备初始化
+for (const auto& cfg : configs) {
+    if (!bsp.InitDevice(cfg.device_idx, cfg)) {
+        printf("[ERROR] Failed to initialize device %d\n", cfg.device_idx);
+        return -1;
+    }
 }
 
-// 启动所有设备
-if (!bsp.StartAllDevices()) {
-    printf("[ERROR] Failed to start devices\n");
-    return -1;
+// 逐设备启动
+for (const auto& cfg : configs) {
+    if (!bsp.StartDevice(cfg.device_idx)) {
+        printf("[ERROR] Failed to start device %d\n", cfg.device_idx);
+        return -1;
+    }
 }
 ```
 
@@ -304,11 +308,6 @@ if (bsp.ReceiveFrames(0, frames, 1000)) {
 } else {
     printf("[INFO] No frames received (timeout)\n");
 }
-
-// 查看统计信息
-printf("[INFO] Sent: %u, Received: %u\n",
-       bsp.GetSentFrameCount(0),
-       bsp.GetReceivedFrameCount(0));
 ```
 
 ---
@@ -522,42 +521,16 @@ public:
 
 ### 数据结构
 
-#### MotorCommand — 电机命令
-
-```cpp
-struct MotorCommand {
-    uint8_t     motor_id;      // 电机 ID（1~4，同一 CAN 口内的编号）
-    uint8_t     cmd_type;      // 命令类型（MotorCommandType 枚举）
-    ControlMode mode;          // 控制模式
-    
-    // 控制参数
-    float       pos;           // 期望位置 (rad)，范围 ±12.5
-    float       vel;           // 期望速度 (rad/s)，范围 ±65
-    float       kp;            // 刚度系数，范围 0~500
-    float       kd;            // 阻尼系数，范围 0~5
-    float       torque;        // 扭矩前馈 (Nm)，范围 ±18
-    float       kp_speed;      // 速度环 Kp
-    float       ki_speed;      // 速度环 Ki
-    
-    // 参数读写
-    float       param_value;   // 参数值
-    uint8_t     param_type;    // 参数类型
-    uint8_t     param_rw;      // 0=读，1=写
-};
-```
-
 #### MotorStatus — 电机状态
 
 ```cpp
 struct MotorStatus {
     uint8_t motor_id;   // 电机 ID
-    bool    ack;        // 收到指令标志
-    bool    fault;      // 驱动错误标志
-    bool    enable;     // 使能状态
+    bool    enable;     // 使能状态（应用层命令态）
     float   position;   // 当前位置 (rad)
     float   velocity;   // 当前速度 (rad/s)
     float   torque;     // 当前扭矩 (Nm)
-    uint8_t error_code; // 错误码
+    uint8_t error_code; // 错误码（非 0 即故障）
 };
 ```
 
@@ -568,28 +541,6 @@ enum ControlMode {
     IMPEDANCE = 0,  // 阻抗控制（位置+速度+力）
     SPEED     = 1,  // 速度控制
     POSITION  = 2   // 位置控制
-};
-```
-
-#### MotorCommandType — 命令类型
-
-```cpp
-enum MotorCommandType {
-    // 特殊指令
-    CMD_ENABLE        = 0x10,  // 电机使能
-    CMD_DISABLE       = 0x11,  // 电机失能
-    CMD_SET_ZERO      = 0x12,  // 角度置零
-    CMD_CLEAR_ERROR   = 0x13,  // 清除错误
-    CMD_ANGLE_CORRECT = 0x14,  // 角度矫正
-    
-    // 参数指令
-    CMD_READ_PARAM    = 0x20,  // 读参数
-    CMD_WRITE_PARAM   = 0x21,  // 写参数
-    
-    // 控制指令
-    CMD_IMPEDANCE_CTRL = 0x30, // 阻抗控制
-    CMD_SPEED_CTRL     = 0x31, // 速度控制
-    CMD_POSITION_CTRL  = 0x32  // 位置控制
 };
 ```
 
@@ -1184,10 +1135,6 @@ float speed = thread_mgr.get_shared_data().get<float>("target_speed");
 
 **A**: 启用日志输出（如果框架支持）：
 ```cpp
-// 检查接收帧计数
-uint32_t count = can_dev.GetReceivedFrameCount();
-printf("Received %u frames\n", count);
-
 // 检查线程状态
 ThreadState state = thread_mgr.get_thread_state("motor_receive");
 printf("Thread state: %d\n", (int)state);

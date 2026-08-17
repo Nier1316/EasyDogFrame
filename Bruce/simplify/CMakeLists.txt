@@ -31,7 +31,6 @@ include_directories(
     ${PROJECT_SOURCE_DIR}/include/math
     ${PROJECT_SOURCE_DIR}/include/bsp
     ${PROJECT_SOURCE_DIR}/lib
-    ${PROJECT_SOURCE_DIR}/src/base
 )
 
 # ============ 查找依赖 ============
@@ -72,13 +71,6 @@ set(SOURCES
     # 电机驱动层
     src/motor_drive/ele_motor.cpp
 
-    # 基础库
-    src/base/common.cpp
-    src/base/crc16.cpp
-    src/base/log.cpp
-    src/base/jsoncpp/jsoncpp.cpp
-    src/base/md5/aw_md5.cpp
-    src/base/platform/linux/network.cpp
 )
 
 # ============ 编译可执行文件 ============

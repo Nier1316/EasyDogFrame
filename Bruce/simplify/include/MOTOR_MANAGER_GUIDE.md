@@ -12,9 +12,9 @@
 
 ## 概述
 
-**MotorManager** 是四足机器狗 12 关节控制系统的核心管理器，负责：
+**MotorManager** 是四足机器狗 16 电机（12 关节 + 4 轮）控制系统的核心管理器，负责：
 - 管理 4 路 CANET TCP 连接（CAN0~CAN3）
-- 管理 12 个电机对象（4 路 × 3 电机）
+- 管理 16 个电机对象（4 路 × 4 电机：3 关节 + 1 轮）
 - 后台接收电机状态（1ms 周期）
 - 后台发送控制命令（1ms 周期）
 - 提供线程安全的控制接口
@@ -22,10 +22,10 @@
 ### 硬件拓扑
 
 ```
-CAN0 (左前腿FL)    → 电机1(髋), 2(大腿), 3(小腿)
-CAN1 (右前腿FR)    → 电机1(髋), 2(大腿), 3(小腿)
-CAN2 (左后腿RL)    → 电机1(髋), 2(大腿), 3(小腿)
-CAN3 (右后腿RR)    → 电机1(髋), 2(大腿), 3(小腿)
+CAN0 (左前腿FL)    → 电机1(髋), 2(大腿), 3(小腿), 4(轮)
+CAN1 (右前腿FR)    → 电机1(髋), 2(大腿), 3(小腿), 4(轮)
+CAN2 (左后腿RL)    → 电机1(髋), 2(大腿), 3(小腿), 4(轮)
+CAN3 (右后腿RR)    → 电机1(髋), 2(大腿), 3(小腿), 4(轮)
 
 TCP: 192.168.0.178, 端口 4001~4004
 ```
@@ -125,7 +125,7 @@ motor_mgr.DisableMotor(0, 1);
 ```cpp
 // 将所有电机归零
 for (uint8_t can_port = 0; can_port < 4; can_port++) {
-    for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+    for (uint8_t motor_id = 1; motor_id <= 4; motor_id++) {
         motor_mgr.SetZero(can_port, motor_id);
     }
 }
@@ -350,9 +350,9 @@ int main() {
 void InitializeAllMotors() {
     MotorManager& motor_mgr = MotorManager::GetInstance();
     
-    // 使能所有 12 个电机
+    // 使能所有 16 个电机
     for (uint8_t can_port = 0; can_port < 4; can_port++) {
-        for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+        for (uint8_t motor_id = 1; motor_id <= 4; motor_id++) {
             motor_mgr.EnableMotor(can_port, motor_id);
         }
     }
@@ -361,7 +361,7 @@ void InitializeAllMotors() {
     
     // 全部归零
     for (uint8_t can_port = 0; can_port < 4; can_port++) {
-        for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+        for (uint8_t motor_id = 1; motor_id <= 4; motor_id++) {
             motor_mgr.SetZero(can_port, motor_id);
         }
     }
@@ -468,7 +468,7 @@ thread_mgr.register_thread(
 // 后台监控线程
 while (running) {
     for (uint8_t can_port = 0; can_port < 4; can_port++) {
-        for (uint8_t motor_id = 1; motor_id <= 3; motor_id++) {
+        for (uint8_t motor_id = 1; motor_id <= 4; motor_id++) {
             MotorStatus status = motor_mgr.GetStatus(can_port, motor_id);
             if (status.error_code != 0) {
                 printf("[ERROR] Motor %d:%d error: 0x%02x\n",

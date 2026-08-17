@@ -32,7 +32,7 @@ struct MotorCalibrationParam
  *
  * motor_id=1 (Hip), 2 (Thigh), 3 (Calf), 4 (Wheel)
  */
-static const MotorCalibrationParam MOTOR_CALIBRATION[CAN_PORTS][MOTORS_PER_CAN] = {
+constexpr MotorCalibrationParam MOTOR_CALIBRATION[CAN_PORTS][MOTORS_PER_CAN] = {
     // CAN0 端口 (左前腿)
     {
         {-1.0f, 1.0f, 0.611f}, // Motor 1 (Hip)

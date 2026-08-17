@@ -11,15 +11,12 @@
 #define MOTOR_MANAGER_H_
 
 #include <cstdint>
-#include <memory>
 #include <mutex>
-#include <vector>
 #include "motor_drive/ele_motor.h"
 #include "motor_calibration.h"
 #include "data_types.h"
 #include "thread/thread_manager.h"
 #include "bsp/bsp_can.h"
-#include "can_device.h"
 
 class MotorManager {
 public:
@@ -64,7 +61,6 @@ private:
     void ReceiveThreadFunc();  // 单次 CAN 轮询，1ms 间隔
     void SendThreadFunc();     // 预留：单次发送，1ms 间隔
 
-    std::vector<std::unique_ptr<CanDevice>> m_can_devices;
     EleMotor m_motors[CAN_PORTS][MOTORS_PER_CAN];
     mutable std::mutex m_motor_mutex[CAN_PORTS][MOTORS_PER_CAN];
 };

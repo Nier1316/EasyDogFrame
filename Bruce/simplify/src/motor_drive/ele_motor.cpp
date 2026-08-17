@@ -3,7 +3,6 @@
 #include "ele_motor_def.h"
 #include "motor_calibration.h"
 #include "motor_logger.h"
-#include <vector>
 
 void EleMotor::init() {
     current_speed = 0.0f;
@@ -40,14 +39,6 @@ void EleMotor::disable() {
     // mode 列用 -3 标记失能帧
     MotorLogger::GetInstance().LogSendCan(device_idx, motor_id, -3, stop_frame);
     BspCan::GetInstance().Can_Tx(device_idx, motor_id, stop_frame, 8);
-}
-
-bool EleMotor::has_error() const {
-    return error_code != 0;
-}
-
-void EleMotor::clear_error() {
-    error_code = 0;
 }
 
 /** 读写电机参数
@@ -132,74 +123,6 @@ void set_motor_para_bt(const EleMotor& motor, float p1, float p2, float p3, floa
 }
 
 
-/** CAN数据解包
- *  @param motor: 电机结构体引用，包含device_idx和接收的数据
- *  @param timeout_ms: 接收超时时间（毫秒）
- *  @return: 成功返回true，失败返回false
- */
-bool unpack_cmd(EleMotor& motor, int timeout_ms)
-{
-	std::vector<BspCanFrame> frames;
-
-	if (!BspCan::GetInstance().ReceiveFrames(motor.device_idx, frames, timeout_ms)) {
-		return false;
-	}
-
-	for (const auto& frame : frames) {
-		uint8_t *data = (uint8_t *)frame.data;
-
-		if ((data[0] & 0x80) && (data[5] & 0x7f)) {
-			// float2bag读写参数后，电机返回数据包解包
-			uint8_t type = data[5];
-			unionFloat canRecev;
-			canRecev.uValue[0] = data[1];
-			canRecev.uValue[1] = data[2];
-			canRecev.uValue[2] = data[3];
-			canRecev.uValue[3] = data[4];
-
-			// 根据参数类型更新电机结构体
-			switch (type) {
-				case MOTOR_OR_temperature:
-					motor.current_temp = canRecev.fValue;
-					break;
-				case MOTOR_OR_angle:
-					motor.current_position = canRecev.fValue;
-					break;
-				case MOTOR_OR_velocity:
-					motor.current_speed = canRecev.fValue;
-					break;
-				case MOTOR_OR_torque:
-					motor.current_torque = canRecev.fValue;
-					break;
-				case MOTOR_OR_error_register:
-					motor.error_code = (uint16_t)canRecev.fValue;
-					break;
-				default:
-					break;
-			}
-		}
-		else {
-			// set_motor_para_bt设置参数后，电机返回数据包解包
-			uint16_t id = data[0] & 0x0f;
-			uint16_t p_int = (data[1] << 8) | data[2];
-			uint16_t v_int = (data[3] << 4) | (data[4] >> 4);
-			uint16_t i_int = ((data[4] & 0xF) << 8) | data[5];
-
-			const MotorLimits& lim = limits_of(motor.motor_id);
-			float p = uint_to_float(p_int, lim.p_min, lim.p_max, 16);
-			float v = uint_to_float(v_int, lim.v_min, lim.v_max, 12);
-			float t = uint_to_float(i_int, -lim.t_max, lim.t_max, 12);
-
-			// 更新电机结构体
-			motor.current_position = p;
-			motor.current_speed = v;
-			motor.current_torque = t;
-		}
-	}
-
-	return true;
-}
-
 // 参数回帧详细打印开关，见 unpack_frame 内的说明。默认关闭。
 bool g_param_verbose = false;
 
@@ -212,10 +135,7 @@ void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
 	if ((data[0] & 0x80) && (data[5] & 0x7f)) {
 		// float2bag 读写参数后，电机返回数据包解包
 		uint8_t type = data[5];
-		union {
-			uint8_t uValue[4];
-			float fValue;
-		} canRecev;
+		unionFloat canRecev;
 		canRecev.uValue[0] = data[1];
 		canRecev.uValue[1] = data[2];
 		canRecev.uValue[2] = data[3];

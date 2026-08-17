@@ -1,5 +1,8 @@
 # 电机驱动模块设计文档
 
+> ⚠️ **本文档为早期设计（v1.0，2026-05-21），与实际实现已有较大出入。**
+> 实际的电机层实现为：`EleMotor`（数据结构 + 编解码）+ `MotorManager`（16 电机批量管理，收发线程由外部 `ThreadManager` 驱动），并非本文描述的"每电机独立 sync_thread"。解包函数现为 `unpack_frame()`（接收线程逐帧解析）。实际 API 以 `FRAMEWORK_GUIDE.md` 与 `MOTOR_MANAGER_GUIDE.md` 为准。
+
 ## 📋 目录
 1. [概述](#概述)
 2. [异步状态同步设计](#异步状态同步设计)
@@ -47,7 +50,7 @@
 │              后台同步线程 (sync_thread)                      │
 │  1. 检测状态变化 (need_sync)                                │
 │  2. 发送 CAN 命令 (set_motor_para_bt)                       │
-│  3. 接收电机反馈 (unpack_cmd)                               │
+│  3. 接收电机反馈 (unpack_frame)                               │
 │  4. 更新实际状态                                             │
 │  5. 循环等待 (10-50ms)                                      │
 └────────────────────┬────────────────────────────────────────┘
@@ -291,7 +294,7 @@ void EleMotor::sync_thread_func() {
         }
         
         // 定期接收电机反馈
-        unpack_cmd(*this, 100);
+        unpack_frame(*this, 100);
         
         // 等待指定时间
         std::this_thread::sleep_for(
@@ -502,7 +505,7 @@ motor.start_sync();
 
 - C++ 线程库：`<thread>`, `<mutex>`, `<atomic>`
 - CAN 通信：`BspCan` 硬件抽象层
-- 电机控制：`float2bag()`, `set_motor_para_bt()`, `unpack_cmd()`
+- 电机控制：`float2bag()`, `set_motor_para_bt()`, `unpack_frame()`
 
 ---
 

@@ -38,16 +38,9 @@ public:
     // 批量接收 CAN 帧；timeout_ms 为阻塞等待时间（毫秒）
     bool ReceiveFrames(std::vector<VCI_CAN_OBJ>& frames, int timeout_ms = 100);
 
-    // ---------------- 状态查询 ----------------
-    bool     IsRunning() const { return m_is_running; }              // 是否已 Start
-    uint32_t GetReceivedFrameCount() const { return m_received_count; } // 累计接收帧数
-    uint8_t  GetDeviceIndex() const { return m_device_idx; }         // 设备索引
-
 private:
     uint8_t  m_device_idx;       // CANET 设备索引（0~3）
     bool     m_is_running;       // 当前是否处于运行态（已 Start 未 Stop）
-    bool     m_is_opened;        // 设备是否已成功打开（防止关闭未打开的设备）
-    uint32_t m_received_count;   // 累计接收帧计数器（统计用）
     mutable std::mutex m_mutex;  // 保护所有公共方法的并发访问
 
     // ---------------- 对 CANET 库的底层调用封装 ----------------
