@@ -33,3 +33,5 @@ void Example22_StandAndWheelTest();
 void Example23_SingleCanKeyboardControl();
 // 只读诊断：不使能任何电机，读固件量程/模式/上电初始反馈
 void Example24_ReadMotorParams();
+// RL 策略控制（dogurdf sim2real 部署，50 Hz）
+void Example25_RLPolicyControl();

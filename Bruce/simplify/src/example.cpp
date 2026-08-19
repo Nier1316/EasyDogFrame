@@ -4,6 +4,9 @@
 #include "math/wheel_position_loop.h"
 #include "thread/thread_manager.h"
 #include "xbox_controller.h"
+#include "rl/mlp.h"
+#include "rl/rl_controller.h"
+#include "imu_device.h"
 #include <thread>
 #include <chrono>
 #include <cmath>
@@ -2453,4 +2456,179 @@ void Example24_ReadMotorParams() {
     motor_mgr.Stop();
     printf("\n[INFO] 示例24 完成（未使能任何电机）\n");
     fflush(stdout);
+}
+
+// ================= 示例 25：RL 策略控制（dogurdf sim2real 部署） =================
+// 部署 dogurdf_sim2sim_deploy 的 64 维观测 / 16 维动作策略到真机，控制 50 Hz。
+// 注意：零位对齐暂用占位值（rl::DEFAULT_POSE），起立仍用真机实测站立指令角
+// （STAND_*），避免起立到错误姿态。策略输出当前仅用于验证链路。
+static volatile sig_atomic_t g_rl_stop = 0;
+static void rl_signal_handler(int) { g_rl_stop = 1; }
+
+void Example25_RLPolicyControl() {
+    printf("\n========== Example 25: RL Policy Control (dogurdf) ==========\n");
+    printf("[INFO] 50 Hz RL 循环，Ctrl+C 急停（失能所有电机）\n");
+    printf("[INFO] 零位对齐未做：DEFAULT_POSE 为占位值，策略输出仅验证链路\n\n");
+
+    const int HZ = 50;  // 与训练一致（CONTROL_DT = 0.02 s）
+
+    // ---- 初始化电机 ----
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] MotorManager 初始化失败\n");
+        return;
+    }
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    // 预写固件模式：关节 IMPEDANCE；轮也 IMPEDANCE（走上位机扭矩前馈，不用固件速度环）
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 3; mi++) {
+            motor_mgr.SetControlMode(cp, mi, IMPEDANCE);
+        }
+        motor_mgr.SetControlMode(cp, 4, IMPEDANCE);
+    }
+    usleep(100000);
+
+    // 使能 16 电机
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 4; mi++) {
+            motor_mgr.EnableMotor(cp, mi);
+        }
+    }
+    usleep(200000);
+
+    // ---- 初始化 IMU（可选）----
+    ImuDevice imu;
+    // 实际安装：Z 轴朝下、绕 X 轴翻面（X 不变，Y/Z 反向）
+    imu.SetMount(ImuMount::Z_DOWN_X);
+    const char* imu_port = "/dev/ttyUSB0";
+    bool imu_ok = imu.Initialize(imu_port, 115200);
+    if (!imu_ok) {
+        printf("[WARN] IMU 打开失败 (%s)，gyro/quat 用默认值（机器人会失控，务必急停）\n",
+               imu_port);
+    }
+
+    // ---- 起立到真机实测站立指令角（CAN order，12 腿关节）----
+    float stand_q[12];
+    for (int leg = 0; leg < 4; leg++) {
+        stand_q[leg * 3 + 0] = deg2rad(STAND_HIP_DEG);
+        stand_q[leg * 3 + 1] = deg2rad(STAND_THIGH_DEG);
+        stand_q[leg * 3 + 2] = deg2rad(STAND_CALF_DEG);
+    }
+    float start_pos[12];
+    for (int leg = 0; leg < 4; leg++) {
+        for (int j = 0; j < 3; j++) {
+            start_pos[leg * 3 + j] = motor_mgr.GetStatus(leg, j + 1).position;
+        }
+    }
+
+    printf("[INFO] 起立中...\n");
+    const int STAND_FRAMES = 500;  // 500 / 50 Hz = 10 s
+    for (int f = 0; f <= STAND_FRAMES; f++) {
+        if (g_rl_stop) break;
+        float t = (float)f / STAND_FRAMES;
+        for (int leg = 0; leg < 4; leg++) {
+            for (int j = 0; j < 3; j++) {
+                float pos = start_pos[leg * 3 + j]
+                          + (stand_q[leg * 3 + j] - start_pos[leg * 3 + j]) * t;
+                motor_mgr.SendImpedance(leg, j + 1, pos, 0.0f, 200.0f, 20.0f, 0.0f);
+            }
+            motor_mgr.SendImpedance(leg, 4, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);  // 轮 0 扭矩
+        }
+        usleep(1000000 / HZ);
+    }
+    printf("[INFO] 起立完成，进入 RL 循环\n");
+
+    // ---- RL 主循环（50 Hz）----
+    g_rl_stop = 0;
+    signal(SIGINT, rl_signal_handler);
+
+    float last_action[16] = {0.0f};
+    // 固定命令：原地站立。改成 {vx, 0, wz} 可行驶（vx ±1.0 m/s, wz ±1.0 rad/s）
+    float cmd[3] = {0.0f, 0.0f, 0.0f};
+    int step = 0;
+
+    printf("[INFO] RL 循环启动，Ctrl+C 急停\n");
+    while (!g_rl_stop) {
+        // 1) 读 16 电机（CAN order，标定后 = 指令角）
+        float pos_can[16], vel_can[16];
+        for (int cp = 0; cp < 4; cp++) {
+            for (int mi = 1; mi <= 4; mi++) {
+                MotorStatus st = motor_mgr.GetStatus(cp, mi);
+                int mjx = cp * 4 + (mi - 1);
+                pos_can[mjx] = st.position;
+                vel_can[mjx] = st.velocity;
+            }
+        }
+
+        // 2) CAN order -> policy order
+        float pos_policy[16], vel_policy[16];
+        for (int i = 0; i < 16; i++) {
+            pos_policy[i] = pos_can[rl::MJX_TO_POLICY[i]];
+            vel_policy[i] = vel_can[rl::MJX_TO_POLICY[i]];
+        }
+
+        // 3) 读 IMU
+        float gyro[3] = {0.0f, 0.0f, 0.0f};
+        float quat[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+        if (imu_ok) {
+            imu.GetGyro(gyro[0], gyro[1], gyro[2]);
+            imu.GetQuat(quat[0], quat[1], quat[2], quat[3]);
+        }
+
+        // 4) 观测 -> 推理 -> 下发
+        float obs[64];
+        rl::build_observation(gyro, quat, pos_policy, vel_policy,
+                              last_action, cmd, step, obs);
+        float action[16];
+        rl::mlp_forward(obs, action);
+
+        for (int cp = 0; cp < 4; cp++) {
+            for (int mi = 1; mi <= 4; mi++) {
+                int mjx = cp * 4 + (mi - 1);
+                int p = rl::POLICY_TO_MJX[mjx];
+                if (mi <= 3) {
+                    float q_target = rl::leg_pos_target(action[p], p);
+                    motor_mgr.SendImpedance(cp, mi, q_target, 0.0f,
+                                            rl::LEG_KP, rl::LEG_KD, 0.0f);
+                } else {
+                    float tau = rl::wheel_torque(action[p], vel_policy[p]);
+                    motor_mgr.SendImpedance(cp, mi, 0.0f, 0.0f, 0.0f, 0.0f, tau);
+                }
+            }
+        }
+
+        // 5) 更新 last_action
+        for (int i = 0; i < 16; i++) {
+            last_action[i] = action[i];
+        }
+
+        // 6) 跌倒检测（重力投影 z > -0.34 ≈ 70° 倾斜）
+        if (obs[8] > -0.34f) {
+            printf("[WARN] 跌倒检测触发 (proj_grav_z=%.2f)，急停\n", obs[8]);
+            break;
+        }
+
+        step++;
+        usleep(1000000 / HZ);
+    }
+
+    signal(SIGINT, SIG_DFL);
+
+    // ---- 清理：失能 + 停线程 ----
+    printf("[INFO] 正在失能...\n");
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 4; mi++) {
+            motor_mgr.DisableMotor(cp, mi);
+        }
+    }
+
+    imu.Shutdown();
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+    printf("[INFO] Example25 完成\n");
 }

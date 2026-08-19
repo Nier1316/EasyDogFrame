@@ -71,6 +71,10 @@ set(SOURCES
     # 电机驱动层
     src/motor_drive/ele_motor.cpp
 
+    # RL 策略部署
+    src/rl/rl_controller.cpp
+    src/imu_device.cpp
+
 )
 
 # ============ 编译可执行文件 ============

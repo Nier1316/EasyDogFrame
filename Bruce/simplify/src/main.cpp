@@ -77,9 +77,9 @@ int main() {
 
 
     // 运行示例21 - Xbox 手柄控制
-    printf("[INFO] Running Example21_XboxControllerControl...\n");
-    Example21_XboxControllerControl();
-    printf("[INFO] Example21 completed.\n");
+    // printf("[INFO] Running Example21_XboxControllerControl...\n");
+    // Example21_XboxControllerControl();
+    // printf("[INFO] Example21 completed.\n");
 
     // 运行示例22 - 起立 + 轮子阻抗模式测试
     // printf("[INFO] Running Example22_StandAndWheelTest...\n");
@@ -95,6 +95,11 @@ int main() {
     // printf("[INFO] Running Example24_ReadMotorParams...\n");
     // Example24_ReadMotorParams();
     // printf("[INFO] Example24 completed.\n");
+
+    // 运行示例25 - RL 策略控制（dogurdf sim2real 部署）
+    printf("[INFO] Running Example25_RLPolicyControl...\n");
+    Example25_RLPolicyControl();
+    printf("[INFO] Example25 completed.\n");
 
     return 0;
 }

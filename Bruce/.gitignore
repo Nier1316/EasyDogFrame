@@ -1,0 +1,10 @@
+# Python 缓存
+__pycache__/
+*.pyc
+
+# IDE 索引缓存（test/ 下的 VS Code C++ 索引库）
+test/.vscode/
+*.db
+*.db-shm
+*.db-wal
+*.db.lock
