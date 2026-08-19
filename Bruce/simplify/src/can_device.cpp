@@ -19,7 +19,7 @@ CanDevice::~CanDevice() {
 // 初始化全流程：OpenDevice → ConfigureDevice（含 InitCAN）
 // 任一步失败都要回滚（关闭已打开的设备），保证状态一致
 bool CanDevice::Initialize(const CanDeviceConfig& config) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(m_send_mutex);
 
     if (!OpenDevice()) {
         printf("[ERROR] Failed to open CAN device %d\n", m_device_idx);
@@ -37,7 +37,7 @@ bool CanDevice::Initialize(const CanDeviceConfig& config) {
 
 // 启动 CAN 通道：配置好但未启动时，设备无法收发
 bool CanDevice::Start() {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(m_send_mutex);
 
     if (VCI_StartCAN(VCI_CANETE, m_device_idx, 0) != STATUS_OK) {
         printf("[ERROR] Failed to start CAN device %d\n", m_device_idx);
@@ -52,7 +52,7 @@ bool CanDevice::Start() {
 // 停止 CAN 通道；返回复位是否成功。失败仅告警，仍置 m_is_running=false，
 // 以便后续 CloseDevice 继续收尾。
 bool CanDevice::Stop() {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(m_send_mutex);
 
     bool ok = (VCI_ResetCAN(VCI_CANETE, m_device_idx, 0) == STATUS_OK);
     if (!ok) {
@@ -72,7 +72,7 @@ void CanDevice::Shutdown() {
 
 // 发送单帧：必须在已 Start 的状态下调用，否则直接拒绝
 bool CanDevice::SendFrame(const VCI_CAN_OBJ& frame) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(m_send_mutex);
 
     if (!m_is_running) {
         printf("[WARNING] CAN device %d is not running\n", m_device_idx);
@@ -84,16 +84,41 @@ bool CanDevice::SendFrame(const VCI_CAN_OBJ& frame) {
     return sent == 1;
 }
 
+// 批量发送：一次 VCI_Transmit 传 count 帧。
+// 为什么需要：SDK 的 VCI_* 调用有 ~10ms 地板（实测空轮询都 10ms），
+// 逐帧 SendFrame 会让 4 个电机一轮就被 4×10ms 拖住；合并成一趟发完，
+// 一轮只付一次地板成本。SDK 可能只发出部分帧（ERR_SEND_PARTIAL），
+// 返回 sent != count 时打印提示，便于排查丢帧。
+bool CanDevice::SendFrames(const VCI_CAN_OBJ* frames, int count) {
+    std::lock_guard<std::mutex> lock(m_send_mutex);
+
+    if (!m_is_running) {
+        printf("[WARNING] CAN device %d is not running\n", m_device_idx);
+        return false;
+    }
+    if (count <= 0) return false;
+
+    ULONG sent = VCI_Transmit(VCI_CANETE, m_device_idx, 0,
+                              (PVCI_CAN_OBJ)frames, (ULONG)count);
+    if (sent != (ULONG)count) {
+        printf("[WARN] CAN%d 批量发送部分帧: sent=%lu/%d\n",
+               m_device_idx, sent, count);
+    }
+    return sent == (ULONG)count;
+}
+
 // 批量接收：一次最多读 100 帧；无帧时返回 false 而非阻塞失败
 bool CanDevice::ReceiveFrames(std::vector<VCI_CAN_OBJ>& frames, int timeout_ms) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(m_recv_mutex);
 
     if (!m_is_running) {
         return false;
     }
 
     VCI_CAN_OBJ buffer[100];  // 局部缓冲，避免频繁分配
-    ULONG cnt = VCI_Receive(VCI_CANETE, m_device_idx, 0, buffer, 100, timeout_ms);
+
+ULONG cnt = VCI_Receive(VCI_CANETE, m_device_idx, 0, buffer, 100, timeout_ms);
+
 
     if (cnt > 0) {
         frames.clear();       // 清空调用方传入的容器

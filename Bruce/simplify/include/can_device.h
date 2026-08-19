@@ -35,13 +35,23 @@ public:
     // ---------------- 数据收发 ----------------
     // 发送单个 CAN 帧，返回是否成功送入底层发送队列
     bool SendFrame(const VCI_CAN_OBJ& frame);
+    // 批量发送：一次 VCI_Transmit 传多帧。逐帧调用 SendFrame 会被 SDK 的
+    // ~10ms 调用地板逐帧拖住（实测单帧往返 10ms）；批量合并能一趟发完。
+    // 注意 SDK 可能只发送部分帧（ERR_SEND_PARTIAL），需检查返回值。
+    bool SendFrames(const VCI_CAN_OBJ* frames, int count);
     // 批量接收 CAN 帧；timeout_ms 为阻塞等待时间（毫秒）
     bool ReceiveFrames(std::vector<VCI_CAN_OBJ>& frames, int timeout_ms = 100);
 
 private:
     uint8_t  m_device_idx;       // CANET 设备索引（0~3）
     bool     m_is_running;       // 当前是否处于运行态（已 Start 未 Stop）
-    mutable std::mutex m_mutex;  // 保护所有公共方法的并发访问
+
+    // 收发分离的锁。为什么：实测 VCI_Receive 有 ~10ms 阻塞地板，若收发共用一把锁，
+    // 接收线程每次阻塞 10ms 都会把发送线程（VCI_Transmit 本应 ~0.005ms）卡住，
+    // 4 个电机一轮就被拖成 40ms。SDK 允许发送与接收并行（并发实测 0.005ms），
+    // 因此拆成两把锁，让发送路径不再被接收阻塞。
+    mutable std::mutex m_send_mutex;  // 保护发送 + 生命周期（初始化/启停，均在无流量时调用）
+    mutable std::mutex m_recv_mutex;  // 保护接收
 
     // ---------------- 对 CANET 库的底层调用封装 ----------------
     bool OpenDevice();                                   // VCI_OpenDevice

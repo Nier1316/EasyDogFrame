@@ -99,6 +99,14 @@ public:
                        std::vector<BspCanFrame>& frames,
                        int timeout_ms = 100);
 
+    /**
+     * 批量发送多帧（一次 VCI_Transmit，避开 SDK ~10ms 逐帧地板）
+     * @param device_idx: 目标设备索引
+     * @param frames: 帧数组（最多支持 16 帧）
+     * @return: 全部发出返回 true，部分发出返回 false 并打印警告
+     */
+    bool SendFramesBatch(uint8_t device_idx, const std::vector<BspCanFrame>& frames);
+
     // ============ 全局控制 ============
 
     /**

@@ -76,14 +76,15 @@ bool MotorManager::Initialize(ThreadManager& thread_mgr) {
     thread_mgr.register_thread(
         "motor_receive",
         [this]() { ReceiveThreadFunc(); },
-        ThreadMode::LOOP, 1, 80  // 1ms 间隔，SCHED_FIFO 优先级 80
+        ThreadMode::LOOP, 10, 80  // 10ms 间隔：对齐 SDK 实际接收节拍（VCI_Receive 内部 ~10ms 轮询）
     );
     thread_mgr.register_thread(
         "motor_send",
         [this]() { SendThreadFunc(); },
-        ThreadMode::LOOP, 1, 80  // 预留，1ms 间隔
+        ThreadMode::LOOP, 1, 80  // 1ms 间隔：发送路径实测 ~0.01ms，可真正达到 1ms
     );
 
+    m_initialized = true;
     printf("[INFO] MotorManager initialized successfully\n");
     return true;
 }
@@ -95,11 +96,19 @@ void MotorManager::Stop() {
     // 关闭日志
     MotorLogger::GetInstance().Shutdown();
 
+    if (!m_initialized) {
+        // Initialize() 从未成功（例如示例在初始化前就退出/报错），设备未打开。
+        // 直接返回，避免对不存在的设备逐个报 "Device not found"（噪音）。
+        printf("[INFO] MotorManager 未初始化，跳过设备关闭\n");
+        return;
+    }
+
     // 通过 BspCan 关闭所有设备
     for (uint8_t i = 0; i < CAN_PORTS; i++) {
         BspCan::GetInstance().StopDevice(i);
         BspCan::GetInstance().CloseDevice(i);
     }
+    m_initialized = false;
 
     printf("[INFO] MotorManager stopped\n");
 }
@@ -108,8 +117,13 @@ void MotorManager::Stop() {
 void MotorManager::ReceiveThreadFunc() {
     for (uint8_t can_port = 0; can_port < CAN_PORTS; can_port++) {
         std::vector<BspCanFrame> frames;
-        // 改用 BspCan 接收帧
-        if (BspCan::GetInstance().ReceiveFrames(can_port, frames, 0)) {
+        // timeout=10ms：对齐 ZLG CANET SDK 的实际接收节拍。
+        // 实测 VCI_Receive 内部按 ~10ms 粒度轮询，请求的 timeout<10ms 一律被
+        // 抬升到 ~10ms（timeout 扫描：1/5/10ms 都 ~10ms 返回，20/50/100 才生效）。
+        // 因此传 1ms 是自欺欺人，直接传 10ms 更诚实；且数据到达最坏等一个节拍
+        // ~10ms，正好匹配 CONTROL_HZ=100 的反馈需求。另注意 WaitTime=0 会被
+        // 当作无限阻塞，绝不能用 0（否则某路无帧时接收线程卡死在 VCI_Receive）。
+        if (BspCan::GetInstance().ReceiveFrames(can_port, frames, 10)) {
             for (const auto& frame : frames) {
                 if (frame.id >= 51 && frame.id <= 54) {
                     uint8_t motor_id = frame.id - 50;

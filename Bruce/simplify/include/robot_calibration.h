@@ -154,8 +154,8 @@ constexpr float HEIGHT_ADJUST_RATE =  0.10f;      // 扳机满程时调节速率
 
 // ---- 轮电机（速度环，由电机固件闭环）----
 constexpr float WHEEL_MAX_SPEED = 3.0f;           // 满摇杆目标角速度 (rad/s)
-constexpr float WHEEL_KVP       = 1.0f;           // 速度环 Kp —— 初值，待实测
-constexpr float WHEEL_KVI       = 0.0f;           // 速度环 Ki —— 初值，待实测
+constexpr float WHEEL_KVP       = 3.0f;           // 速度环 Kp —— 与 Example23 实测对齐（1.0 太小，轮子起不来）
+constexpr float WHEEL_KVI       = 0.3f;           // 速度环 Ki —— 加积分克服摩擦/稳态误差
 
 // ---- 已排除的方向：使能瞬间轮子转动 ----
 // 现象：CAN1 轮电机在使能瞬间转起来，速度反馈冲到 v_max(48 rad/s)。

@@ -45,8 +45,14 @@ void RobotApp::start() {
 }
 
 void RobotApp::stop() {
-    thread_mgr_.stop_thread("motor_receive");
-    thread_mgr_.stop_thread("motor_send");
+    // 示例大多用独立的局部 ThreadManager，RobotApp 的 thread_mgr_ 里通常
+    // 没有注册 motor_receive/motor_send。直接 stop_thread 会对未注册线程
+    // 抛 std::runtime_error，在析构里只剩一行难看的异常输出。
+    // 先查注册状态再停，未注册的线程直接跳过，析构阶段不再抛异常。
+    if (thread_mgr_.get_thread_state("motor_receive") != ThreadState::UNREGISTERED)
+        thread_mgr_.stop_thread("motor_receive");
+    if (thread_mgr_.get_thread_state("motor_send") != ThreadState::UNREGISTERED)
+        thread_mgr_.stop_thread("motor_send");
     // thread_mgr_.stop_thread("state_calc");
     // thread_mgr_.stop_thread("monitor");
 

@@ -35,3 +35,13 @@ void Example23_SingleCanKeyboardControl();
 void Example24_ReadMotorParams();
 // RL 策略控制（dogurdf sim2real 部署，50 Hz）
 void Example25_RLPolicyControl();
+// 键盘输入接收测试（纯诊断，不碰电机）：验证集成终端/调试器下的输入通路
+void Example26_KeyboardInputTest();
+// CANET 接收频率探针（不使能电机）：纯读取测设备往返延迟与吞吐
+void Example27_CANetFrequencyProbe();
+// CANET 批量发送探针（电机下电，不使能电机）：量化批量 vs 逐帧发送耗时
+void Example28_CANetBatchProbe();
+// 控制环频率测试（拆锁后）：使能 CAN1 电机（可下电）测主循环帧间隔
+void Example29_MainLoopCadenceTest();
+// RL 策略链路离线验证（不碰 CAN）：REF_OBS→mlp→REF_ACTION 回归门
+void Example30_RLPolicyLinkTest();

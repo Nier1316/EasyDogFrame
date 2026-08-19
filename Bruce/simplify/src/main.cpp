@@ -77,9 +77,9 @@ int main() {
 
 
     // 运行示例21 - Xbox 手柄控制
-    // printf("[INFO] Running Example21_XboxControllerControl...\n");
-    // Example21_XboxControllerControl();
-    // printf("[INFO] Example21 completed.\n");
+    printf("[INFO] Running Example21_XboxControllerControl...\n");
+    Example21_XboxControllerControl();
+    printf("[INFO] Example21 completed.\n");
 
     // 运行示例22 - 起立 + 轮子阻抗模式测试
     // printf("[INFO] Running Example22_StandAndWheelTest...\n");
@@ -91,16 +91,42 @@ int main() {
     // Example23_SingleCanKeyboardControl();
     // printf("[INFO] Example23 completed.\n");
 
+
+
     // 运行示例24 - 只读固件参数诊断（不使能电机，安全）
     // printf("[INFO] Running Example24_ReadMotorParams...\n");
     // Example24_ReadMotorParams();
     // printf("[INFO] Example24 completed.\n");
 
     // 运行示例25 - RL 策略控制（dogurdf sim2real 部署）
-    printf("[INFO] Running Example25_RLPolicyControl...\n");
-    Example25_RLPolicyControl();
-    printf("[INFO] Example25 completed.\n");
+    // printf("[INFO] Running Example25_RLPolicyControl...\n");
+    // Example25_RLPolicyControl();
+    // printf("[INFO] Example25 completed.\n");
 
+    // 运行示例26 - 键盘输入接收测试（纯诊断，不碰电机）
+    // printf("[INFO] Running Example26_KeyboardInputTest...\n");
+    // Example26_KeyboardInputTest();
+    // printf("[INFO] Example26 completed.\n");
+
+    // 运行示例27 - CANET 接收频率探针（纯读取，不使能电机）
+    // printf("[INFO] Running Example27_CANetFrequencyProbe...\n");
+    // Example27_CANetFrequencyProbe();
+    // printf("[INFO] Example27 completed.\n");
+
+    // 运行示例28 - CANET 批量发送探针（电机下电，不使能电机）
+    // printf("[INFO] Running Example28_CANetBatchProbe...\n");
+    // Example28_CANetBatchProbe();
+    // printf("[INFO] Example28 completed.\n");
+
+    // 运行示例29 - 控制环频率测试（拆锁后，电机可下电）
+    // printf("[INFO] Running Example29_MainLoopCadenceTest...\n");
+    // Example29_MainLoopCadenceTest();
+    // printf("[INFO] Example29 completed.\n");
+
+    // 运行示例30 - RL 策略链路离线验证（不碰 CAN）
+    printf("[INFO] Running Example30_RLPolicyLinkTest...\n");
+    Example30_RLPolicyLinkTest();
+    printf("[INFO] Example30 completed.\n");
     return 0;
 }
 

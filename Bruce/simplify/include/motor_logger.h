@@ -45,10 +45,14 @@ public:
         std::string recv_path = std::string("log/recv_") + stamp + ".csv";
 
         std::string sendcan_path = std::string("log/sendcan_") + stamp + ".csv";
+        std::string xbox_path = std::string("log/xbox_") + stamp + ".csv";
+        std::string key_path = std::string("log/key_") + stamp + ".csv";
 
         m_send_file = fopen(send_path.c_str(), "w");
         m_recv_file = fopen(recv_path.c_str(), "w");
         m_sendcan_file = fopen(sendcan_path.c_str(), "w");
+        m_xbox_file = fopen(xbox_path.c_str(), "w");
+        m_key_file = fopen(key_path.c_str(), "w");
 
         if (m_send_file) {
             fprintf(m_send_file,
@@ -78,10 +82,29 @@ public:
             fflush(m_recv_file);
         }
 
+        if (m_xbox_file) {
+            fprintf(m_xbox_file,
+                "elapsed_ms,left_stick_x,left_stick_y,"
+                "right_stick_x,right_stick_y,"
+                "left_trigger,right_trigger,"
+                "a,b,x,y,lb,rb,back,start,ls,rs,"
+                "dpad_up,dpad_down,dpad_left,dpad_right\n");
+            fflush(m_xbox_file);
+        }
+
+        if (m_key_file) {
+            // 键盘按键事件日志。key_code 与 KeyDir 枚举对应：1=↑ 2=↓ 3=← 4=→ 5=q；
+            // 0 为特殊事件（如 CAN_SELECT，value 存所选路号）。frame 为主循环帧号。
+            fprintf(m_key_file,
+                "elapsed_ms,frame,key_code,key_name,value\n");
+            fflush(m_key_file);
+        }
+
         m_start_time = std::chrono::steady_clock::now();
         m_initialized = true;
-        printf("[INFO] MotorLogger initialized: %s, %s, %s\n",
-               send_path.c_str(), recv_path.c_str(), sendcan_path.c_str());
+        printf("[INFO] MotorLogger initialized: %s, %s, %s, %s, %s\n",
+               send_path.c_str(), recv_path.c_str(), sendcan_path.c_str(),
+               xbox_path.c_str(), key_path.c_str());
     }
 
     // 记录发送指令: 用户目标值 → 逆标定后实际发送值
@@ -131,12 +154,45 @@ public:
             cal_pos, cal_vel, cal_torque);
     }
 
+    // 记录手柄输入（时间戳与 send/recv 共用同一 steady_clock 基准，便于对齐排查）
+    // 摇杆/扳机为归一化值：左/右摇杆 [-1,1]，扳机 [0,1]；按键 0/1。
+    void LogXbox(float lx, float ly, float rx, float ry,
+                 float lt, float rt,
+                 int a, int b, int x, int y, int lb, int rb,
+                 int back, int start, int ls, int rs,
+                 int du, int dd, int dl, int dr) {
+        if (!m_initialized || !m_xbox_file) return;
+        std::lock_guard<std::mutex> lock(m_mutex);
+
+        int64_t elapsed = ElapsedMs();
+        fprintf(m_xbox_file,
+            "%ld,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,"
+            "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
+            "%d,%d,%d,%d\n",
+            elapsed, lx, ly, rx, ry, lt, rt,
+            a, b, x, y, lb, rb, back, start, ls, rs,
+            du, dd, dl, dr);
+    }
+
+    // 记录键盘按键事件（时间戳与 send/recv 共用同一 steady_clock 基准，便于对齐排查）。
+    // key_code：1=↑ 2=↓ 3=← 4=→ 5=q；0=特殊事件（如 CAN_SELECT，value 存所选路号）。
+    void LogKey(int frame, int key_code, const char* key_name, int value = 0) {
+        if (!m_initialized || !m_key_file) return;
+        std::lock_guard<std::mutex> lock(m_mutex);
+
+        int64_t elapsed = ElapsedMs();
+        fprintf(m_key_file, "%ld,%d,%d,%s,%d\n",
+                elapsed, frame, key_code, key_name, value);
+    }
+
     // 定期刷新缓冲区
     void Flush() {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_send_file) fflush(m_send_file);
         if (m_recv_file) fflush(m_recv_file);
         if (m_sendcan_file) fflush(m_sendcan_file);
+        if (m_xbox_file) fflush(m_xbox_file);
+        if (m_key_file) fflush(m_key_file);
     }
 
     // 关闭日志文件
@@ -145,6 +201,8 @@ public:
         if (m_send_file) { fclose(m_send_file); m_send_file = nullptr; }
         if (m_recv_file) { fclose(m_recv_file); m_recv_file = nullptr; }
         if (m_sendcan_file) { fclose(m_sendcan_file); m_sendcan_file = nullptr; }
+        if (m_xbox_file) { fclose(m_xbox_file); m_xbox_file = nullptr; }
+        if (m_key_file) { fclose(m_key_file); m_key_file = nullptr; }
         m_initialized = false;
     }
 
@@ -163,6 +221,8 @@ private:
     FILE* m_send_file = nullptr;
     FILE* m_recv_file = nullptr;
     FILE* m_sendcan_file = nullptr;
+    FILE* m_xbox_file = nullptr;
+    FILE* m_key_file = nullptr;
     std::chrono::steady_clock::time_point m_start_time;
     bool m_initialized = false;
 };

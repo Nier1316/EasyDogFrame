@@ -123,19 +123,27 @@ void BspCan::ConvertFrameFromVci(const VCI_CAN_OBJ& vci_frame, BspCanFrame& fram
 // ============ 数据收发 ============
 
 bool BspCan::SendFrame(uint8_t device_idx, const BspCanFrame& frame) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-
-    auto it = m_devices.find(device_idx);
-    if (it == m_devices.end()) {
-        printf("[ERROR] Device %d not found\n", device_idx);
-        return false;
+    // 只在查 map 时短暂持锁，VCI_Transmit 调用交给 CanDevice 自己的发送锁。
+    // 为什么：若这里整段持 m_mutex，接收线程在 VCI_Receive 阻塞 10ms 时
+    // 会把发送线程也卡住（实测 40ms 的根源）。SDK 允许收发并行（并发实测 0.005ms）。
+    // 安全性：m_devices 仅在 InitDevice/CloseDevice 增删，且都发生在
+    // 收发线程停止之后（先 stop_thread 再 MotorManager::Stop），稳态下无并发改 map。
+    CanDevice* dev;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_devices.find(device_idx);
+        if (it == m_devices.end()) {
+            printf("[ERROR] Device %d not found\n", device_idx);
+            return false;
+        }
+        dev = it->second.get();
     }
 
     // 使用转换函数：BspCanFrame → VCI_CAN_OBJ
     VCI_CAN_OBJ vci_frame;
     ConvertFrameToVci(frame, vci_frame);
 
-    if (!it->second->SendFrame(vci_frame)) {
+    if (!dev->SendFrame(vci_frame)) {
         printf("[ERROR] Failed to send frame on device %d\n", device_idx);
         return false;
     }
@@ -152,19 +160,48 @@ bool BspCan::Can_Tx(uint8_t device_idx, uint32_t can_id, const uint8_t* data, ui
     return SendFrame(device_idx, frame);
 }
 
+bool BspCan::SendFramesBatch(uint8_t device_idx, const std::vector<BspCanFrame>& frames) {
+    // 同 SendFrame：短暂查 map，VCI_Transmit 交给 CanDevice 自己的发送锁。
+    CanDevice* dev;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_devices.find(device_idx);
+        if (it == m_devices.end()) {
+            printf("[ERROR] Device %d not found\n", device_idx);
+            return false;
+        }
+        dev = it->second.get();
+    }
+    if (frames.empty()) return true;
+
+    // 转成 VCI_CAN_OBJ 数组，一次 VCI_Transmit 发出去
+    VCI_CAN_OBJ vci[16];
+    int n = (int)frames.size();
+    if (n > 16) n = 16;
+    for (int i = 0; i < n; i++)
+        ConvertFrameToVci(frames[i], vci[i]);
+
+    return dev->SendFrames(vci, n);
+}
+
 bool BspCan::ReceiveFrames(uint8_t device_idx,
                            std::vector<BspCanFrame>& frames,
                            int timeout_ms) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-
-    auto it = m_devices.find(device_idx);
-    if (it == m_devices.end()) {
-        printf("[ERROR] Device %d not found\n", device_idx);
-        return false;
+    // 同 SendFrame：短暂查 map，VCI_Receive（~10ms 阻塞）不持 BspCan 锁，
+    // 否则会卡住发送线程。安全性见 SendFrame 注释（线程先停再关设备）。
+    CanDevice* dev;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_devices.find(device_idx);
+        if (it == m_devices.end()) {
+            printf("[ERROR] Device %d not found\n", device_idx);
+            return false;
+        }
+        dev = it->second.get();
     }
 
     std::vector<VCI_CAN_OBJ> vci_frames;
-    if (!it->second->ReceiveFrames(vci_frames, timeout_ms)) {
+    if (!dev->ReceiveFrames(vci_frames, timeout_ms)) {
         return false;
     }
 

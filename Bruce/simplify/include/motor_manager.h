@@ -63,6 +63,7 @@ private:
 
     EleMotor m_motors[CAN_PORTS][MOTORS_PER_CAN];
     mutable std::mutex m_motor_mutex[CAN_PORTS][MOTORS_PER_CAN];
+    bool m_initialized = false;   // Initialize() 全部成功后才置真，Stop() 据此避免关未打开的设备
 };
 
 #endif // MOTOR_MANAGER_H_

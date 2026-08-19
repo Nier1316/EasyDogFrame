@@ -4,8 +4,10 @@
 #include "math/wheel_position_loop.h"
 #include "thread/thread_manager.h"
 #include "xbox_controller.h"
+#include "motor_logger.h"
 #include "rl/mlp.h"
 #include "rl/rl_controller.h"
+#include "rl/policy_test_ref.h"   // Example30 链路验证的参考输入/输出
 #include "imu_device.h"
 #include <thread>
 #include <chrono>
@@ -13,6 +15,8 @@
 #include <cstring>
 #include <termios.h>   // Example23 终端 raw 模式键盘输入
 #include <fcntl.h>     // Example23 非阻塞读 stdin
+#include <poll.h>      // Example23 选路限时等待 stdin 输入
+#include <algorithm>   // Example27 探针排序/极值
 
 
 
@@ -1611,7 +1615,7 @@ void Example21_XboxControllerControl() {
     printf("\n========== 示例 21：Xbox 手柄控制 ==========\n");
     printf("[INFO] A键  = 起立（记录按下时的姿态作为返回点）\n");
     printf("[INFO] B键  = 缓慢回到起立前的初始姿态\n");
-    printf("[INFO] LT扳机 = 升高身体  |  RT扳机 = 降低身体\n");
+    printf("[INFO] 十字键↑ = 升高身体  |  十字键↓ = 降低身体\n");
     printf("[INFO] 右摇杆上下 = 前进/后退  |  右摇杆左右 = 差速转向\n");
     printf("[INFO] Back键 = 退出\n\n");
 
@@ -1713,6 +1717,15 @@ void Example21_XboxControllerControl() {
 
             const XboxState& state = controller.GetState();
 
+            // 记录手柄输入（与电机日志同时间戳基准，便于后续对齐排查）
+            MotorLogger::GetInstance().LogXbox(
+                state.left_stick_x, state.left_stick_y,
+                state.right_stick_x, state.right_stick_y,
+                state.left_trigger, state.right_trigger,
+                state.a, state.b, state.x, state.y, state.lb, state.rb,
+                state.back, state.start, state.ls, state.rs,
+                state.dpad_up, state.dpad_down, state.dpad_left, state.dpad_right);
+
             // A键上升沿检测
             bool a_pressed = state.a && !prev_a;
             prev_a = state.a;
@@ -1767,7 +1780,7 @@ void Example21_XboxControllerControl() {
             usleep(1000000 / HZ);
         }
 
-        printf("[INFO] 已站立。LT/RT=高度, 右摇杆=轮子, Back=退出.\n\n");
+        printf("[INFO] 已站立。十字键↑↓=高度, 右摇杆=轮子, Back=退出.\n\n");
         fflush(stdout);
 
         // ---- 阶段 3：主控制循环 ----
@@ -1780,6 +1793,15 @@ void Example21_XboxControllerControl() {
             }
 
             const XboxState& state = controller.GetState();
+
+            // 记录手柄输入（与电机日志同时间戳基准，便于后续对齐排查）
+            MotorLogger::GetInstance().LogXbox(
+                state.left_stick_x, state.left_stick_y,
+                state.right_stick_x, state.right_stick_y,
+                state.left_trigger, state.right_trigger,
+                state.a, state.b, state.x, state.y, state.lb, state.rb,
+                state.back, state.start, state.ls, state.rs,
+                state.dpad_up, state.dpad_down, state.dpad_left, state.dpad_right);
 
             // Back键上升沿 → 退出
             bool back_pressed = state.back && !prev_back;
@@ -1838,15 +1860,14 @@ void Example21_XboxControllerControl() {
                 break;
             }
 
-            // ---- 身体高度调节（左/右扳机） ----
-            const float TRIGGER_DEAD = 0.05f;
-            float height_delta = 0.0f;
-            if (state.left_trigger  > TRIGGER_DEAD)
-                height_delta += HEIGHT_ADJUST_RATE * state.left_trigger  / HZ;
-            if (state.right_trigger > TRIGGER_DEAD)
-                height_delta -= HEIGHT_ADJUST_RATE * state.right_trigger / HZ;
-
-            body_height += height_delta;
+            // ---- 身体高度调节（十字键 ↑/↓，替代扳机） ----
+            // RT 扳机硬件漂移（未按下就输出 0.496），改用数字量十字键，无漂移、可靠。
+            // 步长与扳机满程速率一致（HEIGHT_ADJUST_RATE / HZ），按住即连续调节。
+            const float HEIGHT_STEP = HEIGHT_ADJUST_RATE / HZ;
+            if (state.dpad_up)
+                body_height += HEIGHT_STEP;
+            if (state.dpad_down)
+                body_height -= HEIGHT_STEP;
             body_height = clamp(body_height, BODY_HEIGHT_MIN, BODY_HEIGHT_MAX);
 
             // ---- 轮子控制（右摇杆：Y 轴前后，X 轴左右转，SPEED 模式）----
@@ -1928,10 +1949,10 @@ void Example21_XboxControllerControl() {
                 MotorStatus w0 = motor_mgr.GetStatus(0, 4);
                 MotorStatus w1 = motor_mgr.GetStatus(1, 4);
                 printf("  高度=%+.3fm  轮目标 左=%+.2f 右=%+.2f  "
-                       "实测 轮0=%+.2f 轮1=%+.2f rad/s  LT=%.2f RT=%.2f\n",
+                       "实测 轮0=%+.2f 轮1=%+.2f rad/s  十字键↑=%d ↓=%d\n",
                        body_height, v_left, v_right,
                        w0.velocity, w1.velocity,
-                       state.left_trigger, state.right_trigger);
+                       state.dpad_up, state.dpad_down);
                 fflush(stdout);
             }
 
@@ -2194,13 +2215,32 @@ void Example23_SingleCanKeyboardControl() {
     int can_port = -1;
     printf("请输入要控制的 CAN 路编号 (0~3): ");
     fflush(stdout);
-    if (scanf("%d", &can_port) != 1 || can_port < 0 || can_port > 3) {
-        printf("[ERROR] 无效输入，退出\n");
-        return;
+    // 调试器（cppdbg externalConsole=false）下 stdin 是 gdb 分配的 pty，
+    // isatty 为真但键盘输入不一定送得到 scanf（实测立刻无效输入退出）。
+    // 改用 poll 限时等输入：3s 内有有效数字 → 用输入；超时/EOF/无效 → 默认 CAN1，
+    // 这样直接 F5 调试也能跑起来，真终端下交互照常。
+    // 注意：flush 换行只在成功读到数字后执行，避免在静默 pty 上被 getchar 卡死。
+    struct pollfd pfd;
+    pfd.fd = fileno(stdin);
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    int pr = poll(&pfd, 1, 3000);
+    bool got_input = (pr > 0 && (pfd.revents & POLLIN) &&
+                      scanf("%d", &can_port) == 1 && can_port >= 0 && can_port <= 3);
+    if (got_input) {
+        // 吞掉行尾换行，避免污染后续 raw 读取
+        int ch; while ((ch = getchar()) != '\n' && ch != EOF) {}
+    } else {
+        printf("\n[INFO] 无有效输入（3s 超时/EOF/调试器），默认选择 CAN1\n");
+        can_port = 1;
     }
-    // 吞掉行尾换行，避免污染后续 raw 读取
-    int ch; while ((ch = getchar()) != '\n' && ch != EOF) {}
     printf("[INFO] 选择 CAN%d（腿 %d + 轮）\n", can_port, can_port);
+
+    // 键盘输入日志：提前初始化日志系统。选路发生在 MotorManager::Initialize()
+    // 之前，而后者内部才调 MotorLogger::Init()；Init 幂等，之后再次调用为空操作。
+    // 把选路结果记为 key 日志的第一行（frame=-1），便于区分不同运行。
+    MotorLogger::GetInstance().Init();
+    MotorLogger::GetInstance().LogKey(-1, 0, "CAN_SELECT", can_port);
 
     // ---- 控制参数 ----
     const float KP = 150.0f;                 // 关节阻抗刚度
@@ -2212,6 +2252,13 @@ void Example23_SingleCanKeyboardControl() {
     const float WHEEL_SPEED  = 1.5f;         // 轮子正/反转角速度 (rad/s)
     const float WHEEL_KVP    = 3.0f;         // 速度环 Kp — 初值，实测再调
     const float WHEEL_KVI    = 0.3f;         // 速度环 Ki — 初值，实测再调
+    // 软启动：切入速度环时先用弱增益，再把增益渐变到额定。
+    // 依据：CAN1 轮固件速度反馈在启动期存在假偏移（实测 -43rad/s，或饱和 ±48），
+    // 满增益会把假偏移当真实误差去追 → 疯转 ~1s。弱增益下假偏移只产生小力矩，
+    // 等偏移自行消退（实测 ~1s）后再升到额定，正常控制且不踢腿。
+    const float WHEEL_SOFT_KVP = 0.3f;       // 软启动初始 Kp（额定的 1/10）
+    const float WHEEL_SOFT_KVI = 0.03f;      // 软启动初始 Ki（额定的 1/10）
+    const int   WHEEL_SOFT_FRAMES = 150;     // 软启动时长 (1.5s @100Hz)
     // 松开方向键后轮子指令保持的帧数（终端无按键释放事件，用超时判定停止）
     const int   WHEEL_HOLD_FRAMES = 8;
 
@@ -2259,8 +2306,11 @@ void Example23_SingleCanKeyboardControl() {
     }
     printf("[INFO] 已站立\n");
 
-    // 轮电机初始速度归零（厂家 SPEED 模式）
-    motor_mgr.SendSpeed(can_port, 4, 0.0f, WHEEL_KVP, WHEEL_KVI);
+    // 轮电机初始速度归零（厂家 SPEED 模式）。
+    // 用弱增益切入：这一次 SendSpeed 会触发固件切速度环（control_mode=SPEED），
+    // 若此时用额定增益，假速度偏移会在第一帧就被当成 +43 的误差去追 → 开机踢腿。
+    // 弱增益只产生 ~1/10 的力矩，给假偏移留出 ~1s 的消退窗口。
+    motor_mgr.SendSpeed(can_port, 4, 0.0f, WHEEL_SOFT_KVP, WHEEL_SOFT_KVI);
 
     // ---- 进入终端 raw 模式，开始键盘控制 ----
     printf("\n[操作] ↑/↓ = 升高/降低身体   ←/→ = 轮子反转/正转 0.5rad/s   q = 退出\n\n");
@@ -2282,6 +2332,13 @@ void Example23_SingleCanKeyboardControl() {
             bool got_wheel_key = false;
             KeyDir k;
             while ((k = poll_key()) != KeyDir::NONE) {
+                // 按键事件日志（key_code 与 KeyDir 对应：1↑ 2↓ 3← 4→ 5q），
+                // 时间戳与 send/recv 同一基准，用于对齐"哪次按键导致电机怎么动"。
+                const char* kname = (k == KeyDir::UP)    ? "UP" :
+                                    (k == KeyDir::DOWN)  ? "DOWN" :
+                                    (k == KeyDir::LEFT)  ? "LEFT" :
+                                    (k == KeyDir::RIGHT) ? "RIGHT" : "QUIT";
+                MotorLogger::GetInstance().LogKey(frame, static_cast<int>(k), kname);
                 switch (k) {
                     case KeyDir::UP:    body_height += HEIGHT_STEP; break;
                     case KeyDir::DOWN:  body_height -= HEIGHT_STEP; break;
@@ -2300,7 +2357,13 @@ void Example23_SingleCanKeyboardControl() {
 
             // 轮子：速度模式下发目标角速度
             float wheel_speed = wheel_stick * WHEEL_SPEED;
-            motor_mgr.SendSpeed(can_port, 4, wheel_speed, WHEEL_KVP, WHEEL_KVI);
+            // 速度环增益软启动：前 WHEEL_SOFT_FRAMES 帧从弱增益线性渐变到额定。
+            // 这样即使假速度偏移尚未消退，速度环也只会输出小力矩，不会疯转；
+            // 偏移消退后增益已到位，控制手感与原来一致。
+            float kfr = (frame < WHEEL_SOFT_FRAMES) ? (float)frame / WHEEL_SOFT_FRAMES : 1.0f;
+            float kvp = WHEEL_SOFT_KVP + (WHEEL_KVP - WHEEL_SOFT_KVP) * kfr;
+            float kvi = WHEEL_SOFT_KVI + (WHEEL_KVI - WHEEL_SOFT_KVI) * kfr;
+            motor_mgr.SendSpeed(can_port, 4, wheel_speed, kvp, kvi);
 
             // 腿 IK：站立足端 + 高度偏移
             float foot_target_body[3] = {
@@ -2328,10 +2391,17 @@ void Example23_SingleCanKeyboardControl() {
             for (int j = 0; j < 3; j++)
                 motor_mgr.SendImpedance(can_port, j + 1, q_cmd[j], 0.0f, KP, KD, 0.0f);
 
+            if (frame == 0) {
+                // 软启动起点快照：|v|>5 说明速度通道确实带着假偏移，
+                // 此时增益很低（kvp=0.3），即使偏移被追也只会轻推一下。
+                MotorStatus w0 = motor_mgr.GetStatus(can_port, 4);
+                printf("\n[INFO] 轮软启动起点: v_fb=%.2f rad/s  kvp=%.2f ki=%.3f\n",
+                       w0.velocity, WHEEL_SOFT_KVP, WHEEL_SOFT_KVI);
+            }
             if (frame % 50 == 0) {
                 MotorStatus wst = motor_mgr.GetStatus(can_port, 4);
-                printf("\r  高度=%+.3fm  轮 目标=%.2f 实测=%.2f rad/s  ",
-                       body_height, wheel_speed, wst.velocity);
+                printf("\r  高度=%+.3fm  轮 目标=%.2f 实测=%.2f rad/s  增益kvp=%.2f  ",
+                       body_height, wheel_speed, wst.velocity, kvp);
                 fflush(stdout);
             }
             frame++;
@@ -2631,4 +2701,550 @@ void Example25_RLPolicyControl() {
     thread_mgr.stop_thread("motor_send");
     motor_mgr.Stop();
     printf("[INFO] Example25 完成\n");
+}
+
+// ================= 示例 26：键盘输入接收测试（纯诊断，不碰电机） =================
+// 用途：在开电机之前，先确认当前运行环境（集成终端 / 调试器 Debug Console）
+// 到底能不能收到键盘输入。Example23 的控制依赖两段输入通路：
+//   阶段1 行模式选路（poll + scanf）—— 决定默认选哪路 CAN
+//   阶段2 raw 模式方向键（poll_key） —— 主控制循环的方向/高度/轮子
+// 哪一段收不到，Example23 就永远跑不起来。本示例把两段拆开单独测。
+void Example26_KeyboardInputTest() {
+    printf("\n========== 示例 26：键盘输入接收测试 ==========\n");
+    printf("[INFO] 纯诊断，不初始化 CAN、不使能电机。\n");
+
+    // ---- 环境诊断 ----
+    printf("\n--- 环境诊断 ---\n");
+    printf("[INFO] isatty(stdin)=%d   (1=是终端, 0=被重定向/管道)\n", isatty(STDIN_FILENO));
+    struct termios check_tio;
+    printf("[INFO] tcgetattr(stdin)=%d  (0=成功, 即可以进 raw 模式)\n",
+           tcgetattr(STDIN_FILENO, &check_tio));
+    printf("[提示] 调试器 Debug Console 通常无法做 raw/行模式交互；\n");
+    printf("       若 isatty=1 却收不到键，请改用集成终端运行。\n\n");
+    fflush(stdout);
+
+    // ---- 阶段1：行模式输入（复刻 Example23 选路逻辑） ----
+    printf("--- 阶段1：行模式输入，请输入 0~3，3 秒无输入则超时 ---\n");
+    struct pollfd pfd;
+    pfd.fd = fileno(stdin);
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    printf("> ");
+    fflush(stdout);
+    int pr = poll(&pfd, 1, 3000);
+    int val = -1;
+    bool got = false;
+    if (pr > 0 && (pfd.revents & POLLIN)) {
+        if (scanf("%d", &val) == 1) got = true;
+        else {
+            // 有数据但不是数字：把残渣清掉并报告，便于判断收到的是啥
+            int c; while ((c = getchar()) != '\n' && c != EOF) {}
+        }
+    }
+    printf("  poll 返回=%d %s | 读到数字=%s | 值=%d\n",
+           pr, pr > 0 ? "(有数据)" : (pr == 0 ? "(超时)" : "(错误)"),
+           got ? "是" : "否", got ? val : -1);
+    if (!got)
+        printf("[WARN] 阶段1 收不到输入：若在调试器里这是预期的，请用集成终端。\n");
+    printf("[INFO] 阶段1 完成。\n\n");
+    fflush(stdout);
+
+    // ---- 阶段2：raw 模式方向键（复刻 Example23 控制循环） ----
+    printf("--- 阶段2：raw 模式方向键 ↑↓←→ / q 退出，10 秒窗口 ---\n");
+    RawTerminal term;
+    if (!term.ok) {
+        printf("[ERROR] 无法进入 raw 模式（stdin 不是可交互终端？）。\n");
+        printf("[INFO] 请在集成终端里运行本示例。\n");
+        return;
+    }
+    printf("[INFO] raw 模式已就绪，请按方向键（每 2 秒打印一次心跳）：\n");
+    fflush(stdout);
+
+    auto t0 = std::chrono::steady_clock::now();
+    int key_count = 0;
+    bool quit = false;
+    while (!quit) {
+        auto now = std::chrono::steady_clock::now();
+        double t = std::chrono::duration_cast<std::chrono::milliseconds>(now - t0).count() / 1000.0;
+        if (t >= 10.0) { printf("\n[INFO] 10 秒超时。\n"); break; }
+
+        KeyDir k;
+        while ((k = poll_key()) != KeyDir::NONE) {
+            key_count++;
+            const char* name = (k == KeyDir::UP)    ? "↑ UP" :
+                               (k == KeyDir::DOWN)  ? "↓ DOWN" :
+                               (k == KeyDir::LEFT)  ? "← LEFT" :
+                               (k == KeyDir::RIGHT) ? "→ RIGHT" : "q QUIT";
+            printf("  [t=%6.2fs] 按键: %s\n", t, name);
+            fflush(stdout);
+            if (k == KeyDir::QUIT) { quit = true; break; }
+        }
+        // 心跳：每 2 秒打一行，证明循环活着、在等输入
+        if (key_count == 0 && fmod(t, 2.0) < 0.05) {
+            printf("  [t=%6.2fs] 等待输入中...（按键不生效？检查终端焦点）\n", t);
+            fflush(stdout);
+        }
+        usleep(50000);
+    }
+
+    if (key_count > 0) {
+        printf("[INFO] 阶段2 共收到 %d 个按键，raw 模式输入正常。\n", key_count);
+    } else {
+        printf("[WARN] 阶段2 没收到任何按键：raw 模式输入不可用。\n");
+        printf("[INFO] 请确认在集成终端（Run Program 任务）中运行，并让窗口聚焦。\n");
+    }
+    // term 析构自动恢复终端
+
+    printf("\n[INFO] 示例26 完成。\n");
+    fflush(stdout);
+}
+
+// ================= 示例 27：CANET 接收频率探针（不使能电机，纯读取测频） =================
+// 目的：验证"CANET 性能不差于 USB2CAN"的假设。此前日志显示控制闭环只有 ~25Hz
+// （16 电机，每帧 VCI_Transmit 阻塞 ~10ms）。本示例把一切"主动动作"去掉：
+//   不使能电机、不启发送线程、不下发控制帧，只测 CANET 设备本身的读写能力，
+// 用于定位那 40ms 到底在设备侧还是在我们自己的收发架构：
+//   阶段1  VCI_Receive(timeout=1ms) 空轮询耗时 —— SDK 是否真按 1ms 超时返回
+//   阶段2  单条读命令往返延迟（发读参数帧 → 收到回帧）
+//   阶段3  连续读请求吞吐（单电机持续往返 / 全 16 电机并发读）
+// 对照基准：USB2CAN 直连通常单命令往返 1~2ms，12 电机可到 500Hz+。
+void Example27_CANetFrequencyProbe() {
+    printf("\n========== 示例 27：CANET 接收频率探针 ==========\n");
+    printf("[INFO] 不使能电机、不启发送线程，只测 CANET 设备读写能力。\n");
+
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] MotorManager 初始化失败\n");
+        return;
+    }
+    g_param_verbose = false;
+    printf("[INFO] 4 路 CANET 连接已建立（未启动发送线程、未使能电机）。\n\n");
+
+    // 读参数帧（复刻 float2bag 的读路径：RW=0，参数值 0）。
+    // 发送 tx_id = motor_id；电机回应帧 rx_id = 50 + motor_id
+    auto send_read = [](int can, int motor_id, uint8_t type) {
+        uint8_t f[8] = {0x80, 0, 0, 0, 0, 0x00, type, 0xEC};
+        BspCan::GetInstance().Can_Tx(can, motor_id, f, 8);
+    };
+    // 排空某路积压帧，避免上阶段残留污染测量起点
+    auto drain = [](int can) {
+        std::vector<BspCanFrame> frames;
+        for (int i = 0; i < 20; i++) BspCan::GetInstance().ReceiveFrames(can, frames, 1);
+    };
+    using clk = std::chrono::steady_clock;
+    auto ms_since = [](clk::time_point t0) {
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+            clk::now() - t0).count() / 1000.0;
+    };
+
+    // ---- 阶段1：VCI_Receive 空轮询耗时 ----
+    printf("--- 阶段1：VCI_Receive(timeout=1ms) 空轮询耗时（无任何帧在途）---\n");
+    {
+        const int N = 100;
+        std::vector<double> ms;
+        for (int i = 0; i < N; i++) {
+            auto t0 = clk::now();
+            std::vector<BspCanFrame> frames;
+            BspCan::GetInstance().ReceiveFrames(0, frames, 1);
+            ms.push_back(ms_since(t0));
+        }
+        std::sort(ms.begin(), ms.end());
+        printf("  单次空轮询: min=%.2fms  p50=%.2fms  p90=%.2fms  max=%.2fms\n",
+               ms.front(), ms[N / 2], ms[int(N * 0.9)], ms.back());
+        printf("  %s\n", ms[N / 2] > 5.0
+            ? "  [判读] SDK 空等也阻塞 >5ms → 接收线程会长时间占设备锁，拖慢发送"
+            : "  [判读] SDK 尊重 1ms 超时 → 空轮询不是瓶颈，40ms 另有来源");
+    }
+
+    // ---- 阶段2：单条读命令往返延迟 ----
+    printf("\n--- 阶段2：单条读命令往返延迟（CANx 轮电机 motor4，各 3 次，超时 100ms）---\n");
+    printf("  %-5s %-9s %-9s %-9s %s\n", "CAN", "min(ms)", "avg(ms)", "max(ms)", "超时");
+    for (int can = 0; can < 4; can++) {
+        drain(can);
+        std::vector<double> lats;
+        int timeout_cnt = 0;
+        for (int rep = 0; rep < 3; rep++) {
+            auto t0 = clk::now();
+            send_read(can, 4, MOTOR_OR_velocity);
+            bool got = false;
+            while (ms_since(t0) < 100.0) {
+                std::vector<BspCanFrame> frames;
+                if (BspCan::GetInstance().ReceiveFrames(can, frames, 1)) {
+                    for (auto& f : frames) if (f.id == 50 + 4) { got = true; break; }
+                }
+                if (got) break;
+            }
+            if (got) lats.push_back(ms_since(t0));
+            else     timeout_cnt++;
+        }
+        double sum = 0; for (double v : lats) sum += v;
+        double mn = lats.empty() ? -1 : *std::min_element(lats.begin(), lats.end());
+        double mx = lats.empty() ? -1 : *std::max_element(lats.begin(), lats.end());
+        printf("  %-5d %-9.2f %-9.2f %-9.2f %d/%d\n",
+               can, mn, lats.empty() ? -1 : sum / lats.size(), mx, timeout_cnt, 3);
+    }
+
+    // ---- 阶段3a：单电机持续往返速率 ----
+    printf("\n--- 阶段3a：单电机持续往返速率（CAN0 motor1，2s 请求-回应 ping-pong）---\n");
+    {
+        drain(0);
+        auto t_end = clk::now() + std::chrono::milliseconds(2000);
+        int n = 0, miss = 0;
+        while (clk::now() < t_end) {
+            send_read(0, 1, MOTOR_OR_velocity);
+            auto t0 = clk::now();
+            bool got = false;
+            while (ms_since(t0) < 50.0) {
+                std::vector<BspCanFrame> frames;
+                if (BspCan::GetInstance().ReceiveFrames(0, frames, 1)) {
+                    for (auto& f : frames) if (f.id == 51) { got = true; break; }
+                }
+                if (got) break;
+            }
+            if (got) n++; else miss++;
+        }
+        printf("  成功 %d 次，超时 %d 次 → %.0f 次/s\n", n, miss, n / 2.0);
+    }
+
+    // ---- 阶段3b：全 16 电机并发读吞吐 ----
+    printf("\n--- 阶段3b：全 16 电机并发读吞吐（2s，每轮 16 条读 + 收回应）---\n");
+    {
+        for (int can = 0; can < 4; can++) drain(can);
+        auto t_end = clk::now() + std::chrono::milliseconds(2000);
+        int total = 0;
+        while (clk::now() < t_end) {
+            for (int can = 0; can < 4; can++)
+                for (int id = 1; id <= 4; id++)
+                    send_read(can, id, MOTOR_OR_velocity);
+            for (int can = 0; can < 4; can++) {
+                while (clk::now() < t_end) {
+                    std::vector<BspCanFrame> frames;
+                    if (BspCan::GetInstance().ReceiveFrames(can, frames, 1)) {
+                        for (auto& f : frames) if (f.id >= 51 && f.id <= 54) total++;
+                    } else break;
+                }
+            }
+        }
+        printf("  收到 %d 帧 / 2.0s = %.0f 帧/s（对照：16 电机跑 500Hz 需 8000 帧/s）\n",
+               total, total / 2.0);
+    }
+
+    // ---- 收尾 ----
+    printf("\n[INFO] 判读指引：\n");
+    printf("  阶段1 p50>5ms → SDK 空等也阻塞，收发架构要先改（分离锁/批量）\n");
+    printf("  阶段2 往返 ~2ms + 阶段3a 单电机 >400Hz → 设备本身不慢，瓶颈在我们的发送线程\n");
+    printf("  阶段2 往返 ~10ms + 阶段3b 全 16 电机 <1000帧/s → CANET 设备串行处理，需换直连 CAN 卡\n");
+
+    motor_mgr.Stop();
+    printf("\n[INFO] 示例27 完成（未使能任何电机）。\n");
+    fflush(stdout);
+}
+
+// ================= 示例 28：CANET 批量发送探针（电机下电，不使能电机） =================
+// 目的：在零风险（电机已下电）下量化"批量发送 vs 逐帧发送"的耗时差，
+// 验证 VCI_Transmit 一次传多帧能否绕开 SDK 的 ~10ms 逐帧地板。
+// 阶段1 单帧发送耗时  |  阶段2 批量4帧发送耗时  |  阶段3 完整一轮（批量4发+捞接收）
+// 阶段4 确认电机下电（捞接收应无帧）
+void Example28_CANetBatchProbe() {
+    printf("\n========== 示例 28：CANET 批量发送探针 ==========\n");
+    printf("[INFO] 电机下电、CANET 供电；不使能电机，只测发送路径时序。\n");
+
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] MotorManager 初始化失败（某路 CANET 打开失败）\n");
+        return;
+    }
+    // 不启动任何线程，主线程直接操作 BspCan
+    BspCan& bsp = BspCan::GetInstance();
+
+    using clk = std::chrono::steady_clock;
+    auto ms_since = [](clk::time_point t0) {
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+            clk::now() - t0).count() / 1000.0;
+    };
+    auto report = [](const char* label, std::vector<double>& ms) {
+        std::sort(ms.begin(), ms.end());
+        int n = (int)ms.size();
+        printf("  %-28s min=%6.2f  p50=%6.2f  p90=%6.2f  max=%6.2f ms\n",
+               label, ms.front(), ms[n / 2], ms[int(n * 0.9)], ms.back());
+    };
+
+    // 读参数帧（RW=0），CAN ID=motor_id；电机下电不会回应，仅用于测发送路径
+    auto build_read = [](int motor_id) {
+        BspCanFrame f;
+        f.id = (uint32_t)motor_id;
+        f.dlc = 8;
+        f.is_extended = 0;
+        uint8_t d[8] = {0x80, 0, 0, 0, 0, 0x00, MOTOR_OR_velocity, 0xEC};
+        memcpy(f.data, d, 8);
+        return f;
+    };
+
+    // ---- 阶段1：单帧发送耗时 ----
+    printf("\n--- 阶段1：单帧 VCI_Transmit 耗时（CAN0，N=50）---\n");
+    {
+        std::vector<double> ms;
+        for (int i = 0; i < 50; i++) {
+            BspCanFrame f = build_read(1);
+            auto t0 = clk::now();
+            bsp.Can_Tx(0, f.id, f.data, f.dlc);
+            ms.push_back(ms_since(t0));
+        }
+        report("单帧发送", ms);
+    }
+
+    // ---- 阶段2：批量4帧发送耗时 ----
+    printf("\n--- 阶段2：批量 4 帧 VCI_Transmit 耗时（CAN0，N=50）---\n");
+    {
+        std::vector<BspCanFrame> batch;
+        for (int id = 1; id <= 4; id++) batch.push_back(build_read(id));
+        std::vector<double> ms;
+        for (int i = 0; i < 50; i++) {
+            auto t0 = clk::now();
+            bsp.SendFramesBatch(0, batch);
+            ms.push_back(ms_since(t0));
+        }
+        report("批量4帧发送", ms);
+    }
+
+    // ---- 阶段3：完整一轮（批量4发 + 捞一次接收）----
+    printf("\n--- 阶段3：完整一轮 批量4发 + 捞接收（N=50）---\n");
+    {
+        std::vector<BspCanFrame> batch;
+        for (int id = 1; id <= 4; id++) batch.push_back(build_read(id));
+        std::vector<double> ms;
+        int rx_total = 0;
+        for (int i = 0; i < 50; i++) {
+            auto t0 = clk::now();
+            bsp.SendFramesBatch(0, batch);
+            std::vector<BspCanFrame> rx;
+            if (bsp.ReceiveFrames(0, rx, 1)) rx_total += (int)rx.size();
+            ms.push_back(ms_since(t0));
+        }
+        report("批量4发+捞接收", ms);
+        printf("  捞到 %d 帧（电机下电期望≈0）\n", rx_total);
+    }
+
+    // ---- 阶段4：确认电机下电（多次捞接收应无帧）----
+    printf("\n--- 阶段4：电机下电核对（连续捞 20 次）---\n");
+    {
+        int got = 0;
+        for (int i = 0; i < 20; i++) {
+            std::vector<BspCanFrame> rx;
+            if (bsp.ReceiveFrames(0, rx, 1)) got += (int)rx.size();
+        }
+        printf("  捞到 %d 帧 → %s\n", got,
+               got == 0 ? "[OK] 电机已下电，CAN 上无活动节点" :
+                          "[!] 仍有帧返回，注意核对是否真的下电");
+    }
+
+    // ---- 阶段5：4 路打开状态 ----
+    printf("\n--- 阶段5：4 路 CANET 打开状态 ---\n");
+    printf("[INFO] 能走到这里说明 MotorManager::Initialize 已成功打开全部 4 路\n");
+    printf("[INFO] （若 4004 端口真有问题，上面会直接失败退出）\n");
+
+    // ---- 阶段6：SDK 并发能力（发送能否与阻塞接收并行）----
+    // 直接调 VCI_*（绕过 BspCan/CanDevice 的锁），测 SDK 本身是否允许
+    // 一个线程持续 VCI_Transmit 的同时另一个线程在 VCI_Receive 里阻塞 10ms。
+    // 若发送保持 ~0.01ms → SDK 支持并发 → 分离收发锁即可根治 40ms；
+    // 若发送被拖到 ~10ms → SDK 内部串行 → 只能靠批量压缩调用次数。
+    printf("\n--- 阶段6：SDK 并发能力（发线程 100 次批量发 + 收线程 100 次阻塞收并行）---\n");
+    {
+        VCI_CAN_OBJ batch[4];
+        for (int i = 0; i < 4; i++) {
+            batch[i].ID = (UINT)(i + 1);
+            batch[i].DataLen = 8;
+            batch[i].ExternFlag = 0;
+            batch[i].RemoteFlag = 0;
+            batch[i].SendType = 0;
+            memset(batch[i].Data, 0, 8);
+            batch[i].Data[0] = 0x80;
+            batch[i].Data[6] = MOTOR_OR_velocity;
+            batch[i].Data[7] = 0xEC;
+        }
+        long send_us_sum = 0;
+        int send_cnt = 0;
+        std::thread send_th([&]() {
+            for (int i = 0; i < 100; i++) {
+                auto t0 = clk::now();
+                VCI_Transmit(VCI_CANETE, 0, 0, batch, 4);
+                send_us_sum += (long)(ms_since(t0) * 1000.0);
+                send_cnt++;
+            }
+        });
+        std::thread recv_th([&]() {
+            VCI_CAN_OBJ buf[100];
+            for (int i = 0; i < 100; i++)
+                VCI_Receive(VCI_CANETE, 0, 0, buf, 100, 1);
+        });
+        send_th.join();
+        recv_th.join();
+        double avg = send_cnt ? (double)send_us_sum / send_cnt / 1000.0 : -1.0;
+        printf("  并行期间 单次批量发送平均 %.3f ms（阶段2 串行时 0.01ms）\n", avg);
+        printf("  %s\n", avg < 2.0
+            ? "  [OK] SDK 允许发送与接收并行 → 分离收发锁即可根治发送被阻塞"
+            : "  [判读] SDK 内部串行收发 → 只能靠批量压缩 SDK 调用次数");
+    }
+
+    // ---- 阶段7：包装路径并发验证（拆锁后 BspCan 收发是否仍被串行）----
+    // 走正式的 BspCan::SendFramesBatch / ReceiveFrames（含我们自己的锁），
+    // 验证拆锁后发送线程不再被接收线程的 10ms 阻塞卡住。
+    printf("\n--- 阶段7：包装路径并发（BspCan 批量发 vs 阻塞收 并行，拆锁验证）---\n");
+    {
+        std::vector<BspCanFrame> batch;
+        for (int id = 1; id <= 4; id++) batch.push_back(build_read(id));
+        long send_us_sum = 0;
+        int send_cnt = 0;
+        std::thread send_th([&]() {
+            for (int i = 0; i < 100; i++) {
+                auto t0 = clk::now();
+                bsp.SendFramesBatch(0, batch);
+                send_us_sum += (long)(ms_since(t0) * 1000.0);
+                send_cnt++;
+            }
+        });
+        std::thread recv_th([&]() {
+            std::vector<BspCanFrame> rx;
+            for (int i = 0; i < 100; i++)
+                bsp.ReceiveFrames(0, rx, 1);
+        });
+        send_th.join();
+        recv_th.join();
+        double avg = send_cnt ? (double)send_us_sum / send_cnt / 1000.0 : -1.0;
+        printf("  并行期间 BspCan 批量发送平均 %.3f ms\n", avg);
+        printf("  %s\n", avg < 2.0
+            ? "  [OK] 拆锁生效：BspCan 发送不再被接收阻塞（40ms→~10ms 的根源已消除）"
+            : "  [!] BspCan 仍串行，需继续排查");
+    }
+
+    // ---- 阶段8：VCI_Receive timeout 参数扫描（定位 10ms 地板的机制）----
+    // 空轮询下改 timeout 看实际返回时间。判读：
+    //   各 timeout 都 ~10ms 返回  → SDK 内部写死 10ms 等待，无视 timeout（硬地板）
+    //   小 timeout 被抬到 ~10ms、大 timeout 随参数走 → SDK 按 10ms 粒度轮询
+    //   timeout=1 就 ~1ms 返回    → 之前 10ms 另有来源（设备/网络）
+    printf("\n--- 阶段8：VCI_Receive timeout 参数扫描（空轮询，定位 10ms 地板机制）---\n");
+    {
+        int timeouts[] = {1, 5, 10, 20, 50, 100};
+        printf("  %-10s %-12s %-12s\n", "timeout", "实际返回(ms)", "判读");
+        for (int t : timeouts) {
+            auto t0 = clk::now();
+            VCI_CAN_OBJ buf[100];
+            VCI_Receive(VCI_CANETE, 0, 0, buf, 100, t);
+            double r = ms_since(t0);
+            const char* tag;
+            if (r < 2.0)            tag = "≈timeout，无地板";
+            else if (r < t * 0.9)   tag = "被 ~10ms 下限抬升";
+            else if (r <= t + 1.0)  tag = "随 timeout 走";
+            else                    tag = ">timeout，异常";
+            printf("  %-10d %-12.2f %s\n", t, r, tag);
+        }
+    }
+
+    motor_mgr.Stop();
+    printf("\n[INFO] 示例28 完成（未使能任何电机）。\n");
+    fflush(stdout);
+}
+
+// ================= 示例 29：控制环频率测试（拆锁后） =================
+// 目的：端到端验证"收发分离锁"改造是否把控制环从 40ms 拉回 ~10ms。
+// 做法：启动接收+发送线程，使能 CAN1 的 4 个电机（电机可下电：无反馈无扭矩，
+//       仅时序测试），主循环连续发 100 帧阻抗指令并测实际帧间隔。
+// 判读：拆锁前主循环被发送线程抢锁拖到 ~40ms；拆锁后应回到 ~10ms（usleep 值）。
+void Example29_MainLoopCadenceTest() {
+    printf("\n========== 示例 29：控制环频率测试（拆锁后）==========\n");
+    printf("[INFO] 使能 CAN1 4 电机（电机可下电：无反馈无扭矩），仅测时序。\n");
+    printf("[INFO] 预期：主循环 ~10ms/帧（拆锁前实测 40ms）。\n");
+
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] MotorManager 初始化失败\n");
+        return;
+    }
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    // 写阻抗模式 + 使能（电机下电时无回应，但帧会发上总线；kp=kd=0 即使电机有电也安全）
+    printf("[INFO] 写阻抗模式 + 使能 CAN1 电机...\n");
+    for (int mi = 1; mi <= 4; mi++) motor_mgr.SetControlMode(1, mi, IMPEDANCE);
+    usleep(200000);
+    for (int mi = 1; mi <= 4; mi++) motor_mgr.EnableMotor(1, mi);
+    usleep(200000);
+
+    using clk = std::chrono::steady_clock;
+    const int FRAMES = 100;
+    std::vector<double> gaps;
+    auto prev = clk::now();
+    for (int f = 0; f < FRAMES; f++) {
+        for (int mi = 1; mi <= 4; mi++)
+            motor_mgr.SendImpedance(1, mi, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);  // 零增益零扭矩
+        auto now = clk::now();
+        gaps.push_back(std::chrono::duration_cast<std::chrono::microseconds>(now - prev).count() / 1000.0);
+        prev = now;
+        usleep(10000);
+    }
+    std::sort(gaps.begin(), gaps.end());
+    int n = (int)gaps.size();
+    printf("\n  主循环帧间隔: min=%.2f  p50=%.2f  p90=%.2f  max=%.2f ms（usleep=10ms）\n",
+           gaps.front(), gaps[n / 2], gaps[int(n * 0.9)], gaps.back());
+    printf("  %s\n", gaps[n / 2] < 25.0
+        ? "  [OK] 主循环回到 ~10ms（拆锁前 40ms）→ 响应性问题解除"
+        : "  [!] 仍 >25ms → 锁之外还有别的阻塞，需继续排查");
+
+    // 停线程 + 清理
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+    printf("\n[INFO] 示例29 完成（log/ 下 sendcan CSV 可进一步核对每电机命令帧间隔）。\n");
+    fflush(stdout);
+}
+
+// ================= 示例 30：RL 策略链路离线验证（不碰 CAN） =================
+// 用导出工具生成的 REF_OBS/REF_ACTION 参考数据验证 MLP 权重与推理正确性，
+// 以及观测构建与 sim2sim.py 的一致性。纯 CPU 计算，不初始化 CAN、不使能电机。
+void Example30_RLPolicyLinkTest() {
+    printf("\n========== 示例 30：RL 策略链路离线验证 ==========\n");
+    printf("[INFO] 不碰 CAN。用 REF_OBS(64) 跑 mlp_forward，对比 REF_ACTION(16)。\n");
+
+    // 1) MLP 前向 vs 参考输出
+    float act[16];
+    rl::mlp_forward(REF_OBS, act);
+    float max_err = 0.0f;
+    int   max_idx = -1;
+    for (int i = 0; i < rl::ACTION_DIM; i++) {
+        float e = std::fabs(act[i] - REF_ACTION[i]);
+        if (e > max_err) { max_err = e; max_idx = i; }
+    }
+    printf("\n  mlp_forward(REF_OBS) vs REF_ACTION:\n");
+    printf("    最大绝对误差 = %.6e（%s，idx=%d）\n", max_err,
+           max_err < 1e-3f ? "通过" : "失败", max_idx);
+    printf("    %s\n", max_err < 1e-3f
+        ? "  [OK] MLP 权重与网络结构正确"
+        : "  [FAIL] 权重/结构有问题，需用 tool/export_policy.py 重新导出");
+    for (int i = 0; i < rl::ACTION_DIM; i++) {
+        printf("      a[%2d]  got=%.6f  ref=%.6f\n", i, act[i], REF_ACTION[i]);
+    }
+
+    // 2) 观测构建样本（固定输入），供与 Python sim2sim._build_observation 比对。
+    //    这里 gyro 用机体系，quat 用单位四元数（机身水平），pos/vel 全 0（=default 附近）。
+    float gyro[3] = {0.1f, -0.2f, 0.3f};
+    float quat[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+    float pos[16], vel[16];
+    for (int i = 0; i < 16; i++) { pos[i] = 0.0f; vel[i] = 0.0f; }
+    float la[16] = {0.0f};
+    float cmd[3] = {0.3f, 0.0f, 0.1f};
+    float obs[64];
+    rl::build_observation(gyro, quat, pos, vel, la, cmd, 10, obs);
+    printf("\n  build_observation 样本输出（gyro=[0.1,-0.2,0.3], quat=单位, pos/vel=0, step=10）:\n");
+    for (int i = 0; i < 64; i += 8) {
+        printf("    obs[%2d..%2d] = %.6f %.6f %.6f %.6f | %.6f %.6f %.6f %.6f\n",
+               i, i + 7, obs[i], obs[i + 1], obs[i + 2], obs[i + 3],
+               obs[i + 4], obs[i + 5], obs[i + 6], obs[i + 7]);
+    }
+
+    printf("\n[INFO] 示例30 完成（未初始化 CAN）。\n");
+    fflush(stdout);
 }
