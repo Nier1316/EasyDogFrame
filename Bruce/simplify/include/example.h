@@ -45,3 +45,7 @@ void Example28_CANetBatchProbe();
 void Example29_MainLoopCadenceTest();
 // RL 策略链路离线验证（不碰 CAN）：REF_OBS→mlp→REF_ACTION 回归门
 void Example30_RLPolicyLinkTest();
+// RL 零位对齐（摆腿读角，不使能电机）：测仿真默认姿态对应的真机指令角
+void Example31_RLZeroAlign();
+// RL 默认姿态验证（命令到 DEFAULT_POSE，低增益）：验证 GetStatus↔URDF 转换
+void Example32_RLPoseCheck();

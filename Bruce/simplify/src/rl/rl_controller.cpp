@@ -7,9 +7,10 @@
 
 namespace rl {
 
-// 名义站姿（POLICY order）。占位值来自仿真 default pose
-// （hip=0, thigh=0.20, calf=-0.35, wheel=0）。零位对齐后需按真机标定后
-// 物理角替换（见计划阶段 5）。
+// 名义站姿（POLICY order，URDF 约定）。与 dogurdf.py 的
+// NOMINAL_HIP/NOMINAL_THIGH/NOMINAL_CALF 一致（hip=0, thigh=0.20, calf=-0.35,
+// wheel=0），即策略训练默认姿态。真机下发指令角由
+// urdf_to_status(DEFAULT_POSE, joint) 转换得到，不要在此手填真机标定角。
 const float DEFAULT_POSE[NUM_JOINTS] = {
     // FL  FR  RL  RR 各 hip/thigh/calf
     0.0f, 0.20f, -0.35f,
@@ -45,6 +46,24 @@ const int POLICY_TO_MJX[NUM_JOINTS] = {
 };
 const int MJX_TO_POLICY[NUM_JOINTS] = {
     0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 3, 7, 11, 15
+};
+
+// 真机 GetStatus ↔ URDF 每关节转换（POLICY order：12 腿 + 4 轮）。
+// 见 rl_controller.h 注释，基于 2026-08-20 真机 L 形测量。
+// 每腿 hip/thigh/calf：髋(+1,+0.0297) 大腿(-1,-1.0524) 小腿(+1,-1.3832)
+const float CONV_A[NUM_JOINTS] = {
+    +1, -1, +1,    // FL
+    +1, -1, +1,    // FR
+    +1, -1, +1,    // RL
+    +1, -1, +1,    // RR
+    +1, +1, +1, +1 // 4 轮
+};
+const float CONV_B[NUM_JOINTS] = {
+    +0.0297f, -1.0524f, -1.3832f,
+    +0.0297f, -1.0524f, -1.3832f,
+    +0.0297f, -1.0524f, -1.3832f,
+    +0.0297f, -1.0524f, -1.3832f,
+    0.0f, 0.0f, 0.0f, 0.0f
 };
 
 void world2self(const float* q, const float* v, float* out) {

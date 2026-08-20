@@ -10,7 +10,9 @@
  *    与 CAN 顺序（per-leg: hip/thigh/calf/wheel）通过 POLICY_TO_MJX 互转。
  *  - 收发的标定由 MotorManager 自动处理（GetStatus 已标定、SendImpedance 自动逆标定），
  *    本模块只面对「标定后统一坐标系」。
- *  - 零位对齐暂未做：DEFAULT_POSE 用仿真占位值，后续足端对齐后替换。
+ *  - 零位对齐已做：真机 GetStatus 角 ↔ URDF 角的每关节差异（大腿符号相反 + 偏移）
+ *    由 CONV_A/CONV_B 转换吸收（见下）。观测/动作均工作在 URDF 约定，
+ *    DEFAULT_POSE 是策略训练默认姿态（URDF 约定），下发前经 urdf_to_status 转回真机指令角。
  */
 #pragma once
 
@@ -45,6 +47,32 @@ extern const float GAIT_OFFSET[4];
 extern const int POLICY_TO_MJX[NUM_JOINTS];
 // MJX/CAN -> POLICY 映射：policy[i] 对应 can[MJX_TO_POLICY[i]]
 extern const int MJX_TO_POLICY[NUM_JOINTS];
+
+// ---- 真机 GetStatus 角 ↔ URDF 角的每关节映射（2026-08-20 真机 L 形测量）----
+// 背景：策略在 URDF/MuJoCo 约定下训练（正向=后摆等），但真机 GetStatus 返回的
+//       指令角用了电机标定约定，两者存在每关节的符号/偏移差异。
+//       实测：大腿符号相反（真机正向=前摆），髋/小腿符号相同。
+// 关系：URDF = CONV_A[joint]*GetStatus + CONV_B[joint]（角度 rad）
+//   hip   A=+1 B=+0.0297   （L 形：GetStatus -1.7° ↔ URDF 0°）
+//   thigh A=-1 B=-1.0524   （L 形：GetStatus -91.8° ↔ URDF +31.5°）
+//   calf  A=+1 B=-1.3832   （L 形：GetStatus +89.0° ↔ URDF +9.75°）
+//   wheel A=+1 B=0         （不参与位置 obs，速度仅用符号）
+// ⚠ 基于一次 L 形目测，数值待真机低增益验证后再微调。
+extern const float CONV_A[NUM_JOINTS];   // ±1 符号
+extern const float CONV_B[NUM_JOINTS];   // 偏移 (rad)
+
+/** GetStatus 角 → URDF 角（位置用，含偏移 B） */
+inline float status_to_urdf(float angle_gs, int joint) {
+    return CONV_A[joint] * angle_gs + CONV_B[joint];
+}
+/** GetStatus 速度 → URDF 速度（B 是常数，只保留符号） */
+inline float status_vel_to_urdf(float vel_gs, int joint) {
+    return CONV_A[joint] * vel_gs;
+}
+/** URDF 角 → GetStatus 角（动作下发用） */
+inline float urdf_to_status(float angle_urdf, int joint) {
+    return (angle_urdf - CONV_B[joint]) / CONV_A[joint];
+}
 
 /**
  * @brief 将世界系向量 v 通过四元数 q 旋转到机体坐标系

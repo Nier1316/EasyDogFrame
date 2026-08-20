@@ -52,22 +52,26 @@ enum JointIndex : uint8_t {
 };
 
 // =====================================================================
-//  §2  连杆参数 (m) —— 按实物测量修改
+//  §2  连杆参数 (m) —— 以 dogurdf URDF 为准（2026-08-20 实测确认）
 //
-//  IK 可达半径 = |L2−L3| ~ (L2+L3)。当前 L2==L3，故理论可完全收拢。
-//  改这三个值会直接改变 FK/IK 结果，改完务必跑往返校验（见 §7）。
+//  真值来源：dogurdf_sim2sim_deploy/assets/bot_model/dogurdf/dogurdf.xml
+//    - 髋外摆轴→大腿轴 Y 距 = 0.1308（MJCF FL_thigh pos.y）
+//    - 大腿长 = 0.34（FL_calf pos.z）
+//    - 小腿长(膝→轮轴) = 0.343 = √(0.10583² + 0.045² + 0.32311²)
+//  注意：原值 0.12/0.35/0.35 与 URDF 不符（另一台机型残留），已废弃。
+//  IK 可达半径 = |L2−L3| ~ (L2+L3)。
 // =====================================================================
-constexpr float LEG_L1 = 0.12f;   // 髋侧向偏移量（髋外摆轴 → 大腿轴的 Y 向距离）
-constexpr float LEG_L2 = 0.35f;   // 大腿长度
-constexpr float LEG_L3 = 0.35f;   // 小腿长度
+constexpr float LEG_L1 = 0.1308f;  // 髋侧向偏移量（髋外摆轴 → 大腿轴的 Y 向距离）
+constexpr float LEG_L2 = 0.34f;    // 大腿长度（髋轴 → 膝轴）
+constexpr float LEG_L3 = 0.343f;   // 小腿长度（膝轴 → 轮轴）
 
 // =====================================================================
-//  §3  机身尺寸 (m) 与腿安装位置
+//  §3  机身尺寸 (m) 与腿安装位置 —— 以 dogurdf URDF 为准
 // =====================================================================
-constexpr float BODY_LENGTH = 0.30f;   // 机身长 (X 方向，前后)
-constexpr float BODY_WIDTH  = 0.12f;   // 机身宽 (Y 方向，左右)
+constexpr float BODY_LENGTH = 0.653f;  // 机身长 (X 方向，前后髋轴距)
+constexpr float BODY_WIDTH  = 0.16f;   // 机身宽 (Y 方向，左右髋轴距)
 // 注意：BODY_SIZE_HEIGHT 目前不参与任何解算 —— LEG_MOUNT 的 z 全为 0，
-// 即髋关节被视作与机身中心同高。需要考虑髋轴高度差时改 LEG_MOUNT 的 z 分量。
+// 即髋关节被视作与机身中心同高（URDF 亦如此）。需要考虑髋轴高度差时改 LEG_MOUNT 的 z 分量。
 constexpr float BODY_SIZE_HEIGHT = 0.06f;   // 机身高 (Z 方向)
 
 // 腿安装位置（身体坐标系）：x+ 向前, y+ 向左, z+ 向上

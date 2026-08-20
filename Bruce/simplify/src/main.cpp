@@ -77,9 +77,9 @@ int main() {
 
 
     // 运行示例21 - Xbox 手柄控制
-    printf("[INFO] Running Example21_XboxControllerControl...\n");
-    Example21_XboxControllerControl();
-    printf("[INFO] Example21 completed.\n");
+    // printf("[INFO] Running Example21_XboxControllerControl...\n");
+    // Example21_XboxControllerControl();
+    // printf("[INFO] Example21 completed.\n");
 
     // 运行示例22 - 起立 + 轮子阻抗模式测试
     // printf("[INFO] Running Example22_StandAndWheelTest...\n");
@@ -124,9 +124,19 @@ int main() {
     // printf("[INFO] Example29 completed.\n");
 
     // 运行示例30 - RL 策略链路离线验证（不碰 CAN）
-    printf("[INFO] Running Example30_RLPolicyLinkTest...\n");
-    Example30_RLPolicyLinkTest();
-    printf("[INFO] Example30 completed.\n");
+    // printf("[INFO] Running Example30_RLPolicyLinkTest...\n");
+    // Example30_RLPolicyLinkTest();
+    // printf("[INFO] Example30 completed.\n");
+
+    // 运行示例31 - RL 零位对齐（摆腿读角，不使能电机）
+    // printf("[INFO] Running Example31_RLZeroAlign...\n");
+    // Example31_RLZeroAlign();
+    // printf("[INFO] Example31 completed.\n");
+
+    // 运行示例32 - RL 默认姿态验证（命令到 DEFAULT_POSE，低增益）
+    printf("[INFO] Running Example32_RLPoseCheck...\n");
+    Example32_RLPoseCheck();
+    printf("[INFO] Example32 completed.\n");
     return 0;
 }
 

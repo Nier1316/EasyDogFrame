@@ -2538,7 +2538,8 @@ static void rl_signal_handler(int) { g_rl_stop = 1; }
 void Example25_RLPolicyControl() {
     printf("\n========== Example 25: RL Policy Control (dogurdf) ==========\n");
     printf("[INFO] 50 Hz RL 循环，Ctrl+C 急停（失能所有电机）\n");
-    printf("[INFO] 零位对齐未做：DEFAULT_POSE 为占位值，策略输出仅验证链路\n\n");
+    printf("[INFO] 零位对齐已做（L形测量）：观测/动作经 rl::CONV_* 转 URDF 约定\n");
+    printf("[INFO] 数值为近似，低增益验证后微调；Ctrl+C 急停\n\n");
 
     const int HZ = 50;  // 与训练一致（CONTROL_DT = 0.02 s）
 
@@ -2634,11 +2635,14 @@ void Example25_RLPolicyControl() {
             }
         }
 
-        // 2) CAN order -> policy order
+        // 2) CAN order -> policy order -> URDF 约定。
+        //    真机 GetStatus 角用电机标定约定，与策略训练用的 URDF 约定存在
+        //    每关节符号/偏移差异（大腿符号相反），经 rl::CONV_* 转成 URDF 约定，
+        //    策略观测/动作才能与训练一致。
         float pos_policy[16], vel_policy[16];
         for (int i = 0; i < 16; i++) {
-            pos_policy[i] = pos_can[rl::MJX_TO_POLICY[i]];
-            vel_policy[i] = vel_can[rl::MJX_TO_POLICY[i]];
+            pos_policy[i] = rl::status_to_urdf(pos_can[rl::MJX_TO_POLICY[i]], i);
+            vel_policy[i] = rl::status_vel_to_urdf(vel_can[rl::MJX_TO_POLICY[i]], i);
         }
 
         // 3) 读 IMU
@@ -2661,7 +2665,8 @@ void Example25_RLPolicyControl() {
                 int mjx = cp * 4 + (mi - 1);
                 int p = rl::POLICY_TO_MJX[mjx];
                 if (mi <= 3) {
-                    float q_target = rl::leg_pos_target(action[p], p);
+                    // 动作目标角是 URDF 约定，转回真机 GetStatus 约定再下发
+                    float q_target = rl::urdf_to_status(rl::leg_pos_target(action[p], p), p);
                     motor_mgr.SendImpedance(cp, mi, q_target, 0.0f,
                                             rl::LEG_KP, rl::LEG_KD, 0.0f);
                 } else {
@@ -3246,5 +3251,316 @@ void Example30_RLPolicyLinkTest() {
     }
 
     printf("\n[INFO] 示例30 完成（未初始化 CAN）。\n");
+    fflush(stdout);
+}
+
+// ================= 示例 31：RL 零位对齐（摆腿读角，不使能电机） =================
+// 目的：测量"仿真默认姿态"对应的真机标定后指令角，填入 rl::DEFAULT_POSE。
+// 做法：不使能电机（零扭矩，可自由摆腿），周期发 MOTOR_OR_angle 读参数帧，
+//       GetStatus 返回标定后指令角。用户手动把每只脚（轮轴心）摆到仿真默认
+//       足端位置，从显示中读取各关节角。
+// 仿真默认足端（body 系，轮轴心，来自 dogurdf sim2sim/MJCF）：
+//   FL/FR = (±0.267, ±0.2558, -0.3364)  RL/RR = (-0.386, ±0.2558, -0.3364)
+// 注意：DEFAULT_POSE 只需 12 个腿关节角（轮子在策略 obs 里不参与 joint_pos_rel），
+//       轮子填 0。40 秒窗口，每 0.5s 刷新显示，结束时打印最终候选数组。
+void Example31_RLZeroAlign() {
+    printf("\n========== 示例 31：RL 零位对齐 + 关节范围扫描 ==========\n");
+    printf("[INFO] 不使能电机（零扭矩），用读参数帧读位置。电机驱动须供电。\n");
+    printf("[INFO] 自动记录每个关节的 min/max：来回掰各关节到机械极限，程序帮你记。\n");
+    printf("[INFO] 也可顺带把脚摆到仿真默认足端位置读角（DEFAULT_POSE 候选）。\n");
+    printf("[INFO] 90 秒窗口，每 0.5s 刷新。\n\n");
+
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] MotorManager 初始化失败\n");
+        return;
+    }
+    thread_mgr.start_thread("motor_receive");   // 只需接收线程解包读参回帧
+    sleep(1);
+
+    // 仿真默认足端目标（body 系，轮轴心）
+    const float target[4][3] = {
+        { 0.267f,  0.2558f, -0.3364f},   // FL
+        { 0.267f, -0.2558f, -0.3364f},   // FR
+        {-0.386f,  0.2558f, -0.3364f},   // RL
+        {-0.386f, -0.2558f, -0.3364f},   // RR
+    };
+    const char* legname[4] = {"FL", "FR", "RL", "RR"};
+
+    printf("仿真默认足端目标（body 系，轮轴心，米）:\n");
+    for (int leg = 0; leg < 4; leg++)
+        printf("  %s: (%.3f, %.3f, %.3f)   相对髋: (%.3f, %.3f, %.3f)\n",
+               legname[leg], target[leg][0], target[leg][1], target[leg][2],
+               target[leg][0] - LEG_MOUNT[leg][0],
+               target[leg][1] - LEG_MOUNT[leg][1],
+               target[leg][2] - LEG_MOUNT[leg][2]);
+    printf("\n[操作] 逐腿摆到目标位置，读显示中的关节角并记录。\n");
+    printf("       髋X轴/大腿/小腿电机驱动供电即可，不必使能（零扭矩）。\n\n");
+    fflush(stdout);
+
+    using clk = std::chrono::steady_clock;
+    auto t_start = clk::now();
+    int ms_since = 0;
+    int quiet_cnt = 0;   // 连续无响应计数（判断电机驱动是否供电）
+    float min_pos[16], max_pos[16];
+    bool have_reading = false;
+
+    while (true) {
+        int elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            clk::now() - t_start).count();
+        if (elapsed >= 90000) break;
+
+        // 周期读 16 电机角度（读参数帧，非使能控制帧）
+        float pos_can[16];
+        for (int cp = 0; cp < 4; cp++)
+            for (int mi = 1; mi <= 4; mi++)
+                motor_mgr.ReadParam(cp, mi, MOTOR_OR_angle);
+        usleep(60000);   // 等回帧（10ms 地板 × 串行，16 帧约需 160ms，取 60ms 偏紧——多轮后跟上）
+
+        for (int cp = 0; cp < 4; cp++)
+            for (int mi = 1; mi <= 4; mi++)
+                pos_can[cp * 4 + (mi - 1)] = motor_mgr.GetStatus(cp, mi).position;
+
+        // 更新 min/max
+        if (!have_reading) {
+            for (int i = 0; i < 16; i++) min_pos[i] = max_pos[i] = pos_can[i];
+            have_reading = true;
+        } else {
+            for (int i = 0; i < 16; i++) {
+                if (pos_can[i] < min_pos[i]) min_pos[i] = pos_can[i];
+                if (pos_can[i] > max_pos[i]) max_pos[i] = pos_can[i];
+            }
+        }
+
+        // 无响应检测：若全部 ≈0 且长时间不变，提示驱动可能断电
+        bool any = false;
+        for (int i = 0; i < 16; i++) if (std::fabs(pos_can[i]) > 1e-4f) any = true;
+        if (!any) quiet_cnt++;
+        else quiet_cnt = 0;
+
+        // 显示（每 0.5s 刷一次：当前值 + min/max 范围）
+        ms_since += 60;
+        if (ms_since >= 500) {
+            ms_since = 0;
+            int remain = (90000 - elapsed) / 1000;
+            printf("\r[剩 %3ds] 当前: ", remain);
+            for (int leg = 0; leg < 4; leg++) {
+                int base = leg * 4;
+                printf("%s(h%6.1f t%6.1f c%6.1f w%6.1f)  ",
+                       legname[leg],
+                       rad2deg(pos_can[base + 0]), rad2deg(pos_can[base + 1]),
+                       rad2deg(pos_can[base + 2]), rad2deg(pos_can[base + 3]));
+            }
+            printf("\n         范围: ");
+            for (int leg = 0; leg < 4; leg++) {
+                int base = leg * 4;
+                printf("%s[h%5.1f..%5.1f t%5.1f..%5.1f c%5.1f..%5.1f]  ",
+                       legname[leg],
+                       rad2deg(min_pos[base + 0]), rad2deg(max_pos[base + 0]),
+                       rad2deg(min_pos[base + 1]), rad2deg(max_pos[base + 1]),
+                       rad2deg(min_pos[base + 2]), rad2deg(max_pos[base + 2]));
+            }
+            printf("\n");
+            fflush(stdout);
+        }
+        if (quiet_cnt >= 5) {
+            printf("\n[WARN] 连续多轮读不到位置（全 0）。确认电机驱动已供电、CAN 正常。\n");
+            quiet_cnt = 0;
+        }
+    }
+
+    // ---- 结束时打印关节范围扫描结果 + DEFAULT_POSE 候选 ----
+    printf("\n\n========== 关节范围扫描结果（机械真实限位，deg）==========\n");
+    for (int leg = 0; leg < 4; leg++) {
+        int base = leg * 4;
+        printf("  %s: hip[%7.1f, %7.1f]  thigh[%7.1f, %7.1f]  calf[%7.1f, %7.1f]\n",
+               legname[leg],
+               rad2deg(min_pos[base + 0]), rad2deg(max_pos[base + 0]),
+               rad2deg(min_pos[base + 1]), rad2deg(max_pos[base + 1]),
+               rad2deg(min_pos[base + 2]), rad2deg(max_pos[base + 2]));
+    }
+    printf("\n对照项目旧限位(deg): hip[-60,0] thigh[-70,90] calf[60,180]\n");
+    printf("对照 URDF 限位(deg): hip[-34.4,34.4] thigh[-40.1,100.3] calf[-57.3,20.1]\n");
+
+    float pos_can[16];
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 4; mi++)
+            pos_can[cp * 4 + (mi - 1)] = motor_mgr.GetStatus(cp, mi).position;
+
+    printf("\n========== 当前快照：DEFAULT_POSE 候选（POLICY order, rad）==========\n");
+    printf("（12 腿关节 FL,FR,RL,RR 各 hip/thigh/calf，轮子=0；把每腿摆到目标足端后读）\n");
+    printf("const float DEFAULT_POSE[16] = {\n");
+    for (int p = 0; p < 16; p++) {
+        float v = 0.0f;
+        if (p < 12) v = pos_can[rl::POLICY_TO_MJX[p]];
+        printf("    %.4ff,", v);
+        if ((p + 1) % 3 == 0) printf("    // %s\n", legname[p / 3]);
+        else if ((p + 1) % 4 == 0) printf("\n");
+    }
+    printf("};\n");
+
+    thread_mgr.stop_thread("motor_receive");
+    motor_mgr.Stop();
+    printf("\n[INFO] 示例31 完成（未使能任何电机）。\n");
+    fflush(stdout);
+}
+
+// ================= 示例 32：RL 默认姿态验证（命令到 DEFAULT_POSE，低增益） =================
+// 目的：在跑完整 RL 循环前，验证 GetStatus↔URDF 转换是否正确——命令 16 电机
+//      到 rl::DEFAULT_POSE（URDF 仿真默认，经 urdf_to_status 转回真机指令角），
+//      低增益缓慢到位，确认能摆出仿真默认站姿、各关节方向正确。
+// 增益：kp=150/kd=20（与 RL 起立一致），5s 慢插值；若姿态异常可立即 Ctrl+C。
+void Example32_RLPoseCheck() {
+    printf("\n========== 示例 32：RL 默认姿态验证 ==========\n");
+    printf("[INFO] 命令 16 电机到 DEFAULT_POSE（经转换），kp=150/kd=20，5s 慢到位。\n");
+    printf("[INFO] 预期：摆出仿真默认站姿（脚在默认位置）；异常立即 Ctrl+C。\n\n");
+
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] MotorManager 初始化失败\n");
+        return;
+    }
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+    const char* legname[4] = {"FL", "FR", "RL", "RR"};
+
+    // 写阻抗 + 使能
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 4; mi++)
+            motor_mgr.SetControlMode(cp, mi, IMPEDANCE);
+    usleep(200000);
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 4; mi++)
+            motor_mgr.EnableMotor(cp, mi);
+    usleep(300000);
+
+    // 目标：DEFAULT_POSE（URDF）转真机指令角。
+    // 注意腿/轮判定：轮子是每路第 4 个电机（mjx%4==3），不是 mjx>=12！
+    // 曾用 mjx<12 误把 RR 的腿关节（mjx=12,13,14）当轮子置 0，RR 姿态全错。
+    float tgt_gs[16];
+    for (int mjx = 0; mjx < 16; mjx++) {
+        int p = rl::POLICY_TO_MJX[mjx];
+        if (mjx % 4 != 3)  // 腿关节
+            tgt_gs[mjx] = rl::urdf_to_status(rl::DEFAULT_POSE[p], p);
+        else               // 轮子：自由
+            tgt_gs[mjx] = 0.0f;
+    }
+
+    // 读取当前角度作为起点
+    float start[16];
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 4; mi++)
+            start[cp * 4 + (mi - 1)] = motor_mgr.GetStatus(cp, mi).position;
+
+    printf("目标(真机指令角,deg): ");
+    for (int leg = 0; leg < 4; leg++)
+        printf("%s(h%6.1f t%6.1f c%6.1f)  ", legname[leg],
+               rad2deg(tgt_gs[leg * 4 + 0]), rad2deg(tgt_gs[leg * 4 + 1]),
+               rad2deg(tgt_gs[leg * 4 + 2]));
+
+    // 目标角超限核对（真机指令限位来自 robot_calibration.h §4）。
+    // CONV_B 基于一次 L 形目测，若转换后目标角出界（当前 thigh≈-71.8° 略超 -70°），
+    // 说明测量有误差，需现场微调 CONV_B，避免硬顶机械限位。
+    bool over = false;
+    const char* jname[3] = {"hip", "thigh", "calf"};
+    const float lo[3] = {LOWER_LIMIT_THETA1_DEG, LOWER_LIMIT_THETA2_DEG, LOWER_LIMIT_THETA3_DEG};
+    const float hi[3] = {UPPER_LIMIT_THETA1_DEG, UPPER_LIMIT_THETA2_DEG, UPPER_LIMIT_THETA3_DEG};
+    printf("\n[限位核对] 真机指令限位(deg) hip[%g,%g] thigh[%g,%g] calf[%g,%g]\n",
+           lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]);
+    for (int leg = 0; leg < 4; leg++) {
+        for (int j = 0; j < 3; j++) {
+            float t = rad2deg(tgt_gs[leg * 4 + j]);
+            if (t < lo[j] || t > hi[j]) {
+                printf("  [WARN] %s-%s 目标 %7.1f° 超限 [%5.1f, %5.1f]\n",
+                       legname[leg], jname[j], t, lo[j], hi[j]);
+                over = true;
+            }
+        }
+    }
+    if (over)
+        printf("[WARN] 存在超限目标角 → CONV_B 测量需微调；程序仍会执行，超限角将顶机械限位，务必盯紧电机。\n");
+
+    printf("\n\n[INFO] 5s 插值到位...\n");
+    fflush(stdout);
+
+    const int FRAMES = 250;  // 5s @ 50Hz
+    for (int f = 0; f <= FRAMES; f++) {
+        float t = (float)f / FRAMES;
+        for (int cp = 0; cp < 4; cp++) {
+            for (int mi = 1; mi <= 3; mi++) {
+                int mjx = cp * 4 + (mi - 1);
+                float pos = start[mjx] + (tgt_gs[mjx] - start[mjx]) * t;
+                motor_mgr.SendImpedance(cp, mi, pos, 0.0f, 200.0f, 20.0f, 0.0f);
+            }
+            motor_mgr.SendImpedance(cp, 4, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);  // 轮自由
+        }
+        if (f % 25 == 0) {
+            printf("\r  [%3.0f%%] ", t * 100);
+            for (int leg = 0; leg < 4; leg++)
+                printf("%s(h%6.1f t%6.1f c%6.1f)  ", legname[leg],
+                       rad2deg(motor_mgr.GetStatus(leg, 1).position),
+                       rad2deg(motor_mgr.GetStatus(leg, 2).position),
+                       rad2deg(motor_mgr.GetStatus(leg, 3).position));
+            fflush(stdout);
+        }
+        usleep(20000);  // 50Hz
+    }
+
+    // 保持 3s，观察是否稳定
+    printf("\n[INFO] 保持 3s（观察是否稳定、脚是否在默认位置）...\n");
+    for (int f = 0; f < 750; f++) {
+        for (int cp = 0; cp < 4; cp++)
+            for (int mi = 1; mi <= 3; mi++) {
+                int mjx = cp * 4 + (mi - 1);
+                motor_mgr.SendImpedance(cp, mi, tgt_gs[mjx], 0.0f, 200.0f, 20.0f, 0.0f);
+            }
+        usleep(20000);
+    }
+
+    printf("\n[INFO] 到位后各腿实际角度: ");
+    for (int leg = 0; leg < 4; leg++)
+        printf("%s(h%6.1f t%6.1f c%6.1f)  ", legname[leg],
+               rad2deg(motor_mgr.GetStatus(leg, 1).position),
+               rad2deg(motor_mgr.GetStatus(leg, 2).position),
+               rad2deg(motor_mgr.GetStatus(leg, 3).position));
+    printf("\n\n[判读] 对照目标：是否到达且姿态像 dogurdf 默认站姿。\n");
+    printf("      脚若不在默认位置/方向不对 → 转换有问题，调 CONV_*。\n");
+
+    // 缓慢插值回到初始位置（5s），测试完不留机器在 DEFAULT 姿态
+    printf("\n[INFO] 缓慢插值回到初始位置（5s）...\n");
+    for (int f = 0; f <= FRAMES; f++) {
+        float t = (float)f / FRAMES;
+        for (int cp = 0; cp < 4; cp++) {
+            for (int mi = 1; mi <= 3; mi++) {
+                int mjx = cp * 4 + (mi - 1);
+                float pos = tgt_gs[mjx] + (start[mjx] - tgt_gs[mjx]) * t;
+                motor_mgr.SendImpedance(cp, mi, pos, 0.0f, 200.0f, 20.0f, 0.0f);
+            }
+            motor_mgr.SendImpedance(cp, 4, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);  // 轮自由
+        }
+        if (f % 25 == 0) {
+            printf("\r  [%3.0f%%] ", t * 100);
+            for (int leg = 0; leg < 4; leg++)
+                printf("%s(h%6.1f t%6.1f c%6.1f)  ", legname[leg],
+                       rad2deg(motor_mgr.GetStatus(leg, 1).position),
+                       rad2deg(motor_mgr.GetStatus(leg, 2).position),
+                       rad2deg(motor_mgr.GetStatus(leg, 3).position));
+            fflush(stdout);
+        }
+        usleep(20000);
+    }
+    printf("\n[INFO] 已回到初始位置。\n");
+
+    // 清理
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 4; mi++)
+            motor_mgr.DisableMotor(cp, mi);
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+    printf("\n[INFO] 示例32 完成。\n");
     fflush(stdout);
 }
