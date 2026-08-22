@@ -24,7 +24,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(HERE)  # simplify/
 DEPLOY = os.path.join(PROJECT, "dogurdf_sim2sim_deploy")
-CKPT = os.path.join(DEPLOY, "checkpoints/dogurdf_velocity/iteration_1000.pkl")
+CKPT = os.path.join(DEPLOY, "checkpoints/dogurdf_velocity/iteration_450.pkl")
 OUT_WEIGHTS = os.path.join(PROJECT, "include/rl/policy_weights.h")
 OUT_REF = os.path.join(PROJECT, "include/rl/policy_test_ref.h")
 

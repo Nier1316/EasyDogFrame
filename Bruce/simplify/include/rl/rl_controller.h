@@ -26,7 +26,7 @@ constexpr int OBS_DIM         = 64;
 // ---- 控制参数（sim2sim.py 静态常量）----
 constexpr float ACTION_SCALE        = 0.25f;
 constexpr float WHEEL_VEL_SCALE     = 12.5f;
-constexpr float LEG_KP              = 150.0f;
+constexpr float LEG_KP              = 250.0f;   // 与 iteration_450 训练配置一致（stiffness=250）
 constexpr float LEG_KD              = 4.0f;
 constexpr float WHEEL_KD            = 2.0f;
 constexpr float LEG_TORQUE_LIMIT    = 150.0f;
