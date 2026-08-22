@@ -35,16 +35,15 @@ NUM_LEG_JOINTS = len(DOGURDF_LEG_JOINT_NAMES)  # 12
 NUM_WHEELS = len(DOGURDF_WHEEL_JOINT_NAMES)    # 4
 
 # Nominal stance, calibrated against the model: places each wheel centre
-# directly under its hip (x offset 1e-4 m) with the torso at z = 0.45 m.
-# Raised from 0.347 on 2026-08-18: user wanted a taller ride height, then
-# dialed 0.55 back to 0.45. Only calf changed (-0.70 -> -0.35); thigh stays
-# at 0.20 so the stance stays close to the original. Measured via FK:
-# (thigh=0.20, calf=-0.35) sits the torso at 0.449 m and still gives ~0.10 m
-# of wheel lift with 0.35 rad of calf fold.
+# directly under its hip (x offset 1e-4 m) with the torso at z = 0.40 m.
+# User set ride height to 0.40 on 2026-08-21 (was 0.50). thigh stays at 0.20;
+# calf goes -0.135 -> -0.53. Measured via FK: (thigh=0.20, calf=-0.53) sits
+# the torso at 0.399 m and still gives ~0.11 m of wheel lift with 0.35 rad of
+# calf fold.
 NOMINAL_HIP = 0.0
 NOMINAL_THIGH = 0.20
-NOMINAL_CALF = -0.35
-NOMINAL_TORSO_HEIGHT = 0.45
+NOMINAL_CALF = -0.53
+NOMINAL_TORSO_HEIGHT = 0.40
 
 WHEEL_RADIUS = 0.113
 # Motor limit 12.5 rad/s -> 12.5 * 0.113 = 1.41 m/s top speed.

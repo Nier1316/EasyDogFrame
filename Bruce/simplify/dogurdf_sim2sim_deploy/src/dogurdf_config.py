@@ -92,7 +92,7 @@ def get_dogurdf_config():
     # ========== Initial state ==========
     # Nominal stance sits at z=0.40; spawn slightly above it.
     config.init_state = config_dict.ConfigDict()
-    config.init_state.pos = (0.0, 0.0, 0.46)
+    config.init_state.pos = (0.0, 0.0, 0.41)
     config.init_state.rot = (1.0, 0.0, 0.0, 0.0)
 
     config.init_state.default_joint_angles = config_dict.ConfigDict()

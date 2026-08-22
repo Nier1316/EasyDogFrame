@@ -26,7 +26,7 @@ fi
 PY="$(command -v python || command -v python3)"
 
 # --- checkpoint 校验 -----------------------------------------------------
-CKPT="checkpoints/dogurdf_velocity/iteration_1000.pkl"
+CKPT="checkpoints/dogurdf_velocity/iteration_450.pkl"
 if [ ! -f "$CKPT" ]; then
   echo "ERROR: checkpoint 不存在: $CKPT" >&2
   echo "  期望路径: $HERE/$CKPT" >&2

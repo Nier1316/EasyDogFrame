@@ -14,7 +14,7 @@
 |---|---|
 | 机器人 | dogurdf 轮足四足，16 DoF（4×[hip, thigh, calf, wheel]） |
 | 训练框架 | MJX/JAX PPO（自研管线），8192 envs |
-| **checkpoint** | `checkpoints/dogurdf_velocity/iteration_1000.pkl`（traj_v7） |
+| **checkpoint** | `checkpoints/dogurdf_velocity/iteration_450.pkl`（traj_v13） |
 | 观测维度 | **64**（含 gait-phase 时钟） |
 | 动作维度 | 16（12 腿位置目标 + 4 轮速目标） |
 | **控制频率** | **50 Hz**（控制步 0.02 s；仿真步 0.005 s，decimation=4） |
@@ -41,7 +41,7 @@ dogurdf_sim2sim_deploy/
 │   ├── meshes/*.STL                  # 视觉/碰撞网格
 │   └── urdf/                         # 原始 URDF（参考，不直接使用）
 └── checkpoints/dogurdf_velocity/
-    └── iteration_1000.pkl            # 训练好的策略权重（~5MB）
+    └── iteration_450.pkl            # 训练好的策略权重（traj_v13，~5MB）
 ```
 
 ---
@@ -145,7 +145,7 @@ cd dogurdf_sim2sim_deploy
 | yaw rate 跟踪 | ±1.03 rad/s（指令 ±1.0，跟随良好） |
 | 平面漂移 | ~0.10 m/s（原地转弯，非平移） |
 
-> ⚠️ **已知风险（务必阅读）**：训练在 iter ~4000+ 出现 reward hacking（四轮高频乱摆腿刷抬腿奖励）。**本包选用的 iter_1000 是达标版本**，但这是**训练后期退化前的 checkpoint**。部署时不要对更高 iteration 的 checkpoint 抱期望；若需重新训练，参考 `src/cfg/` 的奖励配置并注意早期停止。
+> ⚠️ **已知风险（务必阅读）**：训练在 iter ~4000+ 可能复现 reward hacking（四轮高频乱摆腿刷抬腿奖励）。**本包选用 traj_v13 的 iteration_450（达标：reward 253.6 / episode 1985.5）**，是退化前的 checkpoint。部署时不要对更高 iteration 的 checkpoint 抱期望；若需重新训练，参考 `src/cfg/` 的奖励配置并注意早期停止。
 
 ---
 
@@ -164,8 +164,9 @@ cd dogurdf_sim2sim_deploy
 ## 9. 训练溯源
 
 - 训练框架：`/home/sysu/Desktop/Project/Bruce/RL_Train/code`（MJX/JAX PPO）
-- 本策略：`run_name=traj_v7`，`checkpoints_20260819_001958_traj_v7/iteration_1000.pkl`
+- 本策略：`run_name=traj_v13`，`checkpoints_20260822_054003_traj_v13/iteration_450.pkl`
 - 站高 0.45 m（default pose thigh=0.20, calf=−0.35，FK 实测 0.449 m，抬腿能力 0.10 m）
+- 真机标定：质量 56.71 kg（实测校准），kp=250，扭矩限 250 N·m，轮地摩擦 1.36
 - 奖励要点：`feet_air_time_turn=50` + `feet_lift_turn=3` + `rotation_gait_symmetry=15`（242a371 成功配方），`phase_gait=0`
 - 达标判定：diagnose_turn 对角同空比例 > 0.6、yaw 跟踪、漂移小
 

@@ -74,9 +74,9 @@ except ImportError:
 # --------------------------------------------------------------------------
 ACTION_SCALE = 0.25
 WHEEL_VEL_SCALE = WHEEL_VEL_LIMIT          # 12.5
-LEG_KP, LEG_KD = 150.0, 4.0
+LEG_KP, LEG_KD = 250.0, 4.0
 WHEEL_KP, WHEEL_KD = 0.0, 2.0
-LEG_TORQUE_LIMIT, WHEEL_TORQUE_LIMIT = 150.0, 53.0
+LEG_TORQUE_LIMIT, WHEEL_TORQUE_LIMIT = 250.0, 53.0
 DECIMATION = 4
 SIM_DT = 0.005
 CONTROL_DT = SIM_DT * DECIMATION           # 0.02 s -> 50 Hz
