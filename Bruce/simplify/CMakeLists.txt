@@ -25,11 +25,9 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
 
 # ============ 头文件搜索路径 ============
+# 分层目录结构：include/<layer>/xxx.h，以 include/ 为根，用 "layer/xxx.h" 引用
 include_directories(
     ${PROJECT_SOURCE_DIR}/include
-    ${PROJECT_SOURCE_DIR}/include/motor_drive
-    ${PROJECT_SOURCE_DIR}/include/math
-    ${PROJECT_SOURCE_DIR}/include/bsp
     ${PROJECT_SOURCE_DIR}/lib
 )
 
@@ -45,36 +43,38 @@ if(NOT SDL2_FOUND)
     endif()
 endif()
 
-# ============ 源文件列表 ============
+# ============ 源文件列表（按分层目录） ============
 set(SOURCES
-    # 主程序
-    src/main.cpp
+    # L7 应用
+    src/app/main.cpp
+    # 示例（按功能拆分，公共 helper）
+    src/app/examples/examples_common.cpp
+    src/app/examples/ex_basic.cpp
+    src/app/examples/ex_diag.cpp
+    src/app/examples/ex_rl.cpp
 
-    # 示例程序
-    src/example.cpp
+    # L6 运行时（线程/顶层应用/电机IO线程）
+    src/runtime/thread_manager.cpp
+    src/runtime/robot_app.cpp
+    src/runtime/motor_io.cpp
 
-    # CAN 设备层
-    src/can_device.cpp
+    # L5 策略/感知（RL/IMU/sim2real 标定）
+    src/strategy/rl_controller.cpp
+    src/strategy/sim2real_conv.cpp
+    src/strategy/imu_device.cpp
 
-    # BSP 层
-    src/bsp/bsp_can.cpp
+    # L4 运控
+    src/motion/motion_controller.cpp
 
-    # 线程管理层
-    src/thread/thread_manager.cpp
+    # L3 电机管理
+    src/motor/motor_manager.cpp
 
-    # 顶层应用
-    src/RoboTasks/robot_app.cpp
+    # L2 电机驱动
+    src/motor/ele_motor.cpp
 
-    # 电机管理层
-    src/motor_manager.cpp
-
-    # 电机驱动层
-    src/motor_drive/ele_motor.cpp
-
-    # RL 策略部署
-    src/rl/rl_controller.cpp
-    src/imu_device.cpp
-
+    # L1 传输层（CANET → CanetTransport）
+    src/transport/canet_transport.cpp
+    src/transport/can_device.cpp
 )
 
 # ============ 编译可执行文件 ============
