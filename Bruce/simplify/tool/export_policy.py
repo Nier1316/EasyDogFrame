@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Export the dogurdf policy actor weights into a C++ header.
 
-Reads ``dogurdf_sim2sim_deploy/checkpoints/dogurdf_velocity/iteration_1000.pkl``
+Reads the dogurdf RL training checkpoint
+``/home/sysu/Desktop/Project/Bruce/RL_Train/code/checkpoints/.../iteration_1100.pkl``
 (flax ``ActorCriticMLP`` state dict), extracts the 4 actor layers, and writes:
 
-  * ``include/rl/policy_weights.h``  — const float arrays for the C++ MLP.
-  * ``include/rl/policy_test_ref.h`` — a fixed reference obs/action pair so the
-    C++ forward pass can be checked numerically.
+  * ``include/strategy/policy_weights.h``  — const float arrays for the C++ MLP.
+  * ``include/strategy/policy_test_ref.h`` — a fixed reference obs/action pair so
+    the C++ forward pass can be checked numerically.
 
 Run with the MJX conda env (needs jax/flax for the cross-check):
 
@@ -23,10 +24,16 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(HERE)  # simplify/
-DEPLOY = os.path.join(PROJECT, "dogurdf_sim2sim_deploy")
-CKPT = os.path.join(DEPLOY, "checkpoints/dogurdf_velocity/iteration_450.pkl")
-OUT_WEIGHTS = os.path.join(PROJECT, "include/rl/policy_weights.h")
-OUT_REF = os.path.join(PROJECT, "include/rl/policy_test_ref.h")
+# 训练框架（权威规格来源）
+TRAIN = "/home/sysu/Desktop/Project/Bruce/RL_Train/code"
+CKPT = os.path.join(
+    TRAIN,
+    "checkpoints/dogurdf_velocity/checkpoints_20260826_182658_traj_v26/"
+    "iteration_1100.pkl",
+)
+# 实际编译用的权重在 include/strategy/（include/rl/ 已废弃）
+OUT_WEIGHTS = os.path.join(PROJECT, "include/strategy/policy_weights.h")
+OUT_REF = os.path.join(PROJECT, "include/strategy/policy_test_ref.h")
 
 HIDDEN = (512, 256, 128)
 ACTOR_DIM = 64
@@ -94,7 +101,7 @@ def main() -> int:
     # Cross-check against the flax network if importable (MJX env).
     flax_err = None
     try:
-        sys.path.insert(0, os.path.join(DEPLOY, "src"))
+        sys.path.insert(0, os.path.join(TRAIN, "src"))
         import jax  # noqa: F401
         from networks import ActorCriticMLP
 

@@ -109,10 +109,14 @@ endif()
 # 经 conda miniforge 库绕开。运行同样需要这些库，用 DT_RPATH（--disable-new-dtags，
 # 递归生效）指向 damiao_sdk 与 miniforge3/lib。
 set(DAMIAO_SDK_DIR ${PROJECT_SOURCE_DIR}/lib/damiao_sdk/linux/x86_64)
-set(CONDA_LIB_DIR  "/home/bruce/miniforge3/lib")
+# 本机 conda base（libstdc++ >= GLIBCXX_3.4.32 + libusb >= 1.0.26，conda 已装）
+set(CONDA_LIB_DIR  "/home/sysu/miniconda3/lib")
 target_link_libraries(can_motor_app PRIVATE
     ${DAMIAO_SDK_DIR}/libdm_device.so
-    -L${CONDA_LIB_DIR} -l:libusb-1.0.so
+    # libusb 用绝对路径，避免 -L 顺序解析到系统老 libusb(1.0.25, 无 libusb_init_context)
+    ${CONDA_LIB_DIR}/libusb-1.0.so
+    # -L 保留给 libstdc++（系统 gcc11 只到 GLIBCXX_3.4.30，conda 有 3.4.32）
+    -L${CONDA_LIB_DIR}
 )
 target_link_options(can_motor_app PRIVATE
     -Wl,--disable-new-dtags
