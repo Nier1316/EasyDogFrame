@@ -3,6 +3,7 @@
 #include "app/examples/ex_diag.h"
 #include "app/examples_common.h"
 #include "transport/canet_transport.h"
+#include "transport/usb2can_transport.h"
 #include "motor/motor_manager.h"
 #include "motor/motor_calibration.h"
 #include "runtime/thread_manager.h"
@@ -17,6 +18,7 @@
 
 using logctl::LogCat;
 #include "strategy/imu_device.h"
+#include "strategy/xbox_controller.h"
 #include "strategy/rl_controller.h"
 #include "motion/SimSync.h"
 #include "motion/leg_kinematics.h"
@@ -842,3 +844,824 @@ void Example34_WheelDirectionCheck() {
 //   再测负扭矩：同样从 0 往下调（负阶段 clamp≤0），回车记录。
 // → 4 电机测完打印每路正/负前馈值 → 5s 回位 → 失能。
 // 注：需从集成终端运行（stdin 为真实终端）；Ctrl+Q 提前退出（回位+失能）。
+
+// ================= 示例 39：USB2CAN 传输链路验证 =================
+// 走 CanTransport 接口直接测达妙 USB2CAN（不经过 MotorManager/CANET）：
+//   open ttyACM0 → 发读电机参数帧 → 收反馈。
+// 验证「换硬件不动上层」：上层只需 CanTransport*，本示例即 Usb2CanTransport。
+// 注：MotorManager::SetChannelTransport(1, &Usb2CanTransport::GetInstance())
+//     可实现 CAN1 换 USB2CAN、其余保持 CANET（真机 RL 验证时用）。
+void Example39_Usb2CanProbe() {
+    printf("\n========== Example 39: USB2CAN 传输链路验证（官方 SDK） ==========\n");
+    printf("[WARN] 达妙 USB2FDCAN 接 USB（udev 0666 已配），CAN_H/L 接 CAN1 那路电机总线。\n");
+    printf("       波特率默认 1Mbps（设备预设）；电机总线一致才通。\n\n");
+
+    // 走 CanTransport 接口（官方 SDK 版 Usb2CanTransport）——等价换硬件后上层用法
+    Usb2CanTransport& u2c = Usb2CanTransport::GetInstance();
+    TransportConfig cfg;
+    cfg.device_idx = 1;      // 逻辑 CAN1
+    cfg.usb_baud   = 0;      // 0 = 用设备默认（实测 1Mbps）
+    if (!u2c.open(1, cfg)) {
+        printf("[ERROR] Usb2Can open 失败（看上方 Usb2Can 错误信息）\n");
+        return;
+    }
+
+    // 发读 CAN1 电机2 控制模式参数帧（只读安全）
+    CanFrame f;
+    f.id = 2; f.dlc = 8; f.is_extended = 0;
+    uint8_t d[8] = {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5B, 0xEC};
+    std::memcpy(f.data, d, 8);
+    u2c.send(1, f);
+    printf("[INFO] 已发读参数帧到 CAN1 motor2 (id=0x02, dlc=8)\n");
+
+    int got = 0;
+    for (int k = 0; k < 10 && got < 3; k++) {
+        std::vector<CanFrame> frames;
+        if (u2c.recv(1, frames, 100)) {
+            for (const auto& fr : frames) {
+                printf("[RX] id=0x%03X dlc=%u %s data=", fr.id, fr.dlc,
+                       fr.is_extended ? "EXT" : "STD");
+                for (int i = 0; i < fr.dlc; i++) printf("%02X ", fr.data[i]);
+                printf("\n");
+                got++;
+            }
+        }
+    }
+    if (got == 0)
+        printf("[!] 无反馈。检查：波特率是否匹配、CAN_H/L 接线、120Ω 终端电阻、电机是否上电。\n");
+    else
+        printf("[OK] 收到 %d 帧 —— USB2CAN 链路通！id 应在 0x33(51=50+motor2) 附近。\n", got);
+
+    u2c.close(1);
+    printf("[INFO] Example39 完成\n");
+}
+
+// ================= 示例 40：USB2CAN 读 CAN1 电机姿态 =================
+// 走完整 MotorManager 链路验证 CAN1 的 USB2CAN 可用性：
+//   命令下发（使能/目标）→ motor.transport(Usb2CanTransport) → CAN 总线
+//   状态回报（51-54 帧）→ ReceiveOnce → Usb2CanTransport 回调 → GetStatus
+// 只使能 CAN1（其余路不动），目标=当前角低增益保持，读位置/速度/扭矩。
+void Example40_Usb2CanReadStatus() {
+    printf("\n========== Example 40: USB2CAN 读 CAN1 电机姿态（不使能） ==========\n");
+    printf("[INFO] 不使能电机。发读参数帧经 USB2CAN：角度/速度/扭矩→更新 GetStatus；\n");
+    printf("       控制模式 0x5B→接收线程打印 [PARAM]（链路证据）。\n\n");
+
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    motor_mgr.SetChannelTransport(1, &Usb2CanTransport::GetInstance());
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] MotorManager 初始化失败\n");
+        return;
+    }
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    // 不使能！只发读参数帧（RW=0），回报更新 MotorStatus / default 分支打印 [PARAM]
+    printf("[INFO] 循环读 CAN1 电机姿态 + 控制模式（8s，Ctrl+C 退出）...\n");
+    for (int k = 0; k < 40 && !g_rl_stop; k++) {
+        for (int mi = 1; mi <= 4; mi++) {
+            motor_mgr.ReadParam(1, mi, MOTOR_OR_angle);        // 更新 position
+            motor_mgr.ReadParam(1, mi, MOTOR_OR_velocity);     // 更新 velocity
+            motor_mgr.ReadParam(1, mi, MOTOR_OR_torque);       // 更新 torque
+            motor_mgr.ReadParam(1, mi, MOTOR_WR_CONTROL_MODE); // 0x5B → default 打印 [PARAM]
+        }
+        usleep(100000);   // 等回报到达（接收线程解包更新状态）
+
+        if (k % 4 == 0) {
+            printf("  [%2ds] GetStatus: ", k / 4);
+            for (int mi = 1; mi <= 4; mi++) {
+                MotorStatus st = motor_mgr.GetStatus(1, mi);
+                printf("m%d(%+.3f,%+.2f,%+.2f) ", mi, st.position, st.velocity, st.torque);
+            }
+            printf("\n");
+            fflush(stdout);
+        }
+        usleep(100000);
+    }
+
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+    printf("[INFO] Example40 完成（上方 [PARAM] type=0x5B 即链路通；GetStatus 为姿态）\n");
+}
+
+// ================= 示例 41：CAN1 三关节 500Hz 插值回站立 =================
+// 单独测 CAN1（FR 右前腿，走 USB2CAN）的三关节 hip/thigh/calf：
+//   500Hz 高频控制，从当前姿态插值到站立姿态（{0°,-60°,60°} 真机角）。
+// 验证 USB2CAN 在高频（500Hz×3=1500帧/s）下能否驱动关节到位。
+void Example41_CAN1_500HzStand() {
+    printf("\n========== Example 41: CAN1 三关节 500Hz 插值回站立 ==========\n");
+    printf("[WARN] 将使能 CAN1(FR右前腿) hip/thigh/calf，500Hz 插值到站立姿态。狗请架起。\n\n");
+
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    motor_mgr.SetChannelTransport(1, &Usb2CanTransport::GetInstance());
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] MotorManager 初始化失败\n");
+        return;
+    }
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    // 预写模式 → 零扭矩预置（覆盖固件残留目标，避免使能瞬间冲）→ 使能
+    for (int mi = 1; mi <= 3; mi++) motor_mgr.SetControlMode(1, mi, IMPEDANCE);
+    usleep(100000);
+    for (int mi = 1; mi <= 3; mi++) motor_mgr.PreEnableZeroTorque(1, mi);
+    usleep(100000);   // 等固件接收零扭矩帧
+    for (int mi = 1; mi <= 3; mi++) motor_mgr.EnableMotor(1, mi);
+    usleep(200000);
+
+    // 站立目标（真机指令角）与当前位置
+    const float target[3] = {
+        deg2rad(STAND_HIP_DEG), deg2rad(STAND_THIGH_DEG), deg2rad(STAND_CALF_DEG)
+    };
+    float cur[3];
+    for (int mi = 1; mi <= 3; mi++) cur[mi - 1] = motor_mgr.GetStatus(1, mi).position;
+
+    printf("[INFO] 目标站立: hip=%+.2f° thigh=%+.2f° calf=%+.2f°\n",
+           STAND_HIP_DEG, STAND_THIGH_DEG, STAND_CALF_DEG);
+    printf("[INFO] 当前: hip=%+.3f thigh=%+.3f calf=%+.3f rad\n", cur[0], cur[1], cur[2]);
+
+    // 500Hz 插值 2s 到站立
+    const int   HZ = 500;
+    const int   STEPS = HZ * 2;   // 2s
+    const float KP = 200.0f, KD = 20.0f;
+    printf("[INFO] 500Hz 插值 2s 到站立（每 0.5s 打印实际位置）...\n");
+    for (int k = 0; k <= STEPS && !g_rl_stop; k++) {
+        float t = (float)k / STEPS;
+        for (int mi = 1; mi <= 3; mi++) {
+            float pos = cur[mi - 1] + (target[mi - 1] - cur[mi - 1]) * t;
+            motor_mgr.SendImpedance(1, mi, pos, 0.0f, KP, KD, 0.0f);
+        }
+        if (k % 250 == 0) {
+            MotorStatus s1 = motor_mgr.GetStatus(1, 1);
+            MotorStatus s2 = motor_mgr.GetStatus(1, 2);
+            MotorStatus s3 = motor_mgr.GetStatus(1, 3);
+            printf("  [%3.0f%%] 目标(%.3f,%.3f,%.3f) 实际(%.3f,%.3f,%.3f)\n",
+                   t * 100, target[0], target[1], target[2],
+                   s1.position, s2.position, s3.position);
+            fflush(stdout);
+        }
+        usleep(1000000 / HZ);
+    }
+
+    // 保持站立 20s 确认到位
+    printf("[INFO] 到位，保持 1s 确认...\n");
+    for (int k = 0; k < 10000 && !g_rl_stop; k++) {
+        for (int mi = 1; mi <= 3; mi++)
+            motor_mgr.SendImpedance(1, mi, target[mi - 1], 0.0f, KP, KD, 0.0f);
+        if (k % 250 == 0) {
+            MotorStatus s1 = motor_mgr.GetStatus(1, 1);
+            MotorStatus s2 = motor_mgr.GetStatus(1, 2);
+            MotorStatus s3 = motor_mgr.GetStatus(1, 3);
+            printf("  保持: 实际(%.3f,%.3f,%.3f) 目标(%.3f,%.3f,%.3f)\n",
+                   s1.position, s2.position, s3.position, target[0], target[1], target[2]);
+            fflush(stdout);
+        }
+        usleep(1000000 / HZ);
+    }
+
+    printf("[INFO] 失能 CAN1 关节...\n");
+    for (int mi = 1; mi <= 3; mi++) motor_mgr.DisableMotor(1, mi);
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+    printf("[INFO] Example41 完成\n");
+}
+
+// ================= 示例 42：USB2CAN 控制频率测试 =================
+// 测达妙 USB2CAN 可达控制频率（发送吞吐），不使能电机（只发读参数帧，安全）：
+//   1) 单帧 send 耗时（50 帧）→ 理论上限 + 多电机循环推算
+//   2) 目标频率节流扫描（100/500/1k/2k/4k Hz，usleep 节流）→ 实际可达
+// 结论参考：单帧 ~53us → 单电机上限 ~18kHz；实际频率受 usleep 精度限制。
+void Example42_Usb2CanRateTest() {
+    printf("\n========== Example 42: USB2CAN 控制频率测试 ==========\n");
+    printf("[INFO] 不使能电机，只发读参数帧测 USB2CAN 发送吞吐（可达控制频率）。\n\n");
+
+    Usb2CanTransport& u2c = Usb2CanTransport::GetInstance();
+    TransportConfig cfg;
+    cfg.device_idx = 1;
+    cfg.usb_baud   = 0;
+    if (!u2c.open(1, cfg)) { printf("[ERROR] Usb2Can open 失败\n"); return; }
+
+    CanFrame f;
+    f.id = 1; f.dlc = 8; f.is_extended = 0;
+    uint8_t d[8] = {0x80, 0, 0, 0, 0, 0, 0x0F, 0xEC};
+    std::memcpy(f.data, d, 8);
+
+    // 1) 单帧 send 耗时 → 理论上限（50 帧，避免 USB 缓冲阻塞）
+    double tmin = 1e9, tmax = 0, tsum = 0;
+    for (int i = 0; i < 50; i++) {
+        auto t0 = std::chrono::steady_clock::now();
+        u2c.send(1, f);
+        double us = std::chrono::duration<double, std::micro>(
+            std::chrono::steady_clock::now() - t0).count();
+        if (us < tmin) tmin = us;
+        if (us > tmax) tmax = us;
+        tsum += us;
+    }
+    double avg = tsum / 50;
+    printf("[单帧] 平均 %.2f us, 最小 %.2f, 最大 %.2f → 单电机理论上限 ~%.0f Hz\n",
+           avg, tmin, tmax, 1e6 / avg);
+    printf("        多电机推算: 每轮 %d 电机 × %.0fus → 循环上限 ~%.0f Hz\n",
+           4, 4 * avg, 1e6 / (4 * avg));
+
+    // 2) 目标频率节流扫描（1 电机，usleep 节流模拟控制循环）
+    int freqs[] = {100, 500, 1000, 2000, 4000};
+    for (int fq : freqs) {
+        int period_us = 1000000 / fq;
+        auto t0 = std::chrono::steady_clock::now();
+        int sent = 0, fail = 0;
+        auto end = t0 + std::chrono::seconds(1);
+        while (std::chrono::steady_clock::now() < end) {
+            if (u2c.send(1, f)) sent++; else fail++;
+            usleep(period_us);
+        }
+        double dur = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - t0).count();
+        printf("[%4dHz] 实际 %.0f 帧/%.2fs = %.0f Hz (期望 %d), fail=%d\n",
+               fq, (double)sent, dur, sent / dur, fq, fail);
+    }
+
+    u2c.close(1);
+    printf("[INFO] Example42 完成\n");
+}
+
+// ================= 示例 43：4 路 USB2CAN 读全部 16 电机参数 =================
+// 4 个达妙模块全接（CAN0~3 各一路），走完整 MotorManager 链路：
+//   不使能电机，读 16 电机角度/速度/扭矩 + 控制模式 0x5B（回报打印 [PARAM]）。
+// 判定：每路 [Usb2Can: CANx] 出现 + GetStatus 各电机有值 = 该路 USB2CAN 通。
+// ⚠ 设备插入顺序 = 逻辑路：第一个插入的模块是 CAN0，依次 CAN1/CAN2/CAN3。
+void Example43_CANOrderCalibrate() {
+    printf("\n========== Example 43: CAN 顺序标定（轮电机为准） ==========\n");
+    printf("[INFO] 4 路 USB2CAN，不使能电机。依次转动 FL/FR/RL/RR 腿的轮子，\n");
+    printf("       每腿轮子转超过 360°（一整圈）程序自动记录该路，进入下一条。\n");
+    printf("       只检测轮电机(motor4)，避免腿关节微动干扰。\n\n");
+
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    motor_mgr.SetTransport(&Usb2CanTransport::GetInstance());
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] MotorManager 初始化失败\n");
+        return;
+    }
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    const char* LEGS[4] = {"FL(左前)", "FR(右前)", "RL(左后)", "RR(右后)"};
+    int leg_to_can[4] = {-1, -1, -1, -1};
+    const float PI = 3.14159265f;
+
+    for (int leg = 0; leg < 4; leg++) {
+        printf("\n[%d/4] 请转动 %s 腿的轮子，转超过 360°（一整圈）...\n", leg + 1, LEGS[leg]);
+        fflush(stdout);
+
+        // 初始化各路轮角度基准
+        float prev_w[4];
+        for (int cp = 0; cp < 4; cp++) {
+            motor_mgr.ReadParam(cp, 4, MOTOR_OR_angle);
+            usleep(10000);
+            prev_w[cp] = motor_mgr.GetStatus(cp, 4).position;
+        }
+
+        // 只读轮角度，累积变化（处理 ±π wrap），转超 2π(360°) 判为该路
+        float acc[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        int best_can = -1;
+        for (int k = 0; k < 500 && best_can < 0 && !g_rl_stop; k++) {  // 10s (20ms/次)
+            for (int cp = 0; cp < 4; cp++)
+                motor_mgr.ReadParam(cp, 4, MOTOR_OR_angle);
+            usleep(20000);
+            if (k % 2 == 0) {   // 每 0.2s 累积轮角度变化
+                for (int cp = 0; cp < 4; cp++) {
+                    float cur = motor_mgr.GetStatus(cp, 4).position;
+                    float d = cur - prev_w[cp];
+                    while (d > PI)  d -= 2 * PI;   // wrap 到 [-π, π]
+                    while (d < -PI) d += 2 * PI;
+                    acc[cp] += std::fabs(d);
+                    prev_w[cp] = cur;
+                }
+                for (int cp = 0; cp < 4; cp++) {
+                    if (acc[cp] > 2.0f * PI) { best_can = cp; break; }   // 转超 360°
+                }
+            }
+        }
+
+        if (best_can >= 0) {
+            leg_to_can[leg] = best_can;
+            printf("  ✓ %s 轮转超 360° -> CAN%d (累积 %.0f°)\n",
+                   LEGS[leg], best_can, acc[best_can] * 180.0f / PI);
+        } else {
+            printf("  ✗ 超时未检测到 %s 轮转动（检查轮是否转够 360°/该路是否通）\n", LEGS[leg]);
+        }
+    }
+
+    printf("\n========== CAN 顺序标定结果 ==========\n");
+    for (int leg = 0; leg < 4; leg++)
+        printf("  %-10s -> CAN%d\n", LEGS[leg], leg_to_can[leg]);
+    printf("  期望: FL=CAN0 FR=CAN1 RL=CAN2 RR=CAN3\n");
+    printf("  若不符：调整模块插入顺序（设备索引按 USB 枚举）或改 usb2can_transport 映射。\n");
+
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+    printf("[INFO] Example43 完成\n");
+}
+void Example44_USB2CanXboxControl() {
+    printf("\n========== 示例 44：Xbox 手柄控制（USB2CAN 4 路） ==========\n");
+    printf("[INFO] 4 路全走达妙 USB2CAN。A键  = 起立（记录按下时的姿态作为返回点）\n");
+    printf("[INFO] B键  = 缓慢回到起立前的初始姿态\n");
+    printf("[INFO] 十字键↑ = 升高身体  |  十字键↓ = 降低身体\n");
+    printf("[INFO] 右摇杆上下 = 前进/后退  |  右摇杆左右 = 差速转向（轮走阻抗前馈扭矩 ±3Nm）\n");
+    printf("[INFO] Back键 = 退出\n\n");
+
+    // ---- 控制参数 ----
+    // 关节 kp/kd/重力前馈已移到 include/motor_calibration.h 的 JOINT_IMPEDANCE 表，
+    // 按 [can_port][joint] 逐关节可调，用 GetJointImpedance(leg, j+1) 取。
+    // 控制周期、机身高度范围、轮电机参数见 robot_calibration.h §5，
+    // 此处不再重复定义（同名局部常量会遮蔽表中的值，改表不生效）。
+    const int   HZ = CONTROL_HZ;                 // 主循环频率
+    const float WHEEL_DEAD_ZONE  = 0.05f;        // 轮子摇杆死区 (归一化，仅本例使用)
+    const float WHEEL_TORQUE_MAX = 3.0f;         // 轮子阻抗前馈扭矩上限 (Nm) —— 满摇杆 ±3Nm
+
+    // ---- 初始化 ----
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    // 4 路全走达妙 USB2CAN（2 个双路模块 × 2 通道）
+    motor_mgr.SetTransport(&Usb2CanTransport::GetInstance());
+
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] MotorManager 初始化失败\n");
+        return;
+    }
+
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    // 先把 16 个电机的固件模式全部写好，再使能。
+    // SetControlMode 直接发 0x5B 帧、不经发送线程，所以未使能也能写进去。
+    // 若省掉这步，电机会在固件默认模式（阻抗）下被使能，固件拿一个未知的
+    // 位置目标去闭环——实测 CAN1 轮电机在使能瞬间就转起来。
+    // ⚠ 轮不能以 SPEED 模式直接使能：固件使能初始化动作（疑似转子对齐）
+    //    绕过速度环直驱电流环，实测疯转（robot_calibration.h §5 已证伪此方向，
+    //    PreEnableZeroSpeed 零速度帧也压不住）。本例轮全程走阻抗前馈扭矩
+    //    （kp=kd=0, 上位机给 τ），不用固件速度环。
+    printf("[INFO] 预写固件控制模式（关节/轮均阻抗，轮走前馈扭矩）...\n");
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 3; mi++) {
+            motor_mgr.SetControlMode(cp, mi, IMPEDANCE);
+        }
+        motor_mgr.SetControlMode(cp, 4, IMPEDANCE);
+    }
+    usleep(100000);   // 留 100ms 给固件写入生效（远大于 20ms 的 settle 窗口）
+
+    // 使能前安全预置（直发，覆盖固件残留目标，避免使能瞬间动作）：全电机零扭矩阻抗帧
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 4; mi++)
+            motor_mgr.PreEnableZeroTorque(cp, mi);
+    usleep(100000);
+
+    printf("[INFO] 使能全部电机...\n");
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 4; mi++) {
+            motor_mgr.EnableMotor(cp, mi);
+        }
+    }
+    usleep(200000);
+
+    // ---- 初始化 Xbox 手柄 ----
+    XboxController controller;
+    bool controller_ok = controller.Initialize();
+    if (!controller_ok) {
+        printf("[ERROR] 未检测到 Xbox 手柄，退出\n");
+    }
+
+    // ---- 预计算站立姿态足端位置 ----
+    float stand_q[12] = {};
+    float base_foot_body[4][3] = {};
+    if (controller_ok) {
+        // 站立指令角见 robot_calibration.h §5 STAND_*_DEG
+        for (int leg = 0; leg < 4; leg++) {
+            stand_q[leg * 3 + 0] = deg2rad(STAND_HIP_DEG);
+            stand_q[leg * 3 + 1] = deg2rad(STAND_THIGH_DEG);
+            stand_q[leg * 3 + 2] = deg2rad(STAND_CALF_DEG);
+        }
+        leg_fk_all(stand_q, base_foot_body);
+
+        printf("[INFO] 站立足端位置 (身体坐标系):\n");
+        for (int leg = 0; leg < 4; leg++) {
+            printf("  腿%d: [%+.4f, %+.4f, %+.4f] m\n",
+                   leg, base_foot_body[leg][0], base_foot_body[leg][1], base_foot_body[leg][2]);
+        }
+    }
+
+    // ---- 状态变量 ----
+    bool standing = false;          // 是否已起立
+    float body_height = 0.0f;       // 身体高度偏移量
+    bool prev_a = false;            // A键上一帧状态（用于上升沿检测）
+    bool prev_b = false;            // B键上一帧状态
+    bool prev_back = false;         // Back键上一帧状态
+
+    // 按下 A 键那一刻的关节姿态，B 键据此原路返回。
+    // 必须在起立阶段之外声明：主循环里 B 键要用到它。
+    float start_pos[4][3] = {};
+
+    // ---- 阶段 1：等待 A 键起立 ----
+    if (controller_ok) {
+        printf("\n[INFO] 按下 A 键起立...\n");
+        fflush(stdout);
+
+        while (!standing) {
+            controller.Poll();
+            if (!controller.IsConnected()) {
+                printf("[ERROR] 手柄断开连接\n");
+                break;
+            }
+
+            const XboxState& state = controller.GetState();
+
+            // 记录手柄输入（与电机日志同时间戳基准，便于后续对齐排查）
+            MotorLogger::GetInstance().LogXbox(
+                state.left_stick_x, state.left_stick_y,
+                state.right_stick_x, state.right_stick_y,
+                state.left_trigger, state.right_trigger,
+                state.a, state.b, state.x, state.y, state.lb, state.rb,
+                state.back, state.start, state.ls, state.rs,
+                state.dpad_up, state.dpad_down, state.dpad_left, state.dpad_right);
+
+            // A键上升沿检测
+            bool a_pressed = state.a && !prev_a;
+            prev_a = state.a;
+
+            if (a_pressed) {
+                standing = true;
+                // 在按下的这一刻记录姿态：此时电机还没被起立指令推动，
+                // 读到的就是真正的初始位置，B 键返回的目标即为此。
+                for (int leg = 0; leg < 4; leg++) {
+                    for (int j = 0; j < 3; j++) {
+                        start_pos[leg][j] = motor_mgr.GetStatus(leg, j + 1).position;
+                    }
+                }
+                printf("[INFO] A键按下！已记录初始姿态，开始起立...\n");
+                for (int leg = 0; leg < 4; leg++) {
+                    printf("  腿%d 初始角: [%+.4f, %+.4f, %+.4f] rad\n",
+                           leg, start_pos[leg][0], start_pos[leg][1], start_pos[leg][2]);
+                }
+                fflush(stdout);
+            }
+
+            usleep(10000);
+        }
+    }
+
+    // ---- 阶段 2：2秒插值到站立姿态 ----
+    if (controller_ok && standing) {
+        const int TOTAL_INTERP_FRAMES = STAND_INTERP_FRAMES;  // 见 robot_calibration.h §5
+        // start_pos 已在 A 键按下时记录，此处直接用
+
+        // 线性插值过渡
+        for (int f = 0; f <= TOTAL_INTERP_FRAMES; f++) {
+            float t = (float)f / TOTAL_INTERP_FRAMES;
+            if (t > 1.0f) t = 1.0f;
+
+            for (int leg = 0; leg < 4; leg++) {
+                for (int j = 0; j < 3; j++) {
+                    float pos = start_pos[leg][j]
+                              + (stand_q[leg * 3 + j] - start_pos[leg][j]) * t;
+                    const JointImpedanceParam& ip = GetJointImpedance(leg, j + 1);
+                    // 前馈随插值系数 t 渐入，避免起立结束切主循环时扭矩跳变
+                    motor_mgr.SendImpedance(leg, j + 1, pos, 0.0f,
+                                            ip.kp, ip.kd, ip.tau_ff * t);
+                }
+            }
+
+            if (f % 500 == 0) {   // 500Hz 循环下 0.1s→1s 一条，避免刷屏
+                printf("  起立中... %3.0f%%\n", t * 100.0f);
+                fflush(stdout);
+            }
+
+            usleep(1000000 / HZ);
+        }
+
+        printf("[INFO] 已站立。十字键↑↓=高度, 右摇杆=轮子, Back=退出.\n\n");
+        fflush(stdout);
+
+        // ---- 阶段 3：主控制循环 ----
+        int frame = 0;
+        while (true) {
+            controller.Poll();
+            if (!controller.IsConnected()) {
+                printf("[INFO] 手柄断开，退出...\n");
+                break;
+            }
+
+            const XboxState& state = controller.GetState();
+
+            // 记录手柄输入（与电机日志同时间戳基准，便于后续对齐排查）
+            MotorLogger::GetInstance().LogXbox(
+                state.left_stick_x, state.left_stick_y,
+                state.right_stick_x, state.right_stick_y,
+                state.left_trigger, state.right_trigger,
+                state.a, state.b, state.x, state.y, state.lb, state.rb,
+                state.back, state.start, state.ls, state.rs,
+                state.dpad_up, state.dpad_down, state.dpad_left, state.dpad_right);
+
+            // Back键上升沿 → 退出
+            bool back_pressed = state.back && !prev_back;
+            prev_back = state.back;
+            if (back_pressed) {
+                printf("[INFO] Back键按下，退出...\n");
+                break;
+            }
+
+            // B键上升沿 → 缓慢回到 A 键按下时记录的初始姿态
+            bool b_pressed = state.b && !prev_b;
+            prev_b = state.b;
+            if (b_pressed) {
+                printf("[INFO] B键按下！缓慢回到初始姿态...\n");
+                fflush(stdout);
+
+                // 先停轮子：坐下过程中轮子不该继续转（阻抗前馈，扭矩归零）
+                for (int cp = 0; cp < 4; cp++) {
+                    motor_mgr.SendImpedance(cp, 4, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+                }
+
+                // 从"当前实际位置"而非站立目标插值：手柄调过高度后
+                // 两者已不同，用实际位置起步才不会有跳变。
+                float from_pos[4][3];
+                for (int leg = 0; leg < 4; leg++) {
+                    for (int j = 0; j < 3; j++) {
+                        from_pos[leg][j] = motor_mgr.GetStatus(leg, j + 1).position;
+                    }
+                }
+
+                for (int f = 0; f <= STAND_INTERP_FRAMES; f++) {
+                    float t = (float)f / STAND_INTERP_FRAMES;
+                    if (t > 1.0f) t = 1.0f;
+
+                    for (int leg = 0; leg < 4; leg++) {
+                        for (int j = 0; j < 3; j++) {
+                            float pos = from_pos[leg][j]
+                                      + (start_pos[leg][j] - from_pos[leg][j]) * t;
+                            const JointImpedanceParam& ip = GetJointImpedance(leg, j + 1);
+                            // 前馈随 t 渐出，落地后不再顶着前馈
+                            motor_mgr.SendImpedance(leg, j + 1, pos, 0.0f,
+                                                    ip.kp, ip.kd,
+                                                    ip.tau_ff * (1.0f - t));
+                        }
+                    }
+
+                    if (f % 500 == 0) {   // 0.2s→1s 一条
+                        printf("  回落中... %3.0f%%\n", t * 100.0f);
+                        fflush(stdout);
+                    }
+                    usleep(1000000 / HZ);
+                }
+
+                printf("[INFO] 已回到初始姿态，退出主循环\n");
+                fflush(stdout);
+                break;
+            }
+
+            // ---- 身体高度调节（十字键 ↑/↓，替代扳机） ----
+            // RT 扳机硬件漂移（未按下就输出 0.496），改用数字量十字键，无漂移、可靠。
+            // 步长与扳机满程速率一致（HEIGHT_ADJUST_RATE / HZ），按住即连续调节。
+            const float HEIGHT_STEP = HEIGHT_ADJUST_RATE / HZ;
+            if (state.dpad_up)
+                body_height += HEIGHT_STEP;
+            if (state.dpad_down)
+                body_height -= HEIGHT_STEP;
+            body_height = clamp(body_height, BODY_HEIGHT_MIN, BODY_HEIGHT_MAX);
+
+            // ---- 轮子控制（右摇杆：Y 轴前后，X 轴左右转，阻抗前馈扭矩）----
+            // 摇杆归一化输入，各自去死区
+            float fwd_stick  = -state.right_stick_y;   // 上推为正 = 前进
+            float turn_stick =  state.right_stick_x;   // 右推为正 = 右转
+            if (fabsf(fwd_stick)  < WHEEL_DEAD_ZONE) fwd_stick  = 0.0f;
+            if (fabsf(turn_stick) < WHEEL_DEAD_ZONE) turn_stick = 0.0f;
+
+            // 差速：右转时左侧加扭矩、右侧减扭矩。X 轴单独推即原地转向。
+            // 阻抗前馈（kp=kd=0，上位机开环）：满摇杆 = ±WHEEL_TORQUE_MAX Nm
+            float tau_fwd  = fwd_stick  * WHEEL_TORQUE_MAX;
+            float tau_turn = turn_stick * WHEEL_TORQUE_MAX * 0.8f;   // 转向分量留 20% 余量
+            float tau_left  = tau_fwd + tau_turn;
+            float tau_right = tau_fwd - tau_turn;
+
+            // 合成扭矩可能超过单轮上限。按同一比例缩放两侧而非各自钳位，
+            // 否则左右差值被改变，转弯半径会随速度漂移。
+            float tau_peak = fmaxf(fabsf(tau_left), fabsf(tau_right));
+            if (tau_peak > WHEEL_TORQUE_MAX) {
+                float scale = WHEEL_TORQUE_MAX / tau_peak;
+                tau_left  *= scale;
+                tau_right *= scale;
+            }
+
+            // CAN0(FL)/CAN2(RL) 为左侧，CAN1(FR)/CAN3(RR) 为右侧
+            motor_mgr.SendImpedance(0, 4, 0.0f, 0.0f, 0.0f, 0.0f, tau_left);
+            motor_mgr.SendImpedance(2, 4, 0.0f, 0.0f, 0.0f, 0.0f, tau_left);
+            motor_mgr.SendImpedance(1, 4, 0.0f, 0.0f, 0.0f, 0.0f, tau_right);
+            motor_mgr.SendImpedance(3, 4, 0.0f, 0.0f, 0.0f, 0.0f, tau_right);
+
+            // ---- 四腿 IK 解算并发送指令 ----
+            for (int leg = 0; leg < 4; leg++) {
+                // 根据身体高度偏移量调整足端目标 Z 分量
+                float foot_target_body[3] = {
+                    base_foot_body[leg][0],
+                    base_foot_body[leg][1],
+                    base_foot_body[leg][2] - body_height,
+                };
+
+                // 身体坐标系 → 髋坐标系: R^T × (foot_body - LEG_MOUNT)
+                float R[3][3], Rt[3][3];
+                hip_rotation_matrix(static_cast<LegIndex>(leg), R);
+                for (int i = 0; i < 3; i++)
+                    for (int j = 0; j < 3; j++)
+                        Rt[i][j] = R[j][i];
+
+                float mount_to_foot[3];
+                for (int i = 0; i < 3; i++)
+                    mount_to_foot[i] = foot_target_body[i] - LEG_MOUNT[leg][i];
+
+                float p_hip[3] = {0};
+                for (int i = 0; i < 3; i++)
+                    for (int j = 0; j < 3; j++)
+                        p_hip[i] += Rt[i][j] * mount_to_foot[j];
+
+                // IK 反解
+                float q_cmd[3];
+                leg_ik(p_hip, LEG_L1, LEG_L2, LEG_L3,
+                       THETA1_OFFSET, THETA2_OFFSET, THETA3_OFFSET, q_cmd);
+
+                // 钳位到关节限位
+                q_cmd[0] = clamp(q_cmd[0],
+                    deg2rad(LOWER_LIMIT_THETA1_DEG), deg2rad(UPPER_LIMIT_THETA1_DEG));
+                q_cmd[1] = clamp(q_cmd[1],
+                    deg2rad(LOWER_LIMIT_THETA2_DEG), deg2rad(UPPER_LIMIT_THETA2_DEG));
+                q_cmd[2] = clamp(q_cmd[2],
+                    deg2rad(LOWER_LIMIT_THETA3_DEG), deg2rad(UPPER_LIMIT_THETA3_DEG));
+
+                // 发送阻抗控制指令（kp/kd/前馈见 JOINT_IMPEDANCE 表）
+                for (int j = 0; j < 3; j++) {
+                    const JointImpedanceParam& ip = GetJointImpedance(leg, j + 1);
+                    motor_mgr.SendImpedance(leg, j + 1, q_cmd[j], 0.0f,
+                                            ip.kp, ip.kd, ip.tau_ff);
+                }
+            }
+
+            // 每 1 秒打印状态（轮子显示目标扭矩与 CAN0 反馈速度）
+            if (frame % 500 == 0) {   // 500Hz 主循环下 0.1s→1s 一条
+                MotorStatus w0 = motor_mgr.GetStatus(0, 4);
+                MotorStatus w1 = motor_mgr.GetStatus(1, 4);
+                printf("  高度=%+.3fm  轮扭矩 左=%+.2f 右=%+.2f  "
+                       "实测 轮0=%+.2f 轮1=%+.2f rad/s  十字键↑=%d ↓=%d\n",
+                       body_height, tau_left, tau_right,
+                       w0.velocity, w1.velocity,
+                       state.dpad_up, state.dpad_down);
+                fflush(stdout);
+            }
+
+            frame++;
+            usleep(1000000 / HZ);
+        }
+    } // 起立 & 主循环结束
+
+    // ---- 清理 ----
+    printf("[INFO] 正在关闭...\n");
+
+    // 停止轮电机（阻抗前馈，扭矩归零）
+    for (int cp = 0; cp < 4; cp++) {
+        motor_mgr.SendImpedance(cp, 4, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    }
+
+    // 禁用所有 16 个电机
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 4; mi++) {
+            motor_mgr.DisableMotor(cp, mi);
+        }
+    }
+
+    controller.Shutdown();
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+
+    printf("[INFO] 示例21 完成\n");
+    fflush(stdout);
+}
+
+// ================= 示例 22：起立 + 轮子阻抗模式测试 =================
+
+void Example45_USB2CanMoveToZero() {
+    printf("\n========== Example 45: Move Selected Motor to Physical Zero (USB2CAN) ==========\n");
+    printf("[INFO] 4 路全走达妙 USB2CAN。Calibrated coordinate: position 0 = physical zero\n");
+    printf("  Motor 1 (Hip):   target = 0  (horizontal)\n");
+    printf("  Motor 2 (Thigh): target = 0  (vertical)\n");
+    printf("  Motor 3 (Calf):  target = π/2  (90°, physical limit)\n\n");
+
+    // ---- 先选择目标电机（只使能选中的电机，避免全部上电过流） ----
+    int can_port = -1, motor_id = -1;
+    printf("选择 CAN 端口 (0~3): ");
+    fflush(stdout);
+    if (scanf("%d", &can_port) != 1) { printf("[ERROR] 输入无效\n"); return; }
+    printf("选择电机 ID (1~3): ");
+    fflush(stdout);
+    if (scanf("%d", &motor_id) != 1) { printf("[ERROR] 输入无效\n"); return; }
+
+    if (!(can_port >= 0 && can_port <= 3 && motor_id >= 1 && motor_id <= 3)) {
+        printf("[ERROR] CAN 端口 0~3, 电机 ID 1~3\n");
+        return;
+    }
+
+    // ---- 初始化 ----
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    motor_mgr.SetTransport(&Usb2CanTransport::GetInstance());   // 4 路全 USB2CAN
+
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] MotorManager 初始化失败\n");
+        return;
+    }
+
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    // ---- 只使能选中的单个电机 ----
+    printf("[INFO] 使能 CAN%d-M%d...\n", can_port, motor_id);
+    motor_mgr.SetControlMode(can_port, motor_id, IMPEDANCE);   // 写模式
+    usleep(100000);
+    motor_mgr.PreEnableZeroTorque(can_port, motor_id);          // 零扭矩预置，避免使能瞬间冲
+    usleep(100000);
+    motor_mgr.EnableMotor(can_port, motor_id);
+    usleep(300000);
+
+    // ---- 读取当前位置 ----
+    const float KP = 200.0f, KD = 10.0f;
+    MotorStatus st = motor_mgr.GetStatus(can_port, motor_id);
+    float start_pos = st.position;
+    printf("[INFO] 当前位置: %.4f rad (%.2f°)\n", start_pos, rad2deg(start_pos));
+
+    // 先发当前位置保持不动
+    motor_mgr.SendImpedance(can_port, motor_id, start_pos, 0.0f, KP, KD, 0.0f);
+    usleep(100000);
+
+    // ---- 计算目标 ----
+    float tgt_pos;
+    const char* desc;
+    if (motor_id == 3) {
+        tgt_pos = M_PI_2;           // 小腿从水平位弯曲 90°
+        desc = "小腿 90°";
+    } else if (motor_id == 1) {
+        tgt_pos = 0.0f;
+        desc = "髋水平";
+    } else {
+        tgt_pos = 0.0f;
+        desc = "大腿竖直";
+    }
+
+    printf("\n[INFO] CAN%d-M%d: %s\n", can_port, motor_id, desc);
+    printf("[INFO] 当前: %.4f rad (%.2f°)  →  目标: %.4f rad (%.2f°)\n\n",
+           start_pos, rad2deg(start_pos), tgt_pos, rad2deg(tgt_pos));
+    fflush(stdout);
+
+    // ---- 2 秒缓慢插值到目标 ----
+    const int HZ = 100;
+    const int FRAMES = 200;
+    for (int f = 0; f <= FRAMES; f++) {
+        float t = (float)f / FRAMES;
+        float pos = start_pos + (tgt_pos - start_pos) * t;
+        motor_mgr.SendImpedance(can_port, motor_id, pos, 0.0f, KP, KD, 0.0f);
+        if (f % 50 == 0) {
+            MotorStatus st_now = motor_mgr.GetStatus(can_port, motor_id);
+            printf("  [%3d%%] cmd=%.4f rad (%.2f°), actual=%.4f rad (%.2f°)\n",
+                   (int)(t * 100), pos, rad2deg(pos),
+                   st_now.position, rad2deg(st_now.position));
+            fflush(stdout);
+        }
+        usleep(1000000 / HZ);
+    }
+
+    // ---- 保持 20 秒 ----
+    printf("\n[INFO] 保持中...\n");
+    motor_mgr.SendImpedance(can_port, motor_id, tgt_pos, 0.0f, KP, KD, 0.0f);
+    sleep(20);
+
+    st = motor_mgr.GetStatus(can_port, motor_id);
+    printf("[INFO] 最终: CAN%d-M%d = %.4f rad (%.2f°)\n\n",
+           can_port, motor_id, st.position, rad2deg(st.position));
+
+    // ---- 清理 ----
+    printf("[INFO] 禁用电机...\n");
+    motor_mgr.DisableMotor(can_port, motor_id);
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+
+    printf("[INFO] Example20 完成\n");
+    fflush(stdout);
+}
+
+// ================= 示例 21：Xbox 手柄控制 =================

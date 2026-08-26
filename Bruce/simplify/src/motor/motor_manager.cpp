@@ -5,10 +5,13 @@
 #include "motor/motor_manager.h"
 #include "motor/motor_calibration.h"
 #include "common/motor_logger.h"
+#include "common/log_control.h"
 #include "transport/canet_transport.h"
 #include "runtime/motor_io.h"
 #include <cstdio>
 #include <chrono>
+
+using logctl::LogCat;   // LOG 宏按名引用枚举，需把 LogCat 引入全局作用域
 
 // 单例实现
 MotorManager& MotorManager::GetInstance() {
@@ -25,16 +28,22 @@ MotorManager::~MotorManager() {
 
 // 初始化4路 CANET TCP 连接，创建16个电机对象，并向外部 ThreadManager 注册任务函数
 void MotorManager::SetTransport(CanTransport* transport) {
-    m_transport = transport;
+    for (uint8_t i = 0; i < CAN_PORTS; i++) m_transport[i] = transport;
+}
+
+void MotorManager::SetChannelTransport(uint8_t can_port, CanTransport* transport) {
+    if (can_port < CAN_PORTS) m_transport[can_port] = transport;
 }
 
 bool MotorManager::Initialize(ThreadManager& thread_mgr) {
     printf("[INFO] MotorManager initializing...\n");
 
-    // 传输后端兜底：未注入时默认 CANET TCP
-    if (m_transport == nullptr) {
-        m_transport = &CanetTransport::GetInstance();
-        printf("[INFO] MotorManager: 使用默认传输后端 CanetTransport (CANET TCP)\n");
+    // 传输后端兜底：每路未注入时默认 CANET TCP
+    for (uint8_t i = 0; i < CAN_PORTS; i++) {
+        if (m_transport[i] == nullptr) {
+            m_transport[i] = &CanetTransport::GetInstance();
+            if (i == 0) printf("[INFO] MotorManager: 使用默认传输后端 CanetTransport (CANET TCP)\n");
+        }
     }
 
     // 1. 通过传输后端初始化 4 路 CAN 设备（后端无关，见 CanTransport 接口）
@@ -42,15 +51,17 @@ bool MotorManager::Initialize(ThreadManager& thread_mgr) {
     const uint16_t base_port = 4001;
 
     for (uint8_t i = 0; i < CAN_PORTS; i++) {
-        // 配置传输参数（CANET 后端取 TCP 字段；USB2CAN 后端会忽略）
+        // 配置传输参数（CANET 后端取 TCP 字段；USB2CAN 后端取 usb 字段，互不干扰）
         TransportConfig cfg;
         cfg.device_idx = i;
         cfg.tcp_port   = base_port + i;
         cfg.tcp_ip     = server_ip;
         cfg.tcp_mode   = TCP_CLIENT;   // 客户端模式
+        cfg.usb_dev    = m_usb_dev;
+        cfg.usb_baud   = m_usb_baud;
 
-        // open = InitDevice + StartDevice
-        if (!m_transport->open(i, cfg)) {
+        // open = InitDevice + StartDevice（或 Usb2Can 打开串口 + 设波特率）
+        if (!m_transport[i]->open(i, cfg)) {
             printf("[ERROR] Failed to initialize CAN device %d\n", i);
             return false;
         }
@@ -71,7 +82,7 @@ bool MotorManager::Initialize(ThreadManager& thread_mgr) {
             motor.init();
             motor.device_idx = can_port;   // 身份字段不属于状态，init() 不管
             motor.motor_id = motor_id;
-            printf("[INFO] Motor created: CAN%d, motor_id=%d\n", can_port, motor_id);
+            motor.transport = m_transport[can_port];   // 注入 per-channel 传输（发送走它）
         }
     }
 
@@ -101,10 +112,8 @@ void MotorManager::Stop() {
     }
 
     // 通过传输后端关闭所有设备
-    if (m_transport) {
-        for (uint8_t i = 0; i < CAN_PORTS; i++) {
-            m_transport->close(i);
-        }
+    for (uint8_t i = 0; i < CAN_PORTS; i++) {
+        if (m_transport[i]) m_transport[i]->close(i);
     }
     m_initialized = false;
 
@@ -121,7 +130,7 @@ void MotorManager::ReceiveOnce() {
         // 因此传 1ms 是自欺欺人，直接传 10ms 更诚实；且数据到达最坏等一个节拍
         // ~10ms，正好匹配 CONTROL_HZ=100 的反馈需求。另注意 WaitTime=0 会被
         // 当作无限阻塞，绝不能用 0（否则某路无帧时接收线程卡死在 VCI_Receive）。
-        if (m_transport && m_transport->recv(can_port, frames, 10)) {
+        if (m_transport[can_port] && m_transport[can_port]->recv(can_port, frames, 10)) {
             for (const auto& frame : frames) {
                 if (frame.id >= 51 && frame.id <= 54) {
                     uint8_t motor_id = frame.id - 50;
@@ -163,7 +172,7 @@ void MotorManager::SetControlMode(uint8_t can_port, uint8_t motor_id, int mode) 
     // 计时在使能后才开始递减（SendThreadFunc 跳过未使能电机），
     // 相当于使能后再留一段窗口给固件生效
     motor.mode_settle_ticks = MODE_SETTLE_TICKS;
-    printf("[INFO] CAN%d motor%d 预写固件控制模式 -> %d\n", can_port, motor_id, mode);
+    LOG(LogCat::SYSTEM, "[INFO] CAN%d motor%d 预写固件控制模式 -> %d\n", can_port, motor_id, mode);
 }
 
 // 读固件参数寄存器。回帧由接收线程解包，未识别的类型会打印
@@ -188,7 +197,7 @@ void MotorManager::EnableMotor(uint8_t can_port, uint8_t motor_id) {
     std::lock_guard<std::mutex> lock(m_motor_mutex[can_port][motor_id - 1]);
     EleMotor& motor = m_motors[can_port][motor_id - 1];
     motor.enable();
-    printf("[INFO] Motor enabled: CAN%d, motor_id=%d\n", can_port, motor_id);
+    LOG(LogCat::SYSTEM, "[INFO] Motor enabled: CAN%d, motor_id=%d\n", can_port, motor_id);
 }
 
 void MotorManager::DisableMotor(uint8_t can_port, uint8_t motor_id) {
@@ -199,7 +208,20 @@ void MotorManager::DisableMotor(uint8_t can_port, uint8_t motor_id) {
     std::lock_guard<std::mutex> lock(m_motor_mutex[can_port][motor_id - 1]);
     EleMotor& motor = m_motors[can_port][motor_id - 1];
     motor.disable();
-    printf("[INFO] Motor disabled: CAN%d, motor_id=%d\n", can_port, motor_id);
+    LOG(LogCat::SYSTEM, "[INFO] Motor disabled: CAN%d, motor_id=%d\n", can_port, motor_id);
+}
+
+void MotorManager::PreEnableZeroTorque(uint8_t can_port, uint8_t motor_id) {
+    if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(m_motor_mutex[can_port][motor_id - 1]);
+    EleMotor& motor = m_motors[can_port][motor_id - 1];
+    // 零扭矩阻抗帧：kp=kd=0, tau=0（目标=当前角度，无刚度故位置无关紧要）。
+    // 直发（set_motor_para_bt → motor.transport->send），不经 SendOnce 的 enabled 检查。
+    set_motor_para_bt(motor, motor.current_position, 0.0f, 0.0f, 0.0f, 0.0f, IMPEDANCE);
+    LOG(LogCat::SYSTEM, "[INFO] Motor 预置零扭矩: CAN%d, motor_id=%d\n", can_port, motor_id);
 }
 
 void MotorManager::SetZero(uint8_t can_port, uint8_t motor_id) {
@@ -212,7 +234,7 @@ void MotorManager::SetZero(uint8_t can_port, uint8_t motor_id) {
     motor.target_position = 0;
     // 发送归零命令
     float2bag(motor, 0.0f, 1, MOTOR_ANGLE_ZERO);
-    printf("[INFO] Motor zeroed: CAN%d, motor_id=%d\n", can_port, motor_id);
+    LOG(LogCat::SYSTEM, "[INFO] Motor zeroed: CAN%d, motor_id=%d\n", can_port, motor_id);
 }
 
 void MotorManager::ClearError(uint8_t can_port, uint8_t motor_id) {
@@ -225,7 +247,7 @@ void MotorManager::ClearError(uint8_t can_port, uint8_t motor_id) {
     motor.error_code = 0;
     // 发送清错命令
     float2bag(motor, 0.0f, 1, MOTOR_CLEAR_ERROR);
-    printf("[INFO] Motor error cleared: CAN%d, motor_id=%d\n", can_port, motor_id);
+    LOG(LogCat::SYSTEM, "[INFO] Motor error cleared: CAN%d, motor_id=%d\n", can_port, motor_id);
 }
 
 void MotorManager::SendImpedance(uint8_t can_port, uint8_t motor_id,
@@ -306,8 +328,8 @@ void MotorManager::SendOnce() {
                 float2bag(motor, (float)motor.control_mode, 1, MOTOR_WR_CONTROL_MODE);
                 motor.hw_control_mode = motor.control_mode;
                 motor.mode_settle_ticks = MODE_SETTLE_TICKS;
-                printf("[INFO] CAN%d motor%d 切换固件控制模式 -> %d\n",
-                       can_port, motor_id, motor.control_mode);
+                LOG(LogCat::SYSTEM, "[INFO] CAN%d motor%d 切换固件控制模式 -> %d\n",
+                    can_port, motor_id, motor.control_mode);
                 continue;
             }
             // 固件模式刚变更，等其生效后再下发新布局的控制帧

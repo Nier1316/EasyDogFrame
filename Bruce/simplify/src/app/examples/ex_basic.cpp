@@ -572,19 +572,23 @@ void Example21_XboxControllerControl() {
     // SetControlMode 直接发 0x5B 帧、不经发送线程，所以未使能也能写进去。
     // 若省掉这步，电机会在固件默认模式（阻抗）下被使能，固件拿一个未知的
     // 位置目标去闭环——实测 CAN1 轮电机在使能瞬间就转起来。
-    printf("[INFO] 预写固件控制模式（关节=阻抗，轮=速度）...\n");
+    // ⚠ 轮不能以 SPEED 模式直接使能：固件使能初始化动作（疑似转子对齐）+ 速度反馈
+    //    启动期假偏移（实测 -43/±48 rad/s，见 Example23 注释）会绕过/被速度环追 → 疯转。
+    //    故轮先以阻抗模式使能，稳定后再切到速度环。
+    printf("[INFO] 预写固件控制模式（关节=阻抗，轮=阻抗先使能）...\n");
     for (int cp = 0; cp < 4; cp++) {
         for (int mi = 1; mi <= 3; mi++) {
             motor_mgr.SetControlMode(cp, mi, IMPEDANCE);
         }
-        motor_mgr.SetControlMode(cp, 4, SPEED);
+        motor_mgr.SetControlMode(cp, 4, IMPEDANCE);
     }
     usleep(100000);   // 留 100ms 给固件写入生效（远大于 20ms 的 settle 窗口）
 
-    // 轮电机目标速度归零，避免使能后速度环拿到未定义目标
-    for (int cp = 0; cp < 4; cp++) {
-        motor_mgr.SendSpeed(cp, 4, 0.0f, WHEEL_KVP, WHEEL_KVI);
-    }
+    // 使能前安全预置：全电机零扭矩阻抗帧（直发，覆盖固件残留目标，避免使能瞬间动作）
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 4; mi++)
+            motor_mgr.PreEnableZeroTorque(cp, mi);
+    usleep(100000);
 
     printf("[INFO] 使能全部电机...\n");
     for (int cp = 0; cp < 4; cp++) {
@@ -593,6 +597,15 @@ void Example21_XboxControllerControl() {
         }
     }
     usleep(200000);
+
+    // 轮切到速度环（固件已使能稳定，切模式不再触发使能初始化疯转）。
+    // ⚠ 真机验证点：切 SPEED 后轮应保持静止；若仍异常则轮改走阻抗前馈扭矩。
+    printf("[INFO] 轮切到速度模式（使能后切换）...\n");
+    for (int cp = 0; cp < 4; cp++) {
+        motor_mgr.SetControlMode(cp, 4, SPEED);
+        motor_mgr.SendSpeed(cp, 4, 0.0f, WHEEL_KVP, WHEEL_KVI);   // 目标速度 0，等 A 键起立
+    }
+    usleep(100000);
 
     // ---- 初始化 Xbox 手柄 ----
     XboxController controller;
@@ -700,7 +713,7 @@ void Example21_XboxControllerControl() {
                 }
             }
 
-            if (f % 50 == 0) {
+            if (f % 500 == 0) {   // 500Hz 循环下 0.1s→1s 一条，避免刷屏
                 printf("  起立中... %3.0f%%\n", t * 100.0f);
                 fflush(stdout);
             }
@@ -776,7 +789,7 @@ void Example21_XboxControllerControl() {
                         }
                     }
 
-                    if (f % 100 == 0) {
+                    if (f % 500 == 0) {   // 0.2s→1s 一条
                         printf("  回落中... %3.0f%%\n", t * 100.0f);
                         fflush(stdout);
                     }
@@ -873,7 +886,7 @@ void Example21_XboxControllerControl() {
             }
 
             // 每 0.5 秒打印状态（轮子显示目标角速度与 CAN0 反馈速度）
-            if (frame % 50 == 0) {
+            if (frame % 500 == 0) {   // 500Hz 主循环下 0.1s→1s 一条
                 MotorStatus w0 = motor_mgr.GetStatus(0, 4);
                 MotorStatus w1 = motor_mgr.GetStatus(1, 4);
                 printf("  高度=%+.3fm  轮目标 左=%+.2f 右=%+.2f  "

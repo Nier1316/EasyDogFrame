@@ -1,5 +1,6 @@
 #include "motor/ele_motor.h"
 #include "transport/canet_transport.h"
+#include "transport/can_transport.h"
 #include "motor/ele_motor_def.h"
 #include "motor/motor_calibration.h"
 #include "common/motor_logger.h"
@@ -29,7 +30,10 @@ void EleMotor::enable() {
     // 使能帧原先不记日志，导致 sendcan 里完全看不到使能时刻——
     // 排查"使能瞬间轮电机就转"只能靠推断。mode 列用 -2 标记使能帧。
     MotorLogger::GetInstance().LogSendCan(device_idx, motor_id, -2, start_frame);
-    CanetTransport::GetInstance().Can_Tx(device_idx, motor_id, start_frame, 8);
+    CanFrame f;
+    f.id = motor_id; f.dlc = 8; f.is_extended = 0;
+    std::memcpy(f.data, start_frame, 8);
+    if (transport) transport->send(device_idx, f);
 }
 
 void EleMotor::disable() {
@@ -38,7 +42,10 @@ void EleMotor::disable() {
     uint8_t stop_frame[8] = {0x80, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, MOTOR_STOP};
     // mode 列用 -3 标记失能帧
     MotorLogger::GetInstance().LogSendCan(device_idx, motor_id, -3, stop_frame);
-    CanetTransport::GetInstance().Can_Tx(device_idx, motor_id, stop_frame, 8);
+    CanFrame f;
+    f.id = motor_id; f.dlc = 8; f.is_extended = 0;
+    std::memcpy(f.data, stop_frame, 8);
+    if (transport) transport->send(device_idx, f);
 }
 
 /** 读写电机参数
@@ -57,7 +64,10 @@ void float2bag(const EleMotor& motor, float parameter, uint8_t RW, uint8_t type)
     // mode 列填 -1 以区别于 set_motor_para_bt 的 0/1/2。
     MotorLogger::GetInstance().LogSendCan(motor.device_idx, motor.motor_id, -1, temp);
 
-    CanetTransport::GetInstance().Can_Tx(motor.device_idx, motor.motor_id, temp, 8);
+    CanFrame f;
+    f.id = motor.motor_id; f.dlc = 8; f.is_extended = 0;
+    std::memcpy(f.data, temp, 8);
+    if (motor.transport) motor.transport->send(motor.device_idx, f);
 }
 
 //控制指令：
@@ -119,7 +129,10 @@ void set_motor_para_bt(const EleMotor& motor, float p1, float p2, float p3, floa
     // 记录编码后、真正上线的原始 CAN 帧（含轮电机 motor_id=4）
     MotorLogger::GetInstance().LogSendCan(motor.device_idx, motor.motor_id, model, temp);
 
-    CanetTransport::GetInstance().Can_Tx(motor.device_idx, motor.motor_id, temp, 8);
+    CanFrame f;
+    f.id = motor.motor_id; f.dlc = 8; f.is_extended = 0;
+    std::memcpy(f.data, temp, 8);
+    if (motor.transport) motor.transport->send(motor.device_idx, f);
 }
 
 

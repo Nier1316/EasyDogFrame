@@ -132,7 +132,8 @@ constexpr float THETA3_OFFSET = deg2rad(ZERO_OFFSET_THETA3_DEG);
 // =====================================================================
 
 // ---- 控制周期 ----
-constexpr int   CONTROL_HZ = 100;                 // 主控制循环频率 (Hz)
+constexpr int   CONTROL_HZ = 500;                 // 主控制循环频率 (Hz) —— 2026-08-26 提到 500（USB2CAN 主控）
+                                                  //  ⚠ CANET 接收受 VCI_Receive ~10ms 节拍限制，反馈仍 100Hz；USB2CAN 回调队列可跟上 500Hz
 
 // ---- 站立姿态指令角 (deg) ----
 // 四条腿共用。取自 Example19_ReadAndStand 实测能站稳的一组值

@@ -14,7 +14,7 @@ static void signal_handler(int) {
 // =====================================================================
 //  示例切换说明
 //  = 只运行一个示例：目标示例的 3 行取消注释、其余保持注释即可。
-//  = 当前启用：Example38（执行器延迟辨识，扫频测 Action Delay，定 action_delay_steps）。
+//  = 当前启用：Example44（USB2CAN 手柄控制）。
 //  =====================================================================
 int main() {
     signal(SIGINT,  signal_handler);
@@ -155,20 +155,56 @@ int main() {
     // Example35_WheelFFCalibrate();
     // printf("[INFO] Example35 completed.\n");
 
-    // 运行示例36 - RL 站立循环（无手柄，定位轮电机乱转用）
-    // printf("[INFO] Running Example36_RLStandLoop...\n");
-    // Example36_RLStandLoop();
-    // printf("[INFO] Example36 completed.\n");
+    // 运行示例36 - RL 站立循环（USB2CAN 4 路，无手柄）
+    printf("[INFO] Running Example36_RLStandLoop...\n");
+    Example36_RLStandLoop();
+    printf("[INFO] Example36 completed.\n");
 
-    // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向）
-    printf("[INFO] Running Example37_RLTeleopControl...\n");
-    Example37_RLTeleopControl();
-    printf("[INFO] Example37 completed.\n");
+    // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，CAN1 走 USB2CAN）
+    // printf("[INFO] Running Example37_RLTeleopControl...\n");
+    // Example37_RLTeleopControl();
+    // printf("[INFO] Example37 completed.\n");
 
     // 运行示例38 - 执行器延迟辨识（扫频测 Action Delay，定 action_delay_steps）
+
     // printf("[INFO] Running Example38_ActionDelayMeasure...\n");
     // Example38_ActionDelayMeasure();
     // printf("[INFO] Example38 completed.\n");
+
+    // 运行示例39 - USB2CAN 传输链路验证（走 CanTransport 接口测达妙模块）
+    // printf("[INFO] Running Example39_Usb2CanProbe...\n");
+    // Example39_Usb2CanProbe();
+    // printf("[INFO] Example39 completed.\n");
+
+    // 运行示例40 - USB2CAN 读 CAN1 电机姿态（走完整 MotorManager 链路）
+    // printf("[INFO] Running Example40_Usb2CanReadStatus...\n");
+    // Example40_Usb2CanReadStatus();
+    // printf("[INFO] Example40 completed.\n");
+
+    // 运行示例41 - CAN1 三关节 500Hz 插值回站立
+    // printf("[INFO] Running Example41_CAN1_500HzStand...\n");
+    // Example41_CAN1_500HzStand();
+    // printf("[INFO] Example41 completed.\n");
+
+    // 运行示例42 - USB2CAN 控制频率测试
+    // printf("[INFO] Running Example42_Usb2CanRateTest...\n");
+    // Example42_Usb2CanRateTest();
+    // printf("[INFO] Example42 completed.\n");
+
+    // 运行示例43 - 4 路 USB2CAN CAN 顺序标定（摆腿检测）
+    // printf("[INFO] Running Example43_CANOrderCalibrate...\n");
+    // Example43_CANOrderCalibrate();
+    // printf("[INFO] Example43 completed.\n");
+
+    // 运行示例44 - Xbox 手柄控制（USB2CAN 4 路）
+    // printf("[INFO] Running Example44_USB2CanXboxControl...\n");
+    // Example44_USB2CanXboxControl();
+    // printf("[INFO] Example44 completed.\n");
+
+    // 运行示例45 - 选择电机移动到物理零位（USB2CAN）
+    // printf("[INFO] Running Example45_USB2CanMoveToZero...\n");
+    // Example45_USB2CanMoveToZero();
+    // printf("[INFO] Example45 completed.\n");
 
     return 0;
 }

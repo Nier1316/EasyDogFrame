@@ -4,6 +4,7 @@
 #include "app/examples_common.h"
 #include "motion/motion_controller.h"
 #include "transport/canet_transport.h"
+#include "transport/usb2can_transport.h"
 #include "motor/motor_manager.h"
 #include "motor/motor_calibration.h"
 #include "runtime/thread_manager.h"
@@ -37,6 +38,8 @@ void Example25_RLPolicyControl() {
     // ---- 初始化电机 ----
     MotorManager& motor_mgr = MotorManager::GetInstance();
     ThreadManager thread_mgr;
+    // CAN1 换达妙 USB2CAN（需 udev 0666 + 波特率 1M 匹配电机总线；其余 3 路仍 CANET）
+    motor_mgr.SetChannelTransport(1, &Usb2CanTransport::GetInstance());
     if (!motor_mgr.Initialize(thread_mgr)) {
         printf("[ERROR] MotorManager 初始化失败\n");
         return;
@@ -790,14 +793,15 @@ void Example35_WheelFFCalibrate() {
 //   若本示例稳定：问题在手柄（SDL 初始化干扰 / 摇杆回中漂移越过死区）。
 //   若仍乱转：问题在 wheel_torque 摩擦前馈 / pos_scale / 观测链路。
 void Example36_RLStandLoop() {
-    printf("\n========== Example 36: RL 站立循环（无手柄） ==========\n");
-    printf("[INFO] 50 Hz RL 循环，cmd 固定 {0,0,0} 原地站立。\n");
+    printf("\n========== Example 36: RL 站立循环（USB2CAN 4 路，无手柄） ==========\n");
+    printf("[INFO] 50 Hz RL 循环，cmd 固定 {0,0,0} 原地站立，4 路全走达妙 USB2CAN。\n");
     printf("[INFO] 与 Example25 唯一区别：无手柄。Ctrl+C 急停。\n\n");
 
     const int HZ = 50;  // 与训练一致（CONTROL_DT = 0.02 s）
 
     MotorManager& motor_mgr = MotorManager::GetInstance();
     ThreadManager thread_mgr;
+    motor_mgr.SetTransport(&Usb2CanTransport::GetInstance());   // 4 路全 USB2CAN
     if (!motor_mgr.Initialize(thread_mgr)) {
         printf("[ERROR] MotorManager 初始化失败\n");
         return;
@@ -806,10 +810,14 @@ void Example36_RLStandLoop() {
     thread_mgr.start_thread("motor_send");
     sleep(1);
 
-    // 预写固件模式（关节/轮均 IMPEDANCE）+ 使能 16 电机
+    // 预写固件模式（关节/轮均 IMPEDANCE）+ 零扭矩预置（覆盖残留避免使能瞬间冲）+ 使能
     for (int cp = 0; cp < 4; cp++)
         for (int mi = 1; mi <= 4; mi++)
             motor_mgr.SetControlMode(cp, mi, IMPEDANCE);
+    usleep(100000);
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 4; mi++)
+            motor_mgr.PreEnableZeroTorque(cp, mi);
     usleep(100000);
     for (int cp = 0; cp < 4; cp++)
         for (int mi = 1; mi <= 4; mi++)

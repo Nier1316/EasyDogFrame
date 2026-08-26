@@ -32,6 +32,14 @@ public:
      */
     void SetTransport(CanTransport* transport);
 
+    /**
+     * 覆盖指定 CAN 路（can_port）的传输后端，其余路保持默认。
+     * 例：只把 CAN1 换达妙 USB2CAN：
+     *   mm.SetChannelTransport(1, &Usb2CanTransport::GetInstance());
+     * 需在 Initialize() 之前调用。
+     */
+    void SetChannelTransport(uint8_t can_port, CanTransport* transport);
+
     // 在使能之前写固件控制模式（IMPEDANCE/SPEED/POSITION）。
     // 必须在 EnableMotor 之前调用：发送线程会跳过未使能的电机，
     // 单靠 SendSpeed/SendImpedance 设字段，模式帧要等使能后才发得出去，
@@ -47,6 +55,15 @@ public:
     void DisableMotor(uint8_t can_port, uint8_t motor_id);
     void SetZero(uint8_t can_port, uint8_t motor_id);
     void ClearError(uint8_t can_port, uint8_t motor_id);
+
+    /**
+     * 使能前预置零扭矩阻抗控制帧（直发，不受 send 线程 enabled 检查限制）。
+     * 覆盖固件残留目标（上一次命令/上电默认），使能瞬间零扭矩不冲。
+     * 用法：SetControlMode → PreEnableZeroTorque → EnableMotor。
+     * 使能后由后续正常增益的控制帧接管。
+     */
+    void PreEnableZeroTorque(uint8_t can_port, uint8_t motor_id);
+
     void SendImpedance(uint8_t can_port, uint8_t motor_id,
                        float pos, float vel, float kp, float kd, float torque);
     void SendSpeed(uint8_t can_port, uint8_t motor_id,
@@ -75,7 +92,9 @@ private:
 
     EleMotor m_motors[CAN_PORTS][MOTORS_PER_CAN];
     mutable std::mutex m_motor_mutex[CAN_PORTS][MOTORS_PER_CAN];
-    CanTransport* m_transport = nullptr;   // 传输后端（默认 CanetTransport，Initialize 时兜底）
+    CanTransport* m_transport[CAN_PORTS] = {nullptr};  // 每路传输后端（Initialize 时兜底 CanetTransport）
+    const char* m_usb_dev  = "/dev/ttyACM0";   // USB2CAN 设备路径（达妙模块）
+    uint8_t     m_usb_baud = 0;                // USB2CAN 波特率索引（0=1000k, 3=500k）
     bool m_initialized = false;   // Initialize() 全部成功后才置真，Stop() 据此避免关未打开的设备
 };
 

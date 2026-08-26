@@ -7,16 +7,12 @@
 #include <cstdio>
 
 RobotApp::~RobotApp() {
-    printf("[DEBUG] RobotApp destructor called\n");
-    fflush(stdout);
     try {
         stop();
     } catch (const std::exception& e) {
         printf("[ERROR] Exception in RobotApp destructor: %s\n", e.what());
         fflush(stdout);
     }
-    printf("[DEBUG] RobotApp destructor finished\n");
-    fflush(stdout);
 }
 
 bool RobotApp::init() {

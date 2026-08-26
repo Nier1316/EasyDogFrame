@@ -72,9 +72,10 @@ set(SOURCES
     # L2 电机驱动
     src/motor/ele_motor.cpp
 
-    # L1 传输层（CANET → CanetTransport）
+    # L1 传输层（CANET / USB2CAN）
     src/transport/canet_transport.cpp
     src/transport/can_device.cpp
+    src/transport/usb2can_transport.cpp
 )
 
 # ============ 编译可执行文件 ============
@@ -102,6 +103,22 @@ else()
         ${PROJECT_SOURCE_DIR}/lib/linux_x64/Release/libCANET_TCP.a
     )
 endif()
+
+# ============ 达妙 USB2CAN 官方 SDK ============
+# libdm_device.so 依赖新版 libusb(≥1.0.26) + libstdc++(≥3.4.32)，系统 gcc11 太旧，
+# 经 conda miniforge 库绕开。运行同样需要这些库，用 DT_RPATH（--disable-new-dtags，
+# 递归生效）指向 damiao_sdk 与 miniforge3/lib。
+set(DAMIAO_SDK_DIR ${PROJECT_SOURCE_DIR}/lib/damiao_sdk/linux/x86_64)
+set(CONDA_LIB_DIR  "/home/bruce/miniforge3/lib")
+target_link_libraries(can_motor_app PRIVATE
+    ${DAMIAO_SDK_DIR}/libdm_device.so
+    -L${CONDA_LIB_DIR} -l:libusb-1.0.so
+)
+target_link_options(can_motor_app PRIVATE
+    -Wl,--disable-new-dtags
+    -Wl,-rpath,${DAMIAO_SDK_DIR}
+    -Wl,-rpath,${CONDA_LIB_DIR}
+)
 
 # ============ 编译选项 ============
 if(UNIX)

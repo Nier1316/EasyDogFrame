@@ -5,7 +5,7 @@
 #include <cstdint>
 #include "motor/ele_motor_def.h"
 
-
+class CanTransport;   // 传输后端（由 MotorManager 按 channel 注入，CANET/USB2CAN 通用）
 
 class EleMotor {
 private:
@@ -14,6 +14,10 @@ private:
 public:
     EleMotor() = default;
     ~EleMotor() = default;
+
+    // 传输后端（MotorManager::Initialize 创建电机时注入 m_transport[device_idx]）。
+    // 发送走它 → 换硬件（CANET/USB2CAN）不动电机编解码层。nullptr 时发送静默丢弃。
+    CanTransport* transport = nullptr;
 
     // 配置信息
     uint8_t device_idx;       // CAN设备索引

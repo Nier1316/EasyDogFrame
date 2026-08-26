@@ -9,7 +9,9 @@ void RegisterMotorIoThreads(ThreadManager& thread_mgr, MotorManager& mm) {
     thread_mgr.register_thread(
         "motor_receive",
         [&mm]() { mm.ReceiveOnce(); },
-        ThreadMode::LOOP, 10, 80   // 10ms 间隔：对齐 SDK 实际接收节拍（VCI_Receive 内部 ~10ms 轮询）
+        // 2ms 间隔：匹配 CONTROL_HZ=500 的控制循环。USB2CAN 回调队列 2ms 内取到最新反馈；
+        // CANET 下 ReceiveOnce 内 recv(timeout=10) 会阻塞到 ~10ms（VCI_Receive 节拍），无副作用。
+        ThreadMode::LOOP, 2, 80
     );
     thread_mgr.register_thread(
         "motor_send",

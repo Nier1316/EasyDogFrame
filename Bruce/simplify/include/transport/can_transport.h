@@ -28,8 +28,9 @@ struct TransportConfig {
     uint16_t    tcp_port = 0;         // 端口
     uint8_t     tcp_mode = 0;         // TCP_CLIENT=0 / TCP_SERVER=1
 
-    // USB2CAN 后端字段（预留）
-    const char* usb_dev  = nullptr;   // USB 设备路径
+    // USB2CAN 后端字段（达妙 DM-USB2FDCAN，ttyACM 串口协议）
+    const char* usb_dev  = nullptr;   // USB 设备路径（如 "/dev/ttyACM0"）
+    uint8_t     usb_baud = 0;         // CAN 波特率索引：0=1000k 1=800k 3=500k ...
 };
 
 /**
