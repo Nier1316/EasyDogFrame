@@ -156,9 +156,14 @@ int main() {
     // printf("[INFO] Example35 completed.\n");
 
     // 运行示例36 - RL 站立循环（USB2CAN 4 路，无手柄）
-    printf("[INFO] Running Example36_RLStandLoop...\n");
-    Example36_RLStandLoop();
-    printf("[INFO] Example36 completed.\n");
+    // printf("[INFO] Running Example36_RLStandLoop...\n");
+    // Example36_RLStandLoop();
+    // printf("[INFO] Example36 completed.\n");
+
+    // 运行示例47 - 悬空 chirp 扫频 + 最小二乘参数辨识（辨识 J/B/f_c/b → tau_ff + KP/KD）
+    printf("[INFO] Running Example47_ChirpSysId...\n");
+    Example47_ChirpSysId();
+    printf("[INFO] Example47 completed.\n");
 
     // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，CAN1 走 USB2CAN）
     // printf("[INFO] Running Example37_RLTeleopControl...\n");
@@ -205,6 +210,11 @@ int main() {
     // printf("[INFO] Running Example45_USB2CanMoveToZero...\n");
     // Example45_USB2CanMoveToZero();
     // printf("[INFO] Example45 completed.\n");
+
+    // 运行示例46 - USB2CAN 单电机阶跃响应测试（A/B 区分批量发送 vs 链路问题）
+    // printf("[INFO] Running Example46_USB2CanSingleMotorStep...\n");
+    // Example46_USB2CanSingleMotorStep();
+    // printf("[INFO] Example46 completed.\n");
 
     return 0;
 }

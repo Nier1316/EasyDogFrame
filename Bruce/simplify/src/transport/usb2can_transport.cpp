@@ -113,8 +113,13 @@ void Usb2CanTransport::pushFrame(uint8_t idx, const CanFrame& f) {
     m_cv.notify_one();
 }
 
+// ⚠ 诊断开关：打印 USB2CAN 收到的原始帧（id + 原始字节），定位"控制回帧不更新观测"问题。
+// 每 500ms 打印一次汇总 + 最新一帧内容。已定位根因（recv 只取 1 帧积压滞后），保持关闭。
+static bool g_rx_dump = false;
+
 // dmcan 接收回调（SDK 内部线程）：handle→设备索引, frame->head.channel→物理通道 → 逻辑 idx
 void Usb2CanTransport::onRecv(dmcan_device_handle* handle, usb_rx_frame_t* frame) {
+    RxCount().fetch_add(1, std::memory_order_relaxed);   // 心跳：回调是否还在触发
     if (!frame) return;
 
     CanFrame cf;
@@ -132,6 +137,28 @@ void Usb2CanTransport::onRecv(dmcan_device_handle* handle, usb_rx_frame_t* frame
         if (it != self.m_handle_to_devidx.end()) dev_idx = it->second;
     }
     uint8_t idx = dev_idx * 2 + (frame->head.channel & 1);
+
+    // 限流打印：每 500ms 输出该周期内收到的帧数 + 最新一帧 id/字节。
+    // 判读：正常使能后应持续收到 id∈[51,54] 的控制回帧，且 data[1..2]（位置 16bit）随物理运动变化。
+    if (g_rx_dump) {
+        static std::chrono::steady_clock::time_point g_last = std::chrono::steady_clock::now();
+        static int g_cnt = 0;
+        static uint32_t g_lid = 0;
+        static uint8_t g_l8[8] = {0};
+        g_cnt++;
+        g_lid = cf.id;
+        memcpy(g_l8, cf.data, 8);
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - g_last).count() >= 500) {
+            printf("[RX] 500ms %3d帧 | 最新 id=0x%02X(%u) ext=%u dlc=%u | %02X %02X %02X %02X %02X %02X %02X %02X\n",
+                   g_cnt, g_lid, g_lid, cf.is_extended, cf.dlc,
+                   g_l8[0], g_l8[1], g_l8[2], g_l8[3],
+                   g_l8[4], g_l8[5], g_l8[6], g_l8[7]);
+            g_cnt = 0;
+            g_last = now;
+        }
+    }
+
     self.pushFrame(idx, cf);
 }
 
@@ -143,8 +170,14 @@ bool Usb2CanTransport::recv(uint8_t idx, std::vector<CanFrame>& out, int timeout
                       [&]() { return !rx.empty(); });
     }
     if (rx.empty()) return false;
-    out.push_back(rx.front());
-    rx.pop_front();
+    // ⚠ 一次性取空队列（修复"观测恒初值"）：
+    //   迁移 USB2CAN 时 recv 曾只取 1 帧队头——高速回帧下旧帧积压，
+    //   上层永远解到最早的帧，current_position 停在旧值（电机实际已到位）。
+    //   CANET 的 VCI_Receive 一次返回一批缓存帧，无此问题；这里对齐该语义。
+    while (!rx.empty()) {
+        out.push_back(rx.front());
+        rx.pop_front();
+    }
     return true;
 }
 

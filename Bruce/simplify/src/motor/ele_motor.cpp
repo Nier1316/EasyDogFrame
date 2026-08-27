@@ -22,6 +22,8 @@ void EleMotor::init() {
     control_mode = IMPEDANCE;  // 原先未初始化，是未定义值
     hw_control_mode = -1;      // 未知 → 首次下发必定先同步固件模式
     mode_settle_ticks = 0;
+    vel_lp = 0.0f;             // 轮速滤波状态复位
+    vel_lp_init = false;
 }
 
 void EleMotor::enable() {
@@ -139,6 +141,23 @@ void set_motor_para_bt(const EleMotor& motor, float p1, float p2, float p3, floa
 // 参数回帧详细打印开关，见 unpack_frame 内的说明。默认关闭。
 bool g_param_verbose = false;
 
+// ---- 轮速低通滤波（2026-08-28，抑制 USB2CAN 丢帧/解码跳变）----
+// 现象：轮速反馈偶发跳变（FR 轮瞬时 ±4~8 rad/s，pos 在 ±0.06 rad 往复，物理不可能），
+// 跳变会诱导策略对假轮速过激响应 + SendOnce 轮控误算 → 正反馈疯转。
+// 处理：unpack 更新 current_speed 时对轮子做一阶低通（alpha=0.2 @ 500Hz，时间常数 ~10ms），
+// 单帧尖峰被削平，真实速度趋势保留。策略观测（vel_policy）与 SendOnce 轮控共用滤波值。
+// 只对轮子（motor_id==4）滤波，腿关节速度反馈保持原样（不影响已验证的腿控）。
+static float FilterWheelVel(EleMotor& motor, float raw_vel) {
+    if (motor.motor_id != MOTORS_PER_CAN) return raw_vel;   // 非轮子不过滤
+    if (!motor.vel_lp_init) {
+        motor.vel_lp = raw_vel;                              // 首帧对齐
+        motor.vel_lp_init = true;
+    } else {
+        motor.vel_lp += 0.2f * (raw_vel - motor.vel_lp);     // 一阶低通
+    }
+    return motor.vel_lp;
+}
+
 // 直接解包 CAN 帧数据（不再接收，只解析）
 void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
 	if (!data || dlc < 6) {
@@ -180,7 +199,7 @@ void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
 			}
 			case MOTOR_OR_velocity: {
 				float raw_vel = canRecev.fValue;
-				motor.current_speed = raw_vel;
+				motor.current_speed = FilterWheelVel(motor, raw_vel);
 				float before[3] = {motor.current_position, motor.current_speed, motor.current_torque};
 				ApplyMotorCalibration(motor.device_idx, motor.motor_id,
 									  motor.current_position, motor.current_speed, motor.current_torque);
@@ -216,9 +235,9 @@ void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
 		float v = uint_to_float(v_int, lim.v_min, lim.v_max, 12);
 		float t = uint_to_float(i_int, -lim.t_max, lim.t_max, 12);
 
-		// 更新电机结构体（原始值）
+		// 更新电机结构体（原始值）；轮速过一阶低通抑制解码跳变
 		motor.current_position = p;
-		motor.current_speed = v;
+		motor.current_speed = FilterWheelVel(motor, v);
 		motor.current_torque = t;
 
 		// 记录原始值

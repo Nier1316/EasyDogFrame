@@ -16,6 +16,9 @@ void RegisterMotorIoThreads(ThreadManager& thread_mgr, MotorManager& mm) {
     thread_mgr.register_thread(
         "motor_send",
         [&mm]() { mm.SendOnce(); },
-        ThreadMode::LOOP, 1, 80    // 1ms 间隔：发送路径实测 ~0.01ms，可真正达到 1ms
+        // 2ms 间隔：对齐 CONTROL_HZ=500。原 1ms 是冗余（每 2ms 重复发相同帧），
+        // 且 1kHz×16 电机=16k 帧/s 是高负载，是 USB2CAN 发送压力/接收不稳的来源之一。
+        // 轮子上位机闭环也在 SendOnce（500Hz），2ms 周期正合适。
+        ThreadMode::LOOP, 2, 80
     );
 }

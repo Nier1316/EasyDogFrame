@@ -8,6 +8,9 @@
 #include "common/log_control.h"
 #include "transport/canet_transport.h"
 #include "runtime/motor_io.h"
+// 轮控安全常量（WHEEL_VEL_SOFT_LIMIT / WHEEL_SOFT_LIMIT_TORQUE / WHEEL_TORQUE_LIMIT）：
+// SendOnce 对轮子做上位机速度环 + 软限位，与策略侧共用同一份常量，避免重复定义漂移。
+#include "strategy/rl_controller.h"
 #include <cstdio>
 #include <chrono>
 
@@ -120,17 +123,19 @@ void MotorManager::Stop() {
     printf("[INFO] MotorManager stopped\n");
 }
 
-// 单次 CAN 轮询，由 ThreadManager 以 LOOP 模式每 1ms 调用一次
+// 单次 CAN 轮询，由 ThreadManager 以 LOOP 模式调用（motor_io.h 注册，2ms 节拍）
 void MotorManager::ReceiveOnce() {
+    // 心跳：主循环据此检测接收线程卡死（见 GetReceiveHeartbeatMs 注释）
+    s_recv_heartbeat_ms.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - s_start).count());
+
     for (uint8_t can_port = 0; can_port < CAN_PORTS; can_port++) {
         std::vector<BspCanFrame> frames;
-        // timeout=10ms：对齐 ZLG CANET SDK 的实际接收节拍。
-        // 实测 VCI_Receive 内部按 ~10ms 粒度轮询，请求的 timeout<10ms 一律被
-        // 抬升到 ~10ms（timeout 扫描：1/5/10ms 都 ~10ms 返回，20/50/100 才生效）。
-        // 因此传 1ms 是自欺欺人，直接传 10ms 更诚实；且数据到达最坏等一个节拍
-        // ~10ms，正好匹配 CONTROL_HZ=100 的反馈需求。另注意 WaitTime=0 会被
-        // 当作无限阻塞，绝不能用 0（否则某路无帧时接收线程卡死在 VCI_Receive）。
-        if (m_transport[can_port] && m_transport[can_port]->recv(can_port, frames, 10)) {
+        // timeout=1ms：USB2CAN 队列空时最多等 1ms，4 路顺序轮询不被拖成 30ms。
+        // CANET 后端无副作用：VCI_Receive 内部按 ~10ms 粒度轮询，请求 timeout<10ms
+        // 一律被抬升到 ~10ms（timeout 扫描：1/5/10ms 都 ~10ms 返回），语义不变。
+        // WaitTime=0 会被当作无限阻塞，绝不能用 0（否则某路无帧时线程卡死）。
+        if (m_transport[can_port] && m_transport[can_port]->recv(can_port, frames, 1)) {
             for (const auto& frame : frames) {
                 if (frame.id >= 51 && frame.id <= 54) {
                     uint8_t motor_id = frame.id - 50;
@@ -353,9 +358,29 @@ void MotorManager::SendOnce() {
 
             switch (motor.control_mode) {
                 case IMPEDANCE:
-                    set_motor_para_bt(motor,
-                        send_pos, send_vel,
-                        motor.kp, motor.kd, send_torque, IMPEDANCE);
+                    if (motor.motor_id == MOTORS_PER_CAN) {   // 每路最后一个电机 = 轮子（motor_id=4）
+                        // ⚠ 轮子：上位机速度阻尼环（SendOnce 500Hz 执行，对齐 CONTROL_HZ）。
+                        //   策略只下发目标轮速/阻尼/前馈（SendImpedance 的 vel/kd/torque 字段），
+                        //   真正 PD 在 SendOnce 用最新轮速反馈每 2ms 算一次——50Hz 决策 + 500Hz 闭环，
+                        //   与 legged_gym 架构一致（策略低频、PD 高频）。修复"轮子 50Hz 上位机闭环跟不上物理动态"。
+                        //   参数：target_speed=目标轮速(rad/s, 标定系)、kd=速度阻尼(Nm·s/rad)、
+                        //         target_torque=前馈扭矩(Nm)。kd=0 时退化为纯扭矩（兼容 Example44/34/35）。
+                        float tau = motor.kd * (motor.target_speed - motor.current_speed)
+                                  + motor.target_torque;
+                        // 速度软限位（限幅式，非硬制动）：超速只夹加速方向，留自然制动
+                        if      (motor.current_speed >  rl::WHEEL_VEL_SOFT_LIMIT)
+                            tau = (tau >  rl::WHEEL_SOFT_LIMIT_TORQUE) ?  rl::WHEEL_SOFT_LIMIT_TORQUE : tau;
+                        else if (motor.current_speed < -rl::WHEEL_VEL_SOFT_LIMIT)
+                            tau = (tau < -rl::WHEEL_SOFT_LIMIT_TORQUE) ? -rl::WHEEL_SOFT_LIMIT_TORQUE : tau;
+                        // 扭矩随 pos_scale 翻转（与接收方向对称，避免正反馈）
+                        float send_tau = tau;
+                        ApplyMotorCalibrationInverse(can_port, motor_id, send_pos, send_vel, &send_tau);
+                        set_motor_para_bt(motor, 0.0f, 0.0f, 0.0f, 0.0f, send_tau, IMPEDANCE);
+                    } else {
+                        set_motor_para_bt(motor,
+                            send_pos, send_vel,
+                            motor.kp, motor.kd, send_torque, IMPEDANCE);
+                    }
                     break;
                 case SPEED:
                     set_motor_para_bt(motor,

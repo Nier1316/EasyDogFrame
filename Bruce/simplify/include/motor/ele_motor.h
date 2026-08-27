@@ -24,10 +24,16 @@ public:
     uint8_t motor_id;         // 电机ID
 
     // 当前状态
-    float current_speed;      // 当前速度 (rpm)
+    float current_speed;      // 当前速度 (rad/s，标定后)
     float current_torque;     // 当前扭矩 (Nm)
-    float current_position;   // 当前位置 (degree)
+    float current_position;   // 当前位置 (rad)
     float current_temp;       // 当前温度 (°C)
+
+    // 轮速低通滤波状态（2026-08-28）：USB2CAN 丢帧/错帧会导致轮速解码跳变
+    // （如 FR 轮瞬时 ±4~8 rad/s，物理不可能），跳变会诱导策略过激响应 + 轮控误算。
+    // unpack 更新 current_speed 时对轮子做一阶低通，策略观测与 SendOnce 轮控共用滤波值。
+    float vel_lp = 0.0f;      // 滤波后轮速（低通状态）
+    bool  vel_lp_init = false; // 是否已用首帧对齐
 
     // 目标状态
     float target_speed;       // 目标速度 (rpm)

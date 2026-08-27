@@ -21,3 +21,6 @@ void Example43_CANOrderCalibrate();
 void Example44_USB2CanXboxControl();
 // 选择电机移动到物理零位（USB2CAN 4 路版，复刻 Example20）
 void Example45_USB2CanMoveToZero();
+// USB2CAN 单电机阶跃响应测试（区分批量发送丢帧 vs 单发链路问题）
+void Example46_USB2CanSingleMotorStep();
+void Example47_ChirpSysId();

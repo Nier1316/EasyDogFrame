@@ -190,9 +190,11 @@ void Example25_RLPolicyControl() {
                                             rl::LEG_KP, rl::LEG_KD, ip.tau_ff);
                 } else {
                     // p 为 POLICY 轮索引 12..15 → wheel_idx = 0..3 (FL,FR,RL,RR == CAN)
-                    int w_idx = p - rl::NUM_LEG_JOINTS;
-                    float tau = rl::wheel_torque(action[p], vel_policy[p], w_idx);
-                    motor_mgr.SendImpedance(cp, mi, 0.0f, 0.0f, 0.0f, 0.0f, tau);
+                    // 轮子：只设目标轮速/阻尼，速度环 PD 由 SendOnce 500Hz 用最新反馈执行
+                    //（修复 50Hz 上位机闭环跟不上 500Hz 物理动态导致的轮子疯转）
+                    motor_mgr.SendImpedance(cp, mi, 0.0f,
+                                            rl::WHEEL_VEL_SCALE * action[p],
+                                            0.0f, rl::WHEEL_KD, 0.0f);
                 }
             }
         }
@@ -831,21 +833,21 @@ void Example36_RLStandLoop() {
     if (!imu_ok)
         printf("[WARN] IMU 打开失败，gyro/quat 用默认值（机器人会失控，务必急停）\n");
 
-    // 起立目标：DEFAULT_POSE（URDF 约定）转真机指令角 —— 与 RL 循环目标一致，
-    // 避免 STAND_*(thigh-60°) → DEFAULT_POSE(thigh≈-71.8°) 的进入跳变（曾致轮子被带动乱转）。
+    // 起立目标：A/B 验证（2026-08-27）——复用 CANET 时代真机实测站立角 STAND_*（{0,-60°,60°}），
+    // 排除 urdf_to_status(DEFAULT_POSE) 转换路径引入的偏差（该转换转出 thigh -66.6°/calf 53.5°，
+    // 与 STAND 不一致，疑为后腿姿态异常根源）。起立到位后再 1s 过渡到 DEFAULT_POSE（RL 基准）。
     float stand_q[12];
     for (int leg = 0; leg < 4; leg++) {
-        for (int j = 0; j < 3; j++) {
-            int p = leg * 3 + j;   // POLICY 腿索引（FL,FR,RL,RR × hip,thigh,calf）
-            stand_q[leg * 3 + j] = rl::urdf_to_status(rl::DEFAULT_POSE[p], p);
-        }
+        stand_q[leg * 3 + 0] = deg2rad(STAND_HIP_DEG);
+        stand_q[leg * 3 + 1] = deg2rad(STAND_THIGH_DEG);
+        stand_q[leg * 3 + 2] = deg2rad(STAND_CALF_DEG);
     }
     float start_pos[12];
     for (int leg = 0; leg < 4; leg++)
         for (int j = 0; j < 3; j++)
             start_pos[leg * 3 + j] = motor_mgr.GetStatus(leg, j + 1).position;
 
-    printf("[INFO] 起立中（10s）...\n");
+    printf("[INFO] 起立中（10s，目标 STAND_* 真机角 {0,-60°,60°}）...\n");
     const int STAND_FRAMES = 500;  // 500 / 50 Hz = 10 s
     for (int f = 0; f <= STAND_FRAMES; f++) {
         if (g_rl_stop) break;
@@ -858,6 +860,43 @@ void Example36_RLStandLoop() {
             }
             motor_mgr.SendImpedance(leg, 4, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);  // 轮 0 扭矩
         }
+        // 诊断：每 0.5s 打印 4 路 hip(1)/thigh(2) 的 enabled/目标/实际/扭矩。
+        // 判读：某路 en=0 → SendOnce 跳过（未使能）；trq≈0 且 act 不动 → 固件未执行；
+        //       tgt 一直等于 act → 目标计算异常（start_pos 读错）。
+        if (f % 25 == 0) {
+            printf("[STAND] t=%4.2f |", t);
+            for (int cp = 0; cp < 4; cp++) {
+                for (int j = 1; j <= 2; j++) {
+                    MotorStatus st = motor_mgr.GetStatus(cp, j);
+                    float tgt = start_pos[cp * 3 + j - 1]
+                              + (stand_q[cp * 3 + j - 1] - start_pos[cp * 3 + j - 1]) * t;
+                    printf(" C%d-%d en%d tgt%+.2f act%+.2f trq%+.1f",
+                           cp, j, (int)st.enable, tgt, st.position, st.torque);
+                }
+            }
+            printf("\n");
+            fflush(stdout);
+        }
+        usleep(1000000 / HZ);
+    }
+
+    // 过渡：STAND → DEFAULT_POSE（1s），平滑进 RL，避免首帧目标跳变
+    float dp_q[12];
+    for (int leg = 0; leg < 4; leg++)
+        for (int j = 0; j < 3; j++)
+            dp_q[leg * 3 + j] = rl::urdf_to_status(rl::DEFAULT_POSE[leg * 3 + j], leg * 3 + j);
+    printf("[INFO] 过渡到 DEFAULT_POSE（1s，RL 基准）...\n");
+    for (int f = 0; f <= 50; f++) {
+        if (g_rl_stop) break;
+        float t = (float)f / 50.0f;
+        for (int leg = 0; leg < 4; leg++) {
+            for (int j = 0; j < 3; j++) {
+                float pos = stand_q[leg * 3 + j]
+                          + (dp_q[leg * 3 + j] - stand_q[leg * 3 + j]) * t;
+                motor_mgr.SendImpedance(leg, j + 1, pos, 0.0f, 200.0f, 20.0f, 0.0f);
+            }
+            motor_mgr.SendImpedance(leg, 4, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+        }
         usleep(1000000 / HZ);
     }
     printf("[INFO] 起立完成，进入 RL 站立循环\n");
@@ -867,12 +906,18 @@ void Example36_RLStandLoop() {
     signal(SIGINT, rl_signal_handler);
 
     float last_action[16] = {0.0f};
-    // 向前溜车抵消（2026-08-21）：策略 wheel action 有正向偏置（FL+0.06/RL+0.088），
-    // cmd=0 时持续给向前微驱动 → 狗向前溜。给向后 cmd[0] 让策略输出向后动作抵消。
-    // ⚠ 量级需实验：从 -0.05 起，观察是否停止溜车（负太多会变成持续后退）。
-    const float CMD_BIAS_VX = -0.05f;
-    float cmd[3] = {CMD_BIAS_VX, 0.0f, 0.0f};   // 无手柄：恒站立 + 向后抵消
+    // 向前溜车抵消（2026-08-21，iteration_450 时代）：策略 wheel action 曾带正向偏置，
+    // 需向后 cmd 抵消。新权重 traj_v26/iteration_1100 的正向偏置已消失（act 均值仅 ±0.09），
+    // CMD_BIAS_VX 已关闭（=0）。若新策略再出现溜车，重新实验其量级。
+    const float CMD_BIAS_VX = 0.0f;   // 已关闭：恒站立 cmd={0,0,0}
+    float cmd[3] = {CMD_BIAS_VX, 0.0f, 0.0f};
     int step = 0;
+
+    // 接收链路心跳检测（诊断"接收线程卡死 / SDK 回调停"）：
+    //   ReceiveOnce 心跳停滞 → 报警一次并区分两类（见 MotorManager 头注释）
+    int64_t last_rx_hb = -1;
+    uint64_t last_rx_cnt = 0;
+    bool rx_stall_warned = false;
 
     printf("[INFO] RL 循环启动：Ctrl+C 急停，按 q 优雅退出（失能轮 + 腿回位）\n");
 
@@ -884,6 +929,22 @@ void Example36_RLStandLoop() {
             unsigned char key;
             while (read(STDIN_FILENO, &key, 1) == 1)
                 if (key == 'q' || key == 'Q') { graceful = true; g_rl_stop = 1; }
+        }
+
+        // 0.5) 接收链路心跳检测：ReceiveOnce 心跳停滞 → 报警（仅一次）
+        if (!rx_stall_warned) {
+            int64_t hb = MotorManager::GetReceiveHeartbeatMs();
+            uint64_t cnt = Usb2CanTransport::RxCount().load();
+            if (last_rx_hb >= 0 && hb == last_rx_hb) {
+                bool cb_alive = (cnt > last_rx_cnt);
+                printf("[WARN] 接收线程心跳停滞 %dms（RxCount=%llu，%s）→ %s\n",
+                       step * 20, (unsigned long long)cnt,
+                       cb_alive ? "SDK 回调仍触发" : "SDK 回调也停",
+                       cb_alive ? "ReceiveOnce 卡死（日志写/锁阻塞）" : "USB2CAN 接收链路挂（URB/回调停）");
+                rx_stall_warned = true;
+            }
+            last_rx_hb = hb;
+            last_rx_cnt = cnt;
         }
 
         // 1) 读 16 电机（CAN order，标定后）
@@ -932,9 +993,11 @@ void Example36_RLStandLoop() {
                                             rl::LEG_KP, rl::LEG_KD, ip.tau_ff);
                 } else {
                     int w_idx = p - rl::NUM_LEG_JOINTS;
-                    float tau = rl::wheel_torque(action[p], vel_policy[p], w_idx);
-                    tau_wheel[w_idx] = tau;
-                    motor_mgr.SendImpedance(cp, mi, 0.0f, 0.0f, 0.0f, 0.0f, tau);
+                    // 轮子：只设目标轮速/阻尼，速度环 PD 由 SendOnce 500Hz 用最新反馈执行
+                    //（修复 50Hz 上位机闭环跟不上 500Hz 物理动态导致的轮子疯转）
+                    float target_v = rl::WHEEL_VEL_SCALE * action[p];
+                    motor_mgr.SendImpedance(cp, mi, 0.0f, target_v, 0.0f, rl::WHEEL_KD, 0.0f);
+                    tau_wheel[w_idx] = rl::WHEEL_KD * (target_v - vel_policy[p]);  // 诊断：预估 PD 扭矩
                 }
             }
         }

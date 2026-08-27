@@ -123,9 +123,11 @@ bool MotionController::rlStep() {
                 mm_->SendImpedance(cp, mi, q_target, 0.0f, rl::LEG_KP, rl::LEG_KD, ip.tau_ff);
             } else {
                 int w_idx = p - rl::NUM_LEG_JOINTS;
-                float tau = rl::wheel_torque(action[p], vel_policy[p], w_idx);
-                tau_wheel_[w_idx] = tau;
-                mm_->SendImpedance(cp, mi, 0.0f, 0.0f, 0.0f, 0.0f, tau);
+                // 轮子：只设目标轮速/阻尼，速度环 PD 由 SendOnce 500Hz 用最新反馈执行
+                //（修复 50Hz 上位机闭环跟不上 500Hz 物理动态导致的轮子疯转）
+                float target_v = rl::WHEEL_VEL_SCALE * action[p];
+                mm_->SendImpedance(cp, mi, 0.0f, target_v, 0.0f, rl::WHEEL_KD, 0.0f);
+                tau_wheel_[w_idx] = rl::WHEEL_KD * (target_v - vel_policy[p]);  // 诊断：预估 PD 扭矩
             }
         }
 

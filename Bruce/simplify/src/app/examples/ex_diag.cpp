@@ -15,6 +15,7 @@
 #include <cstring>
 #include <thread>
 #include <chrono>
+#include <vector>
 
 using logctl::LogCat;
 #include "strategy/imu_device.h"
@@ -902,13 +903,15 @@ void Example39_Usb2CanProbe() {
 //   状态回报（51-54 帧）→ ReceiveOnce → Usb2CanTransport 回调 → GetStatus
 // 只使能 CAN1（其余路不动），目标=当前角低增益保持，读位置/速度/扭矩。
 void Example40_Usb2CanReadStatus() {
-    printf("\n========== Example 40: USB2CAN 读 CAN1 电机姿态（不使能） ==========\n");
+    printf("\n========== Example 40: USB2CAN 读电机姿态（4 路全 USB2CAN，不使能） ==========\n");
     printf("[INFO] 不使能电机。发读参数帧经 USB2CAN：角度/速度/扭矩→更新 GetStatus；\n");
-    printf("       控制模式 0x5B→接收线程打印 [PARAM]（链路证据）。\n\n");
+    printf("       控制模式 0x5B→接收线程打印 [PARAM]（链路证据）。\n");
+    printf("       ⚠ 判读：电机参数读得到（GetStatus 非 0 / [PARAM] 有打印）→ 发送方向通；\n");
+    printf("         读不到（GetStatus 恒 0、无 [PARAM]）→ USB2CAN 发送方向断（读帧未达电机）。\n\n");
 
     MotorManager& motor_mgr = MotorManager::GetInstance();
     ThreadManager thread_mgr;
-    motor_mgr.SetChannelTransport(1, &Usb2CanTransport::GetInstance());
+    motor_mgr.SetTransport(&Usb2CanTransport::GetInstance());   // 4 路全 USB2CAN（2 双路模块）
     if (!motor_mgr.Initialize(thread_mgr)) {
         printf("[ERROR] MotorManager 初始化失败\n");
         return;
@@ -918,23 +921,34 @@ void Example40_Usb2CanReadStatus() {
     sleep(1);
 
     // 不使能！只发读参数帧（RW=0），回报更新 MotorStatus / default 分支打印 [PARAM]
-    printf("[INFO] 循环读 CAN1 电机姿态 + 控制模式（8s，Ctrl+C 退出）...\n");
-    for (int k = 0; k < 40 && !g_rl_stop; k++) {
-        for (int mi = 1; mi <= 4; mi++) {
-            motor_mgr.ReadParam(1, mi, MOTOR_OR_angle);        // 更新 position
-            motor_mgr.ReadParam(1, mi, MOTOR_OR_velocity);     // 更新 velocity
-            motor_mgr.ReadParam(1, mi, MOTOR_OR_torque);       // 更新 torque
-            motor_mgr.ReadParam(1, mi, MOTOR_WR_CONTROL_MODE); // 0x5B → default 打印 [PARAM]
-        }
-        usleep(100000);   // 等回报到达（接收线程解包更新状态）
+    // 聚焦诊断寄存器：型号(0x50) / 错误(0x12) / CAN超时(0x57) / 限位(0x53/0x54) / 模式(0x5B)
+    //   - 型号可确认协议兼容；错误=0 才可能正常控制；
+    //   - CAN_Timeout>0 表示"N 个周期未收到控制帧即失能"，若控制帧持续则应保持使能；
+    //   - 限位 Max/Min 若电机当前角在此范围内则非限位挡住。
+    printf("[INFO] 循环读 4 路电机诊断寄存器（型号/错误/CAN超时/限位/模式，12s，Ctrl+C 退出）...\n");
+    for (int k = 0; k < 60 && !g_rl_stop; k++) {
+        for (int cp = 0; cp < 4; cp++)
+            for (int mi = 1; mi <= 4; mi++) {
+                motor_mgr.ReadParam(cp, mi, MOTOR_OR_angle);          // 更新 position（GetStatus 显示）
+                motor_mgr.ReadParam(cp, mi, MOTOR_WR_Major);          // 电机型号
+                motor_mgr.ReadParam(cp, mi, MOTOR_OR_error_register); // 错误寄存器
+                motor_mgr.ReadParam(cp, mi, MOTOR_WR_CAN_Timeout);    // CAN 超时失能周期
+                motor_mgr.ReadParam(cp, mi, MOTOR_WR_Max_Angle);      // 限位上限
+                motor_mgr.ReadParam(cp, mi, MOTOR_WR_Min_Angle);      // 限位下限
+                motor_mgr.ReadParam(cp, mi, MOTOR_WR_CONTROL_MODE);   // 控制模式
+            }
+        usleep(200000);   // 等回报（16 电机 × 7 参数串行，放宽间隔）
 
         if (k % 4 == 0) {
-            printf("  [%2ds] GetStatus: ", k / 4);
-            for (int mi = 1; mi <= 4; mi++) {
-                MotorStatus st = motor_mgr.GetStatus(1, mi);
-                printf("m%d(%+.3f,%+.2f,%+.2f) ", mi, st.position, st.velocity, st.torque);
+            printf("  [%2ds] GetStatus（err=错误码, 非0即故障）:\n", k / 4);
+            for (int cp = 0; cp < 4; cp++) {
+                printf("    CAN%d: ", cp);
+                for (int mi = 1; mi <= 4; mi++) {
+                    MotorStatus st = motor_mgr.GetStatus(cp, mi);
+                    printf("m%d(%+.3f,%+.2f,%+.2f,e%u) ", mi, st.position, st.velocity, st.torque, st.error_code);
+                }
+                printf("\n");
             }
-            printf("\n");
             fflush(stdout);
         }
         usleep(100000);
@@ -1662,6 +1676,343 @@ void Example45_USB2CanMoveToZero() {
 
     printf("[INFO] Example20 完成\n");
     fflush(stdout);
+}
+
+// ================= 示例 46：USB2CAN 单电机阶跃响应测试 =================
+// 目标：区分"批量发送丢帧"（SendOnce 1ms 周期发 16 帧，USB2CAN 吞吐不足导致 thigh 阻抗指令不连续）
+//      vs "单发也弱"（USB2CAN 链路本身或电机问题）。
+// 做法：只使能 1 个电机，发 +0.3 rad 位置阶跃（kp=200/kd=20），记录 3s 内实际位置/扭矩。
+// 判读：
+//   扭矩≈60Nm(200×0.3) 且 1s 内到位 → 电机正常发力 → 问题在批量发送（1ms×16 帧吞吐不足）
+//   扭矩<20Nm 或到位慢 → 单发也弱 → USB2CAN 链路/电机问题（非批量）
+//   到位但扭矩很小 → 阻抗刚度低，kp 未真正生效（查固件阻抗参数）
+void Example46_USB2CanSingleMotorStep() {
+    printf("\n========== 示例 46：USB2CAN 单电机阶跃响应测试 ==========\n");
+    printf("[INFO] 只使能 1 个电机，发 +0.3 rad 位置阶跃，记录实际位置/扭矩（3s）。\n");
+    printf("[INFO] 判读：扭矩≈60Nm(200×0.3) 且快速到位 → 电机正常，问题在批量发送(1ms×16帧)；\n");
+    printf("[INFO]       扭矩<20Nm 或到位慢 → 单发也弱，USB2CAN 链路/电机问题。\n\n");
+
+    int can_port = -1, motor_id = -1;
+    printf("CAN 端口 (0~3, 回车默认 1=FR): "); fflush(stdout);
+    if (scanf("%d", &can_port) != 1 || can_port < 0 || can_port > 3) { can_port = 1; }
+    printf("电机 ID (1~4, 回车默认 2=Thigh): "); fflush(stdout);
+    if (scanf("%d", &motor_id) != 1 || motor_id < 1 || motor_id > 4) { motor_id = 2; }
+    printf("[INFO] 选择 CAN%d-M%d\n", can_port, motor_id);
+
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    motor_mgr.SetTransport(&Usb2CanTransport::GetInstance());   // 4 路全 USB2CAN
+    if (!motor_mgr.Initialize(thread_mgr)) { printf("[ERROR] 初始化失败\n"); return; }
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    // 使能单个电机（阻抗安全使能）
+    motor_mgr.SetControlMode(can_port, motor_id, IMPEDANCE);
+    usleep(100000);
+    motor_mgr.PreEnableZeroTorque(can_port, motor_id);
+    usleep(100000);
+    motor_mgr.EnableMotor(can_port, motor_id);
+    usleep(300000);
+
+    // 保持当前角 0.5s，确认电机响应（若已自由/不发力，保持阶段实际会漂移）
+    float start = motor_mgr.GetStatus(can_port, motor_id).position;
+    motor_mgr.SendImpedance(can_port, motor_id, start, 0.0f, 200.0f, 20.0f, 0.0f);
+    usleep(500000);
+    MotorStatus s0 = motor_mgr.GetStatus(can_port, motor_id);
+    printf("\n[INFO] 保持中：目标 %+.3f，实际 %+.3f，扭矩 %+.2f Nm\n",
+           start, s0.position, s0.torque);
+    if (fabsf(s0.position - start) > 0.05f)
+        printf("[WARN] 保持阶段漂移 %+.3f rad → 电机未在阻抗闭环（kp 未生效/自由）\n",
+               s0.position - start);
+
+    // 阶跃 +0.3 rad，观察 3s（50Hz 下发）
+    float target = start + 0.3f;
+    printf("\n[INFO] 阶跃：%+.3f → %+.3f rad (+0.3)，kp=200/kd=20\n", start, target);
+    printf("   时间   目标     实际     误差    扭矩\n");
+    for (int f = 0; f < 60; f++) {
+        motor_mgr.SendImpedance(can_port, motor_id, target, 0.0f, 200.0f, 20.0f, 0.0f);
+        if (f % 5 == 0) {
+            MotorStatus st = motor_mgr.GetStatus(can_port, motor_id);
+            printf("  %4.1fs  %+.3f  %+.3f  %+.3f  %+6.2f\n",
+                   f * 0.05f, target, st.position, target - st.position, st.torque);
+        }
+        usleep(20000);
+    }
+
+    // 稳态判读
+    MotorStatus sf = motor_mgr.GetStatus(can_port, motor_id);
+    float err = target - sf.position;
+    float eff_kp = (fabsf(err) > 1e-4f) ? (sf.torque / err) : 0.0f;   // 实测等效刚度 Nm/rad
+    printf("\n[判读] 稳态误差 %+.3f rad，扭矩 %+.2f Nm（kp×0.3 ≈ %.0f Nm）\n",
+           err, sf.torque, 200.0f * 0.3f);
+    // 扭矩与误差自洽（实测 kp≈设定 kp）→ 阻抗闭环正常，误差来自重力/负载平衡：
+    //   稳态误差 = 负载扭矩 / kp，纯 PD 无前馈时的固有特性，加 tau_ff/增大 kp 才可消除。
+    if (fabsf(sf.torque) > 5.0f && eff_kp > 50.0f && eff_kp < 1000.0f)
+        printf("[结论] 阻抗闭环正常：实测刚度 %.0f Nm/rad（设定 200），扭矩 %+.1f Nm 平衡负载，\n"
+               "       稳态误差 %+.3f rad = 负载/kp（纯 PD 固有，非链路/电机问题）\n",
+               eff_kp, sf.torque, err);
+    else if (fabsf(err) < 0.03f && fabsf(sf.torque) > 30.0f)
+        printf("[结论] 电机正常发力 → 问题在批量发送（SendOnce 1ms×16 帧 USB2CAN 吞吐不足）\n");
+    else if (fabsf(err) < 0.03f)
+        printf("[结论] 到位但扭矩小 → 阻抗刚度低（kp 未真正生效），查固件阻抗参数\n");
+    else
+        printf("[结论] 扭矩与误差不自洽（实测 kp %.0f），且未到位 → USB2CAN 链路或电机问题，非批量发送\n",
+               eff_kp);
+
+    motor_mgr.DisableMotor(can_port, motor_id);
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+    printf("[INFO] 示例46 完成\n");
+}
+
+// ================= 示例 47：悬空 chirp 扫频 + 最小二乘参数辨识 =================
+// 目的：辨识单关节执行器参数，用于 tau_ff 前馈（重力/摩擦补偿）与 KP/KD 临界阻尼整定。
+// 模型：τ = J·θ̈ + B·θ̇ + f_c·sign(θ̇) + b
+//       J=转动惯量(kg·m²), B=粘性阻尼(Nm·s/rad), f_c=库仑摩擦(Nm), b=重力偏置(Nm)
+// 做法：悬空固定机身，对单关节开环扭矩 chirp 扫频激励（kp=kd=0），500Hz 采集 θ/θ̇/τ，
+//       离线最小二乘拟合 4 参数（正规方程 + 高斯消元，纯 C++ 无外部依赖）。
+// 安全：幅度小（默认 ±1.5 Nm）、从低频扫起、|位置|超 0.6 rad 自动停止。务必固定机身。
+// 注意：开环扭矩下电机会摆动；若摇头/振动剧烈立即 Ctrl+C（signal 已接）。
+static bool SysIdSolveN(const float A[5][5], const float b[5], float x[5], int n) {
+    float M[5][6];
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) M[i][j] = A[i][j];
+        M[i][n] = b[i];
+    }
+    for (int col = 0; col < n; col++) {
+        int piv = col;
+        for (int r = col + 1; r < n; r++)
+            if (fabsf(M[r][col]) > fabsf(M[piv][col])) piv = r;
+        if (fabsf(M[piv][col]) < 1e-9f) return false;
+        if (piv != col)
+            for (int j = col; j <= n; j++) std::swap(M[piv][j], M[col][j]);
+        for (int r = 0; r < n; r++) {
+            if (r == col) continue;
+            float f = M[r][col] / M[col][col];
+            for (int j = col; j <= n; j++) M[r][j] -= f * M[col][j];
+        }
+    }
+    for (int i = 0; i < n; i++) x[i] = M[i][n] / M[i][i];
+    return true;
+}
+
+// 单关节辨识结果
+struct JointSysIdResult {
+    float J = 0, B = 0, fc = 0, Kg = 0, b = 0;
+    float amp = 0, pos_range = 0;
+    bool  ok = false;
+};
+
+void Example47_ChirpSysId() {
+    printf("\n========== 示例 47：整狗站立 + 12 关节 chirp 扫描辨识 ==========\n");
+    printf("[INFO] 模型 τ = J·θ̈ + B·θ̇ + f_c·sign(θ̇) + K_g·θ + b\n");
+    printf("[INFO] 流程：整狗起立 STAND_*（四轮悬空）→ 逐个扫描 12 腿关节\n");
+    printf("[INFO]   每关节：读 τ_steady → 斜坡测静摩擦定幅度 → 开环 chirp(0.5→15Hz, 8s)\n");
+    printf("[INFO] 其他腿全程 PD 保持站立；结果汇总表 + log/sysid_all.csv\n");
+    printf("[INFO] 每关节约 15~30s，12 关节约 4~6 分钟；异常立即 Ctrl+C。\n\n");
+
+    MotorManager& mm = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    mm.SetTransport(&Usb2CanTransport::GetInstance());
+    if (!mm.Initialize(thread_mgr)) { printf("[ERROR] 初始化失败\n"); return; }
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    // ---- 整狗起立到 STAND_*（12 腿关节使能 + 插值，轮子悬空零扭矩）----
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            mm.SetControlMode(cp, mi, IMPEDANCE);
+    usleep(100000);
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            mm.PreEnableZeroTorque(cp, mi);
+    usleep(100000);
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            mm.EnableMotor(cp, mi);
+    usleep(300000);
+
+    float stand_q[12];
+    for (int leg = 0; leg < 4; leg++) {
+        stand_q[leg * 3 + 0] = deg2rad(STAND_HIP_DEG);
+        stand_q[leg * 3 + 1] = deg2rad(STAND_THIGH_DEG);
+        stand_q[leg * 3 + 2] = deg2rad(STAND_CALF_DEG);
+    }
+    float start_pos[12];
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            start_pos[cp * 3 + mi - 1] = mm.GetStatus(cp, mi).position;
+
+    printf("[INFO] 整狗起立中（10s 到 STAND_* {0,-60,60}°，轮子悬空）...\n");
+    const int STAND_FRAMES = 500;
+    for (int f = 0; f <= STAND_FRAMES; f++) {
+        float t = (float)f / STAND_FRAMES;
+        for (int cp = 0; cp < 4; cp++)
+            for (int mi = 1; mi <= 3; mi++) {
+                float pos = start_pos[cp * 3 + mi - 1]
+                          + (stand_q[cp * 3 + mi - 1] - start_pos[cp * 3 + mi - 1]) * t;
+                mm.SendImpedance(cp, mi, pos, 0.0f, 200.0f, 20.0f, 0.0f);
+            }
+        if (f % 100 == 0) printf("  起立 %4.0f%%\n", t * 100.0f);
+        usleep(1000000 / 50);
+    }
+    printf("[INFO] 起立完成，狗保持站立（轮子悬空）。开始 12 关节扫描。\n");
+
+    const char* jname[3] = {"hip", "thigh", "calf"};
+    JointSysIdResult res[4][3];
+    const float F0 = 0.5f, F1 = 15.0f, DUR = 8.0f, DT = 0.002f;
+    const float POS_LIMIT = 0.6f;   // 相对站立角（绝对位置 thigh/calf 本身超 ±0.6，须相对）
+    const int   N = (int)(DUR / DT);
+
+    for (int cp = 0; cp < 4; cp++) {
+        for (int mi = 1; mi <= 3; mi++) {
+            printf("\n===== [%d/12] 辨识 CAN%d-M%d（%s）=====\n",
+                   cp * 3 + mi, cp, mi, jname[mi - 1]);
+
+            // 其他 11 腿保持站立（PD 保持 STAND_*，狗不塌）
+            auto keep_others = [&]() {
+                for (int c2 = 0; c2 < 4; c2++)
+                    for (int m2 = 1; m2 <= 3; m2++) {
+                        if (c2 == cp && m2 == mi) continue;
+                        mm.SendImpedance(c2, m2, stand_q[c2 * 3 + m2 - 1],
+                                         0.0f, 200.0f, 20.0f, 0.0f);
+                    }
+            };
+
+            // 读稳态扭矩（站立姿态重力偏置）
+            float tau_steady = mm.GetStatus(cp, mi).torque;
+            printf("[INFO] τ_steady=%+.2f Nm\n", tau_steady);
+
+            // 斜坡测静摩擦：chirp 幅度须 > 静摩擦才动
+            float amp_bias = 1.0f;
+            bool broke = false;
+            printf("[INFO] 斜坡测静摩擦（每 0.5s +0.5 Nm，最长 20s）...\n");
+            for (int st = 0; st < 40 && !broke; st++) {
+                float extra = 0.5f * (st + 1);
+                mm.SendImpedance(cp, mi, 0.0f, 0.0f, 0.0f, 0.0f, tau_steady + extra);
+                keep_others();
+                usleep(400000);
+                MotorStatus s1 = mm.GetStatus(cp, mi);
+                usleep(100000);
+                MotorStatus s2 = mm.GetStatus(cp, mi);
+                if (fabsf(s2.position - s1.position) > 0.02f) {
+                    amp_bias = extra + 2.0f;   // 突破量 + 2 Nm 余量
+                    printf("  突破 +%.2f Nm → chirp 幅度 %.2f Nm\n", extra, amp_bias);
+                    broke = true;
+                }
+            }
+            if (!broke) {
+                printf("[WARN] 20s 未突破静摩擦 → 用幅度 4 Nm 试\n");
+                amp_bias = 4.0f;
+            }
+
+            // 开环 chirp 采集
+            const float AMP = amp_bias;
+            std::vector<float> pos(N), vel(N), trq(N), tcmd(N);
+            int collected = 0;
+            for (int i = 0; i < N; i++) {
+                float tt = i * DT;
+                keep_others();
+                float phase = 2.0f * (float)M_PI * (F0 * tt + 0.5f * ((F1 - F0) / DUR) * tt * tt);
+                float tau = tau_steady + AMP * sinf(phase);
+                mm.SendImpedance(cp, mi, 0.0f, 0.0f, 0.0f, 0.0f, tau);
+                tcmd[i] = tau;
+                MotorStatus st = mm.GetStatus(cp, mi);
+                pos[i] = st.position;
+                vel[i] = st.velocity;
+                trq[i] = st.torque;
+                collected++;
+                if (fabsf(pos[i] - stand_q[cp * 3 + mi - 1]) > POS_LIMIT) {
+                    printf("[WARN] 相对站立角超限，中止\n");
+                    break;
+                }
+                usleep((useconds_t)(DT * 1e6f));
+            }
+
+            // 运动质量检测
+            float pmin = pos[0], pmax = pos[0];
+            for (int k = 1; k < collected; k++) {
+                pmin = fminf(pmin, pos[k]);
+                pmax = fmaxf(pmax, pos[k]);
+            }
+            float prange = pmax - pmin;
+            if (prange < 0.02f)
+                printf("[WARN] 位置变化仅 %.3f rad——电机几乎没动，结果不可靠\n", prange);
+
+            // 最小二乘拟合（5 参数）：vel 平滑 + 隔帧差分，τ 用指令扭矩
+            std::vector<float> vel_s(collected);
+            for (int k = 0; k < collected; k++) {
+                int lo = k - 2, hi = k + 2;
+                if (lo < 0) lo = 0;
+                if (hi >= collected) hi = collected - 1;
+                float s = 0.0f;
+                for (int j = lo; j <= hi; j++) s += vel[j];
+                vel_s[k] = s / (hi - lo + 1);
+            }
+            const int DIFF = 5;
+            float ATA[5][5] = {0}, ATb[5] = {0};
+            int used = 0;
+            for (int k = DIFF; k < collected; k++) {
+                float acc = (vel_s[k] - vel_s[k - DIFF]) / (DIFF * DT);
+                float v = vel_s[k];
+                float sgn = (v > 0.02f) ? 1.0f : ((v < -0.02f) ? -1.0f : 0.0f);
+                float row[5] = {acc, v, sgn, pos[k], 1.0f};
+                float bval = tcmd[k];
+                for (int r = 0; r < 5; r++) {
+                    ATb[r] += row[r] * bval;
+                    for (int c = 0; c < 5; c++) ATA[r][c] += row[r] * row[c];
+                }
+                used++;
+            }
+            float x[5];
+            if (used > 50 && SysIdSolveN(ATA, ATb, x, 5)) {
+                res[cp][mi - 1] = JointSysIdResult{x[0], x[1], x[2], x[3], x[4], AMP, prange, true};
+                printf("[结果] J=%+.4f B=%+.4f f_c=%+.4f K_g=%+.4f b=%+.4f 位置范围%.3f\n",
+                       x[0], x[1], x[2], x[3], x[4], prange);
+            } else {
+                printf("[ERROR] 拟合失败/数据不足（样本 %d）\n", used);
+            }
+        }
+    }
+
+    // ---- 汇总表 ----
+    printf("\n\n========== 12 关节辨识汇总 ==========\n");
+    printf("关节  J(kg·m²)  B(Nm·s/r)  f_c(Nm)  K_g(Nm/rad)  b(Nm)  幅度 位置范围\n");
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++) {
+            auto& r = res[cp][mi - 1];
+            if (r.ok)
+                printf("C%d-%d %8.4f %9.3f %8.3f %11.2f %8.3f %5.1f %8.3f\n",
+                       cp, mi, r.J, r.B, r.fc, r.Kg, r.b, r.amp, r.pos_range);
+            else
+                printf("C%d-%d   失败\n", cp, mi);
+        }
+
+    // 汇总 CSV
+    FILE* f = fopen("log/sysid_all.csv", "w");
+    if (f) {
+        fprintf(f, "can,motor,J,B,fc,Kg,b,amp,pos_range,ok\n");
+        for (int cp = 0; cp < 4; cp++)
+            for (int mi = 1; mi <= 3; mi++) {
+                auto& r = res[cp][mi - 1];
+                fprintf(f, "%d,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%.4f,%d\n",
+                        cp, mi, r.J, r.B, r.fc, r.Kg, r.b, r.amp, r.pos_range, r.ok ? 1 : 0);
+            }
+        fclose(f);
+        printf("\n[INFO] 汇总 → log/sysid_all.csv\n");
+    }
+
+    // 失能 12 腿（安全回退）
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            mm.DisableMotor(cp, mi);
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    mm.Stop();
+    printf("[INFO] 示例47 完成\n");
 }
 
 // ================= 示例 21：Xbox 手柄控制 =================

@@ -97,12 +97,12 @@ constexpr bool WHEEL_FF_ENABLE = false;
 
 // ---- 轮子速度软限位（安全兜底，2026-08-21）----
 // 背景：RL 轮子曾被带到 48 rad/s 饱和（≈10.8 m/s，危险）。软限位在轮速超阈值时
-// 强制输出制动力矩，阻止冲高。这是应急兜底；根治仍需排查"轮子被带动的机制"。
-// ⚠ 阈值 5 rad/s 会限制行驶：vx > 0.565 m/s 时轮速即超限（v = vx/0.113）。
-//   调试期先保守保护，稳定后再放宽。7 Nm 制动对强外力带动力矩可能不足，仅作早期保护。
+// 速度软限位：轮速超阈值 → 把扭矩夹在 ±WHEEL_SOFT_LIMIT_TORQUE 内（限幅式，不是硬制动）。
+// ⚠ 阈值 10 rad/s = 1.13 m/s 线速（v = vx/0.113）。满 action 目标轮速 12.5 rad/s 会超限，
+//   即满摇杆/满 action 行驶时会触发保护（限加速方向，仍保留自然制动）。若需高速行驶再放宽。
 constexpr bool   WHEEL_SOFT_LIMIT_ENABLE = true;   // 软限位开关
-constexpr float  WHEEL_VEL_SOFT_LIMIT    = 5.0f;   // 异常速度阈值 (rad/s)
-constexpr float  WHEEL_SOFT_LIMIT_TORQUE = 7.0f;   // 超限时制动力矩 (Nm)
+constexpr float  WHEEL_VEL_SOFT_LIMIT    = 5.0f;  // 异常速度阈值 (rad/s)
+constexpr float  WHEEL_SOFT_LIMIT_TORQUE = 10.0f;   // 超限时扭矩限幅 (Nm)
 
 /**
  * @brief 轮关节前馈扭矩：kd * (wheel_vel_scale * action - vel) [+ 摩擦前馈]，clip 到限幅
@@ -122,10 +122,12 @@ inline float wheel_torque(float action, float vel, int wheel_idx) {
         tau += tau_ff;
     }
 
-    // 速度软限位：轮速超阈值 → 强制制动（方向与 vel 相反），阻止冲高到 48 饱和
+    // 速度软限位：轮速超阈值 → 扭矩限幅到 ±WHEEL_SOFT_LIMIT_TORQUE 内。
+    // 限幅式（非硬制动）：PD 自然制动力（与超速方向相反）照常通过，只夹住加速方向的扭矩，
+    // 避免超速瞬间强制反向制动的冲击。正超速禁正扭矩、负超速禁负扭矩。
     if (WHEEL_SOFT_LIMIT_ENABLE) {
-        if      (vel >  WHEEL_VEL_SOFT_LIMIT) tau = -WHEEL_SOFT_LIMIT_TORQUE;
-        else if (vel < -WHEEL_VEL_SOFT_LIMIT) tau =  WHEEL_SOFT_LIMIT_TORQUE;
+        if      (vel >  WHEEL_VEL_SOFT_LIMIT) tau = (tau >  WHEEL_SOFT_LIMIT_TORQUE) ?  WHEEL_SOFT_LIMIT_TORQUE : tau;
+        else if (vel < -WHEEL_VEL_SOFT_LIMIT) tau = (tau < -WHEEL_SOFT_LIMIT_TORQUE) ? -WHEEL_SOFT_LIMIT_TORQUE : tau;
     }
 
     float lim = WHEEL_TORQUE_LIMIT;

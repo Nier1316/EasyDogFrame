@@ -30,9 +30,11 @@
 // =====================================================================
 struct LogFileSwitch {
     // —— 诊断 RL（轮子乱转）的推荐配置：RECV + RL，其余关 ——
+    // ⚠ 2026-08-28：SENDCAN 改回 false——SendOnce 每 1ms×16 电机写 sendcan，
+    //   与 ReceiveOnce 的 LogRecv 争 MotorLogger m_mutex，是接收线程卡死嫌疑。
     static constexpr bool SEND    = false;  // send_*.csv    发送指令（需核对下发目标/kp/kd 时才开）
     static constexpr bool RECV    = true;   // recv_*.csv    接收反馈（诊断核心，保持开）
-    static constexpr bool SENDCAN = true;   // sendcan_*.csv CAN 原始帧（2026-08-22 排查 FR hip 扭矩小临时开，查完改回 false）
+    static constexpr bool SENDCAN = false;  // sendcan_*.csv CAN 原始帧（高频写入源，默认关，查帧时才开）
     static constexpr bool XBOX    = false;  // xbox_*.csv    手柄输入（测手柄/遥操时才开）
     static constexpr bool KEY     = false;  // key_*.csv     键盘事件（键盘交互示例才开）
     static constexpr bool RL      = true;   // rl_*.csv      RL 循环诊断（qrel/action/扭矩/姿态，离线分析）

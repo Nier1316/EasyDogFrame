@@ -12,6 +12,8 @@
 
 #include <cstdint>
 #include <mutex>
+#include <atomic>
+#include <chrono>
 #include "motor/ele_motor.h"
 #include "motor/motor_calibration.h"
 #include "common/types.h"
@@ -21,6 +23,12 @@
 class MotorManager {
 public:
     static MotorManager& GetInstance();
+
+    // 接收线程心跳（诊断"接收链路挂掉"）：ReceiveOnce 每次进入更新。
+    // s_start 在 Initialize 时置为当前时刻，心跳值 = 距启动毫秒数。
+    inline static std::atomic<int64_t> s_recv_heartbeat_ms{-1};
+    inline static std::chrono::steady_clock::time_point s_start{
+        std::chrono::steady_clock::now()};
 
     // thread_mgr：外部统一 ThreadManager，线程注册到此处，不在内部启动
     bool Initialize(ThreadManager& thread_mgr);
@@ -82,6 +90,15 @@ public:
 
     /** 单次发送轮询（1ms 节拍，把 target 字段编帧发出） */
     void SendOnce();
+
+    /** 诊断：ReceiveOnce 最近一次心跳（程序启动后毫秒）。-1 = 从未运行。
+     *  主循环用它检测接收线程是否卡死：心跳长时间不前进 + Usb2CanTransport::RxCount() 仍在涨
+     *  → 接收线程卡死；RxCount() 也停 → SDK 回调停（USB 接收链路挂）。 */
+    static int64_t GetReceiveHeartbeatMs() { return s_recv_heartbeat_ms.load(); }
+    static void TouchReceiveHeartbeat() { s_recv_heartbeat_ms.store(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - s_start).count()); }
+    static std::atomic<int64_t>& RecvHeartbeat() { return s_recv_heartbeat_ms; }
 
 private:
     MotorManager();

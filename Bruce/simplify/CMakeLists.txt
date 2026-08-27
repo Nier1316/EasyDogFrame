@@ -110,7 +110,8 @@ endif()
 # 递归生效）指向 damiao_sdk 与 miniforge3/lib。
 set(DAMIAO_SDK_DIR ${PROJECT_SOURCE_DIR}/lib/damiao_sdk/linux/x86_64)
 # 本机 conda base（libstdc++ >= GLIBCXX_3.4.32 + libusb >= 1.0.26，conda 已装）
-set(CONDA_LIB_DIR  "/home/sysu/miniconda3/lib")
+# ⚠ 22c2883 曾误指向远程机 /home/sysu/miniconda3，本机为 /home/bruce/miniforge3
+set(CONDA_LIB_DIR  "/home/bruce/miniforge3/lib")
 target_link_libraries(can_motor_app PRIVATE
     ${DAMIAO_SDK_DIR}/libdm_device.so
     # libusb 用绝对路径，避免 -L 顺序解析到系统老 libusb(1.0.25, 无 libusb_init_context)

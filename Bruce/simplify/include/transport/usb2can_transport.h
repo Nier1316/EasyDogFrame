@@ -18,6 +18,7 @@
 #include <vector>
 #include <map>
 #include <mutex>
+#include <atomic>
 #include <condition_variable>
 #include "transport/can_transport.h"
 #include "damiao_sdk/dmcan.h"
@@ -25,6 +26,10 @@
 class Usb2CanTransport : public CanTransport {
 public:
     static Usb2CanTransport& GetInstance();
+
+    // 诊断：SDK 回调收到的总帧数（onRecv 递增）。调用方据此判断"回调是否还在触发"，
+    // 与 ReceiveOnce 心跳对比可区分：回调停（SDK 接收挂）vs 接收线程卡死（回调正常）。
+    static std::atomic<uint64_t>& RxCount() { static std::atomic<uint64_t> c{0}; return c; }
 
     bool open(uint8_t idx, const TransportConfig& cfg) override;
     bool send(uint8_t idx, const CanFrame& f) override;
