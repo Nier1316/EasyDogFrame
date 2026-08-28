@@ -109,9 +109,20 @@ endif()
 # 经 conda miniforge 库绕开。运行同样需要这些库，用 DT_RPATH（--disable-new-dtags，
 # 递归生效）指向 damiao_sdk 与 miniforge3/lib。
 set(DAMIAO_SDK_DIR ${PROJECT_SOURCE_DIR}/lib/damiao_sdk/linux/x86_64)
-# 本机 conda base（libstdc++ >= GLIBCXX_3.4.32 + libusb >= 1.0.26，conda 已装）
-# ⚠ 22c2883 曾误指向远程机 /home/sysu/miniconda3，本机为 /home/bruce/miniforge3
-set(CONDA_LIB_DIR  "/home/bruce/miniforge3/lib")
+# 自动探测本机 conda lib（libstdc++ >= GLIBCXX_3.4.32 + libusb >= 1.0.26，达妙依赖）。
+# 可用 -DCONDA_LIB_DIR=... 覆盖；bruce 机 /home/bruce/miniforge3，sysu 机 /home/sysu/miniconda3。
+set(CONDA_LIB_DIR "" CACHE STRING "conda lib dir for damiao deps (libstdc++>=3.4.32 + libusb>=1.0.26)")
+if(NOT CONDA_LIB_DIR)
+  if(EXISTS "/home/bruce/miniforge3/lib/libusb-1.0.so")
+    set(CONDA_LIB_DIR "/home/bruce/miniforge3/lib")
+  elseif(EXISTS "/home/sysu/miniconda3/lib/libusb-1.0.so")
+    set(CONDA_LIB_DIR "/home/sysu/miniconda3/lib")
+  endif()
+endif()
+if(NOT CONDA_LIB_DIR)
+  message(FATAL_ERROR "找不到含 libusb-1.0.so 的 conda lib 目录，请用 -DCONDA_LIB_DIR=<path> 指定")
+endif()
+message(STATUS "CONDA_LIB_DIR = ${CONDA_LIB_DIR}")
 target_link_libraries(can_motor_app PRIVATE
     ${DAMIAO_SDK_DIR}/libdm_device.so
     # libusb 用绝对路径，避免 -L 顺序解析到系统老 libusb(1.0.25, 无 libusb_init_context)

@@ -24,17 +24,19 @@ constexpr int NUM_LEG_JOINTS  = 12;
 constexpr int NUM_WHEELS      = 4;
 constexpr int OBS_DIM         = 64;
 
-// ---- 控制参数（sim2sim.py 静态常量）----
+// ---- 控制参数（对齐 RL_Train/code/src/sim2sim.py 默认值，traj_v28 权威）----
 constexpr float ACTION_SCALE        = 0.25f;
 constexpr float WHEEL_VEL_SCALE     = 12.5f;
-// LEG_KP 从训练值 150 提到 250（2026-08-20 用户 sim2real 实测 250 更稳、跟随更紧。
-// 注意与 sim2sim.py 的 LEG_KP=150 有偏离，是有意为之，改回训练值需重新评估）。
+// LEG_KP/LEG_KD = 250/4：sim2sim.py 默认（traj_v28 训练 stiffness=250, damping=4，
+// 见 RL_Train/code commit 07884c7 回退 v28 默认）。
+// ⚠ 历史：曾用 250/40（真机实测标定）、300/10（V30 训练，非 v28），用户决定统一套 v28 sim2sim 默认。
 constexpr float LEG_KP              = 250.0f;
-constexpr float LEG_KD              = 40.0f;
-// WHEEL_KD 2026-08-28: 2→1。轮子上位机速度环 500Hz，KD=2 在解除挂钩轮速突变下振荡放大
-//（FR/RR 疯转）。KD=1 仍有足够速度阻尼，但振荡裕度更好（参考 Wheel-Legged-Gym 用 0.5）。
-constexpr float WHEEL_KD            = 1.0f;
-constexpr float LEG_TORQUE_LIMIT    = 150.0f;
+constexpr float LEG_KD              = 4.0f;
+// WHEEL_KD = 2.0：sim2sim.py 默认。⚠ 历史：真机曾 2→1 抑制解除挂钩振荡，现按
+// sim2sim 默认回 2.0；若真机振荡复现需再评估。
+constexpr float WHEEL_KD            = 2.0f;
+// LEG_TORQUE_LIMIT = 250：sim2sim.py 默认（v28）。⚠ 历史曾用 150。
+constexpr float LEG_TORQUE_LIMIT    = 250.0f;
 constexpr float WHEEL_TORQUE_LIMIT  = 53.0f;
 constexpr float CONTROL_DT          = 0.02f;   // 50 Hz
 constexpr float GAIT_CYCLE          = 0.6f;

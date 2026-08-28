@@ -28,8 +28,8 @@ PROJECT = os.path.dirname(HERE)  # simplify/
 TRAIN = "/home/sysu/Desktop/Project/Bruce/RL_Train/code"
 CKPT = os.path.join(
     TRAIN,
-    "checkpoints/dogurdf_velocity/checkpoints_20260826_182658_traj_v26/"
-    "iteration_1100.pkl",
+    "checkpoints/dogurdf_velocity/checkpoints_20260827_044715_traj_v28/"
+    "iteration_3000.pkl",
 )
 # 实际编译用的权重在 include/strategy/（include/rl/ 已废弃）
 OUT_WEIGHTS = os.path.join(PROJECT, "include/strategy/policy_weights.h")
