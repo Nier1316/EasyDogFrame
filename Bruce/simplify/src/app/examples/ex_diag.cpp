@@ -2015,4 +2015,92 @@ void Example47_ChirpSysId() {
     printf("[INFO] 示例47 完成\n");
 }
 
+// ================= 示例 48：轮子扭矩方向安全验证（不开 RL，无失控风险）=================
+// 目的：验证 pos_scale=+1 轮（FR/RR）的 send_tau 方向——排查 RL 站立中 FR/RR 疯转是否方向反。
+// 方法：单轮悬空（狗吊起/轮离地），开环给固定扭矩（kp=kd=0），观察编码器 pos 变化方向：
+//   +1.5 Nm → pos 增（正向转）→ 正扭矩=正向 → 方向对
+//   +1.5 Nm → pos 减（反向转）→ 正扭矩=反向 → 方向反（需翻转 send_tau）
+// 安全：单轮、小扭矩、悬空、位置保护，全程不使能其他电机、不跑策略。
+void Example48_WheelDirectionVerify() {
+    printf("\n========== 示例 48：轮子扭矩方向安全验证 ==========\n");
+    printf("[INFO] 单轮悬空开环 ±1.5 Nm，观察 pos 方向，判断 send_tau 是否反向。\n");
+    printf("[WARN] 轮子悬空会持续加速转，小扭矩安全；确认轮子离地/狗吊起。\n\n");
+
+    int can_port = -1;
+    printf("CAN 端口 (0~3, 回车默认 1=FR 轮): "); fflush(stdout);
+    if (scanf("%d", &can_port) != 1 || can_port < 0 || can_port > 3) can_port = 1;
+    const int motor_id = 4;   // 轮子
+    printf("[INFO] 验证 CAN%d 轮子\n\n", can_port);
+
+    MotorManager& mm = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    mm.SetTransport(&Usb2CanTransport::GetInstance());
+    if (!mm.Initialize(thread_mgr)) { printf("[ERROR] 初始化失败\n"); return; }
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    mm.SetControlMode(can_port, motor_id, IMPEDANCE);
+    usleep(100000);
+    mm.PreEnableZeroTorque(can_port, motor_id);
+    usleep(100000);
+    mm.EnableMotor(can_port, motor_id);
+    usleep(300000);
+
+    const float TORQ = 1.5f;   // 测试扭矩 (Nm)
+    const float POS_LIMIT = 50.0f;  // 位置保护（rad，轮子悬空可转多圈）
+    const int   DUR_MS = 500;  // 每方向 0.5s
+
+    // 返回 {pos, cal_vel}，同时验证"正向转时 cal_vel 符号"（速度环反馈方向）
+    auto apply_and_read = [&](float tau) -> std::pair<float,float> {
+        for (int i = 0; i < DUR_MS; i++) {
+            mm.SendImpedance(can_port, motor_id, 0, 0, 0, 0, tau);
+            usleep(1000);   // 1ms
+        }
+        MotorStatus st = mm.GetStatus(can_port, motor_id);
+        return {st.position, st.velocity};
+    };
+
+    // 阶段 0：零扭矩读初始
+    auto [p0, v0] = apply_and_read(0.0f);
+    printf("[INFO] 初始 pos=%+.2f vel=%+.2f\n", p0, v0);
+
+    // 阶段 1：+1.5 Nm（正扭矩，应正向转；验证 pos 增且 cal_vel 同为正）
+    auto [p1, v1] = apply_and_read(TORQ);
+    float d1 = p1 - p0;
+    printf("[+%.1fNm] pos %+.2f→%+.2f Δ=%+.3f vel=%+.2f  %s\n", TORQ, p0, p1, d1, v1,
+           d1 > 0.05f ? "→ 正向转" : (d1 < -0.05f ? "→ 反向转" : "→ 几乎不动"));
+    printf("[验证] 正向转时 cal_vel=%+.2f → %s（若 cal_vel 与 pos 方向相反，速度环会正反馈）\n",
+           v1, (d1 > 0.05f && v1 > 0.05f) ? "同号，反馈方向正确"
+             : (d1 > 0.05f && v1 < -0.05f) ? "反号！速度环正反馈风险"
+             : "未观察到转动");
+
+    // 阶段 2：零扭矩（惯性滑行）
+    auto [p2, v2] = apply_and_read(0.0f);
+    printf("[ 0 Nm ] pos %+.2f vel=%+.2f（惯性滑行）\n", p2, v2);
+
+    // 阶段 3：-1.5 Nm（对称）
+    auto [p3, v3] = apply_and_read(-TORQ);
+    float d3 = p3 - p2;
+    printf("[-%.1fNm] pos %+.2f→%+.2f Δ=%+.3f vel=%+.2f  %s\n", TORQ, p2, p3, d3, v3,
+           d3 < -0.05f ? "→ 反向转" : (d3 > 0.05f ? "→ 正向转" : "→ 几乎不动"));
+
+    // 判读（基于 +1.5 Nm 阶段）
+    printf("\n[判读] 正扭矩(+1.5Nm) 下 pos %s\n", d1 > 0.05f ? "增大（正向转）" : (d1 < -0.05f ? "减小（反向转）" : "不变"));
+    if (d1 > 0.05f)
+        printf("[结论] 正扭矩=正向转 → send_tau 方向正确（pos_scale=%+.0f 不翻转 OK）\n",
+               MOTOR_CALIBRATION[can_port][motor_id - 1].pos_scale);
+    else if (d1 < -0.05f)
+        printf("[结论] 正扭矩=反向转 → send_tau 方向反！pos_scale=%+.0f 轮需翻转扭矩\n",
+               MOTOR_CALIBRATION[can_port][motor_id - 1].pos_scale);
+    else
+        printf("[结论] 未观察到转动，检查轮子是否悬空/使能/扭矩是否生效\n");
+
+    mm.DisableMotor(can_port, motor_id);
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    mm.Stop();
+    printf("[INFO] 示例48 完成\n");
+}
+
 // ================= 示例 21：Xbox 手柄控制 =================

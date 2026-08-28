@@ -906,10 +906,10 @@ void Example36_RLStandLoop() {
     signal(SIGINT, rl_signal_handler);
 
     float last_action[16] = {0.0f};
-    // 向前溜车抵消（2026-08-21，iteration_450 时代）：策略 wheel action 曾带正向偏置，
-    // 需向后 cmd 抵消。新权重 traj_v26/iteration_1100 的正向偏置已消失（act 均值仅 ±0.09），
-    // CMD_BIAS_VX 已关闭（=0）。若新策略再出现溜车，重新实验其量级。
-    const float CMD_BIAS_VX = 0.0f;   // 已关闭：恒站立 cmd={0,0,0}
+    // 向前溜车抵消（2026-08-28 重新启用）：实测 traj_v26/iteration_1100 的 wheel action
+    // 仍有正向偏置（cmd=0 时均值 +0.005~+0.051 → 整体前冲，解除挂钩后速度环振荡疯转）。
+    // 给向后 cmd 让策略输出抵消前冲。量级从 -0.05 起，观察前冲是否消失，负太多会变后退。
+    const float CMD_BIAS_VX = -0.05f;
     float cmd[3] = {CMD_BIAS_VX, 0.0f, 0.0f};
     int step = 0;
 
@@ -1098,6 +1098,7 @@ void Example37_RLTeleopControl() {
 
     MotorManager& motor_mgr = MotorManager::GetInstance();
     ThreadManager thread_mgr;
+    motor_mgr.SetTransport(&Usb2CanTransport::GetInstance());   // 4 路全 USB2CAN（与 Example36 一致）
     if (!motor_mgr.Initialize(thread_mgr)) {
         printf("[ERROR] MotorManager 初始化失败\n");
         return;
@@ -1135,7 +1136,7 @@ void Example37_RLTeleopControl() {
     mcfg.hz          = HZ;
     mcfg.max_vx      = 1.0f;
     mcfg.max_wz      = 1.0f;
-    mcfg.cmd_bias_vx = 0.0f;   // 向后抵消策略正向偏置（实验调）
+    mcfg.cmd_bias_vx = -0.05f;  // 抵消策略 wheel action 正向偏置（与 Example36 的 CMD_BIAS_VX 对齐）
     motion.setConfig(mcfg);
     motion.init(motor_mgr, imu_ok ? &imu : nullptr);
 

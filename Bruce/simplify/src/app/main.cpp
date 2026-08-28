@@ -161,13 +161,18 @@ int main() {
     // printf("[INFO] Example36 completed.\n");
 
     // 运行示例47 - 悬空 chirp 扫频 + 最小二乘参数辨识（辨识 J/B/f_c/b → tau_ff + KP/KD）
-    printf("[INFO] Running Example47_ChirpSysId...\n");
-    Example47_ChirpSysId();
-    printf("[INFO] Example47 completed.\n");
+    // printf("[INFO] Running Example47_ChirpSysId...\n");
+    // Example47_ChirpSysId();
+    // printf("[INFO] Example47 completed.\n");
 
-    // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，CAN1 走 USB2CAN）
-    // printf("[INFO] Running Example37_RLTeleopControl...\n");
-    // Example37_RLTeleopControl();
+    // 运行示例48 - 轮子扭矩方向安全验证（单轮开环测向，无 RL 失控风险）
+    // printf("[INFO] Running Example48_WheelDirectionVerify...\n");
+    // Example48_WheelDirectionVerify();
+    // printf("[INFO] Example48 completed.\n");
+
+    // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，USB2CAN 4 路）
+    printf("[INFO] Running Example37_RLTeleopControl...\n");
+    Example37_RLTeleopControl();
     // printf("[INFO] Example37 completed.\n");
 
     // 运行示例38 - 执行器延迟辨识（扫频测 Action Delay，定 action_delay_steps）

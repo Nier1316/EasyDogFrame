@@ -367,6 +367,14 @@ void MotorManager::SendOnce() {
                         //         target_torque=前馈扭矩(Nm)。kd=0 时退化为纯扭矩（兼容 Example44/34/35）。
                         float tau = motor.kd * (motor.target_speed - motor.current_speed)
                                   + motor.target_torque;
+                        // ⚠ 诊断打印（排查 FR 轮疯转方向）：tgt/cur/tau 符号关系。
+                        // 判读：cur 正(+5) 时 tau 应为负(刹车)；若 tau 正(驱动) → 方向反。
+                        // fbtorq = 反馈扭矩(cal_torque)，若 ≈ -tau → 固件反馈负施加，刹车有效。
+                        static int g_wheel_dbg = 0;
+                        if (++g_wheel_dbg % 50 == 0)   // 500Hz/50 = 10Hz
+                            printf("[WHEEL] c%u id%u tgt=%+.3f cur=%+.3f tau=%+.3f fbtorq=%+.3f\n",
+                                   can_port, motor_id, motor.target_speed,
+                                   motor.current_speed, tau, motor.current_torque);
                         // 速度软限位（限幅式，非硬制动）：超速只夹加速方向，留自然制动
                         if      (motor.current_speed >  rl::WHEEL_VEL_SOFT_LIMIT)
                             tau = (tau >  rl::WHEEL_SOFT_LIMIT_TORQUE) ?  rl::WHEEL_SOFT_LIMIT_TORQUE : tau;
