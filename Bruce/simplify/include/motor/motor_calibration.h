@@ -115,27 +115,27 @@ static const JointImpedanceParam JOINT_IMPEDANCE[CAN_PORTS][3] = {
     //                kp      kd   tau_ff
     // CAN0 端口 (左前腿)
     {
-        {300.0f, 10.0f,  -14.0f}, // Motor 1 (Hip)  tau_ff 10→8（hip 外翻漂移改善）
-        {250.0f, 10.0f,  -5.0f}, // Motor 2 (Thigh)  tau_ff=8 （）重力前馈（RL 腿软改善）
-        {250.0f, 10.0f,  16.0f}, // Motor 3 (Calf)   tau_ff=5 （）重力前馈（RL 腿软改善）
+        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-14
+        {250.0f, 10.0f, -5.0f},  // Motor 2 (Thigh)  tau_ff=-5
+        {250.0f, 10.0f, 12.0f},  // Motor 3 (Calf)   tau_ff=16
     },
     // CAN1 端口 (右前腿)
     {
-        {300.0f, 10.0f,  -14.0f}, // Motor 1 (Hip)  tau_ff 10→8（hip 外翻漂移改善）
-        {250.0f, 10.0f,  -5.0f}, // Motor 2 (Thigh)  tau_ff=8 重力前馈（RL 腿软改善）
-        {250.0f, 10.0f,  16.0f}, // Motor 3 (Calf)   tau_ff=5 重力前馈（RL 腿软改善）
+        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-14
+        {250.0f, 10.0f, -5.0f},  // Motor 2 (Thigh)  tau_ff=-5
+        {250.0f, 10.0f, 12.0f},  // Motor 3 (Calf)   tau_ff=16
     },
     // CAN2 端口 (左后腿)
     {
-        {300.0f, 10.0f,  -14.0f}, // Motor 1 (Hip)  tau_ff 10→8（hip 外翻漂移改善）
-        {250.0f, 10.0f,  -5.0f}, // Motor 2 (Thigh)  tau_ff=8 重力前馈（RL 腿软改善）
-        {250.0f, 10.0f,  26.0f}, // Motor 3 (Calf)   tau_ff=5 重力前馈（RL 腿软改善）
+        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-14
+        {250.0f, 10.0f, -5.0f},  // Motor 2 (Thigh)  tau_ff=-5
+        {250.0f, 10.0f, 20.0f},  // Motor 3 (Calf)   tau_ff=26
     },
     // CAN3 端口 (右后腿)
     {
-        {300.0f, 10.0f,  -14.0f}, // Motor 1 (Hip)  tau_ff 10→8（hip 外翻漂移改善）
-        {250.0f, 10.0f,  -5.0f}, // Motor 2 (Thigh)  tau_ff=8 重力前馈（RL 腿软改善）
-        {250.0f, 10.0f,  26.0f}, // Motor 3 (Calf)   tau_ff=5 重力前馈（RL 腿软改善）
+        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-14
+        {250.0f, 10.0f, -5.0f},  // Motor 2 (Thigh)  tau_ff=-5
+        {250.0f, 10.0f, 20.0f},  // Motor 3 (Calf)   tau_ff=26
     },
 };
 

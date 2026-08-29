@@ -691,43 +691,47 @@ def _run_viewer(
                 viewer.cam.azimuth = 90.0
 
         while viewer.is_running():
-            tic = time.perf_counter()
+            try:
+                tic = time.perf_counter()
 
-            # Poll for a newer checkpoint and hot-swap params in place.
-            if args.watch_dir and (tic - last_poll) >= args.watch_interval:
-                last_poll = tic
-                path, it = _newest_checkpoint(args.watch_dir)
-                if path is not None and it > current["iter"]:
-                    try:
-                        current["params"] = _load_params(path)
-                        current["iter"] = it
-                        print(f"  -> hot-loaded iteration {it}")
-                    except (EOFError, pickle.UnpicklingError, OSError):
-                        # Checkpoint still being written; retry next poll.
-                        pass
+                # Poll for a newer checkpoint and hot-swap params in place.
+                if args.watch_dir and (tic - last_poll) >= args.watch_interval:
+                    last_poll = tic
+                    path, it = _newest_checkpoint(args.watch_dir)
+                    if path is not None and it > current["iter"]:
+                        try:
+                            current["params"] = _load_params(path)
+                            current["iter"] = it
+                            print(f"  -> hot-loaded iteration {it}")
+                        except (EOFError, pickle.UnpicklingError, OSError):
+                            # Checkpoint still being written; retry next poll.
+                            pass
 
-            command = pad.read(args.max_vx, args.max_vyaw) if pad is not None else fixed_cmd
-            obs, last_action = control_step(command, last_action, sim_step)
+                command = pad.read(args.max_vx, args.max_vyaw) if pad is not None else fixed_cmd
+                obs, last_action = control_step(command, last_action, sim_step)
 
-            if record_w is not None:
-                _record_row(record_w, mj_data, indexer, obs, last_action, command, sim_step)
+                if record_w is not None:
+                    _record_row(record_w, mj_data, indexer, obs, last_action, command, sim_step)
 
-            sim_step += 1
+                sim_step += 1
 
-            # Auto-reset on fall so the session keeps going.
-            proj_g = obs[6:9]
-            if proj_g[2] > -0.34:
-                print(f"  ! tipped over (proj_grav_z={proj_g[2]:.2f}) -> resetting")
-                _reset_pose(mj_model, mj_data, indexer, default_pose)
-                last_action = np.zeros(NUM_JOINTS)
-                sim_step = 0
+                # Auto-reset on fall so the session keeps going.
+                proj_g = obs[6:9]
+                if proj_g[2] > -0.34:
+                    print(f"  ! tipped over (proj_grav_z={proj_g[2]:.2f}) -> resetting")
+                    _reset_pose(mj_model, mj_data, indexer, default_pose)
+                    last_action = np.zeros(NUM_JOINTS)
+                    sim_step = 0
 
-            viewer.sync()
+                viewer.sync()
 
-            # Pace to real time: one control step == CONTROL_DT seconds.
-            dt = CONTROL_DT - (time.perf_counter() - tic)
-            if dt > 0:
-                time.sleep(dt)
+                # Pace to real time: one control step == CONTROL_DT seconds.
+                dt = CONTROL_DT - (time.perf_counter() - tic)
+                if dt > 0:
+                    time.sleep(dt)
+            except KeyboardInterrupt:
+                print("\n  Interrupted by user.")
+                break
     print("  Viewer closed.")
 
 
