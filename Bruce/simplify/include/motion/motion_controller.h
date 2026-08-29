@@ -57,6 +57,17 @@ public:
     bool returnToStart(float duration_s,
                        const std::function<bool()>& is_stopped = nullptr);
 
+    /**
+     * 优雅趴下：从当前腿位慢速插值到 LIE_DOWN_* 趴下姿态（身体缓降、轮子着地）。
+     * 全程轮子 0 速弱增益保持（不滚动），可被 is_stopped 中止（急停）。
+     * 趴到位后保持姿态（不自动失能），由上层决定保持/失能。
+     * @param duration_s  趴下时长（建议 10~15s，身体缓降稳定）
+     * @param is_stopped  每周期查询的中止条件（返回 true 中断；可为 nullptr）
+     * @return true 正常完成；false 被中止
+     */
+    bool lieDown(float duration_s,
+                 const std::function<bool()>& is_stopped = nullptr);
+
     // ============ RL 循环（50Hz 主循环单步，非阻塞） ============
 
     /** 初始化 RL 状态（last_action 清零、step 归零、记录 cmd 初值） */
@@ -100,6 +111,7 @@ private:
     float   cmd_[3]          = {0.0f, 0.0f, 0.0f};
     float   last_obs_[64]    = {0.0f};
     float   tau_wheel_[4]    = {0.0f};
+    float   wheel_v_lp_[4]   = {0.0f};  // 轮速目标一阶低通状态（SPEED 下发前平滑）
     int     step_            = 0;
     bool    rl_active_       = false;
 };

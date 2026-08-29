@@ -2103,4 +2103,250 @@ void Example48_WheelDirectionVerify() {
     printf("[INFO] 示例48 完成\n");
 }
 
+// ================= 示例 49：整狗站立 + 单轮 SPEED 模式速度环测试 =================
+// 目的：验证固件 SPEED 速度环（SendSpeed 下发 vel/kvp/ki）能否稳定控制轮子，
+//       解决轮子疯转问题。背景：固件阻抗模式的 vel_des 被忽略（kd 只是位置阻尼，
+//       kp=0 时无驱动力，实测轮子不动），速度控制必须走 SPEED 模式。
+// 疯转根因：轮使能后固件速度反馈存在假偏移（实测 -43 rad/s 或饱和 ±48），
+//       满 kvp 会把假偏移当真实误差去追 → 疯转 ~1s。解法：软启动（低 kvp 起步，
+//       Example23 已验证 kvp=0.3→3.0 渐变可行）。
+// 流程：整狗起立（轮悬空）→ 选单轮 → SPEED 软启动使能 → 等假偏移消退 →
+//       对每个 kvp 做目标速度阶跃（+2 → 0 → -2 rad/s 各 2s），记录收敛/振荡。
+// 判读：轮速收敛到目标且无振荡 → 该 kvp 可用；振荡/发散 → kvp 过大或反馈问题。
+// 安全：悬空、轮子离地、目标速度小（±2）、SendOnce SPEED 分支有轮速超 15 兜底。
+void Example49_StandAndWheelSpeedLoopTest() {
+    printf("\n========== 示例 49：整狗站立 + 单轮 SPEED 模式速度环测试 ==========\n");
+    printf("[INFO] 下发 vel/kvp/ki 给固件速度环（SendSpeed），固件内部 1kHz 闭环。\n");
+    printf("[INFO] 软启动使能（低 kvp）→ 等假速度偏移消退 → kvp 扫描 × 目标速度阶跃。\n");
+    printf("[WARN] 悬空起立，轮子离地；轮速超 15 rad/s 自动 0 速 0 增益兜底。\n\n");
+
+    MotorManager& mm = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    mm.SetTransport(&Usb2CanTransport::GetInstance());
+    if (!mm.Initialize(thread_mgr)) { printf("[ERROR] 初始化失败\n"); return; }
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    // ---- 整狗起立到 STAND_*（12 腿使能 + 插值，轮子不使能悬空）----
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            mm.SetControlMode(cp, mi, IMPEDANCE);
+    usleep(100000);
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            mm.PreEnableZeroTorque(cp, mi);
+    usleep(100000);
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            mm.EnableMotor(cp, mi);
+    usleep(300000);
+
+    float stand_q[12];
+    for (int leg = 0; leg < 4; leg++) {
+        stand_q[leg * 3 + 0] = deg2rad(STAND_HIP_DEG);
+        stand_q[leg * 3 + 1] = deg2rad(STAND_THIGH_DEG);
+        stand_q[leg * 3 + 2] = deg2rad(STAND_CALF_DEG);
+    }
+    float start_pos[12];
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            start_pos[cp * 3 + mi - 1] = mm.GetStatus(cp, mi).position;
+
+    printf("[INFO] 整狗起立中（10s 到 STAND_*，轮子悬空）...\n");
+    const int STAND_FRAMES = 500;
+    for (int f = 0; f <= STAND_FRAMES; f++) {
+        float t = (float)f / STAND_FRAMES;
+        for (int cp = 0; cp < 4; cp++)
+            for (int mi = 1; mi <= 3; mi++) {
+                float pos = start_pos[cp * 3 + mi - 1]
+                          + (stand_q[cp * 3 + mi - 1] - start_pos[cp * 3 + mi - 1]) * t;
+                mm.SendImpedance(cp, mi, pos, 0.0f, 200.0f, 20.0f, 0.0f);
+            }
+        if (f % 100 == 0) printf("  起立 %4.0f%%\n", t * 100.0f);
+        usleep(1000000 / 50);
+    }
+    printf("[INFO] 起立完成，狗保持站立（轮子悬空）。\n");
+
+    // ---- 选测试轮子 ----
+    int can_port = -1;
+    printf("\n选测试轮子\nCAN 端口 (0~3, 回车默认 0=FL): "); fflush(stdout);
+    if (scanf("%d", &can_port) != 1 || can_port < 0 || can_port > 3) can_port = 0;
+    const int motor_id = 4;
+    printf("[INFO] 测试 CAN%d 轮子（SPEED 固件速度环）\n\n", can_port);
+
+    // ---- 轮子 SPEED 软启动使能 ----
+    // 关键：先预写固件 SPEED 模式，再预置 0 速弱增益，最后才使能。
+    // 使能瞬间固件速度反馈可能有假偏移（-43/±48），弱增益下力矩小，
+    // 等偏移自行消退（~1s）后再升 kvp 扫描。满 kvp 使能会疯转（历史教训）。
+    printf("[INFO] SPEED 软启动使能（预写模式 + 0 速 kvp=0.3）...\n");
+    mm.SetControlMode(can_port, motor_id, SPEED);
+    usleep(100000);
+    mm.SendSpeed(can_port, motor_id, 0.0f, 0.3f, 0.03f);
+    usleep(100000);
+    mm.EnableMotor(can_port, motor_id);
+    usleep(2000000);   // 等假偏移消退窗口（2s，SendOnce 持续发 0 速弱增益）
+
+    MotorStatus w0 = mm.GetStatus(can_port, motor_id);
+    printf("[INFO] 使能后轮速反馈 = %+.2f rad/s（|v|>5 说明假偏移未消退，需降 kvp 或加长窗口）\n\n",
+           w0.velocity);
+
+    // ---- SPEED 速度环测试：kvp 扫描 × 目标速度阶跃 ----
+    const float KVP_LIST[]  = {0.5f, 1.0f, 2.0f, 3.0f, 5.0f};
+    const float KI          = 0.05f;             // 小积分，克服摩擦稳态误差
+    const float TARGETS[]   = {+2.0f, 0.0f, -2.0f};
+    const char* tname[]     = {"正向+2", "刹停0", "反向-2"};
+    const int   NSTEP       = 100;               // 每阶段 2s @ 50Hz
+
+    printf("=== SPEED 固件速度环测试（SendSpeed: vel/kvp/ki）===\n");
+    for (float kvp : KVP_LIST) {
+        printf("\n===== kvp = %.1f (ki=%.2f) =====\n", kvp, KI);
+        for (int ts = 0; ts < 3; ts++) {
+            float tv = TARGETS[ts];
+            float vmin = 1e9f, vmax = -1e9f;
+            std::vector<float> vlog;
+            for (int i = 0; i < NSTEP; i++) {
+                mm.SendSpeed(can_port, motor_id, tv, kvp, KI);
+                usleep(20000);
+                MotorStatus st = mm.GetStatus(can_port, motor_id);
+                vmin = fminf(vmin, st.velocity);
+                vmax = fmaxf(vmax, st.velocity);
+                vlog.push_back(st.velocity);
+                if (i % 25 == 0)
+                    printf("  [%s] t=%.1fs vel=%+.2f\n", tname[ts], i * 0.02f, st.velocity);
+            }
+            // 稳态评估：末 0.5s（25 帧）均值与极差。全段范围含阶跃反转过渡
+            // （+2 段从上一阶段 -2 开始，范围必跨 ±2），不代表收敛质量。
+            const int N_STEADY = 25;
+            int nb = std::max(0, (int)vlog.size() - N_STEADY);
+            float vsum = 0.0f, vsmin = 1e9f, vsmax = -1e9f;
+            for (int i = nb; i < (int)vlog.size(); i++) {
+                vsum += vlog[i];
+                vsmin = fminf(vsmin, vlog[i]);
+                vsmax = fmaxf(vsmax, vlog[i]);
+            }
+            float vmean = vsum / std::max(1, (int)vlog.size() - nb);
+            float verr  = fabsf(vmean - tv);
+            float vspan = vsmax - vsmin;
+            printf("  [%s] 目标%+.1f → 全段[%+.2f~%+.2f] 稳态末0.5s均值%+.2f 极差%.2f  | %s\n",
+                   tname[ts], tv, vmin, vmax, vmean, vspan,
+                   (verr < 0.3f && vspan < 0.5f) ? "稳定到位" : "收敛差/振荡");
+        }
+    }
+
+    // ---- 轮子急停演示（2026-08-29）----
+    // WheelEmergencyStop()：SendOnce 对轮子强制发 SPEED 0 速 + kvp=3.0 制动帧，
+    // 固件速度环闭环到 0 速（主动制动，非自由滑行）。验证制动是否快速可靠。
+    printf("\n=== 轮子急停演示 ===\n");
+    mm.SendSpeed(can_port, motor_id, +3.0f, 2.0f, 0.05f);   // 让轮子匀速转起来
+    usleep(1500000);   // 1.5s 稳定到目标
+    printf("  触发急停前轮速：\n");
+    for (int i = 0; i < 3; i++) {
+        MotorStatus st = mm.GetStatus(can_port, motor_id);
+        printf("    t=%.1fs vel=%+.2f\n", i * 0.5f, st.velocity);
+        usleep(500000);
+    }
+    printf("  触发 WheelEmergencyStop()（0 速 + kvp=3.0 制动）...\n");
+    mm.WheelEmergencyStop();
+    float vmin = 1e9f, vmax = -1e9f, vlast = 0.0f;
+    for (int i = 0; i < 40; i++) {   // 2s @ 20Hz 采样
+        usleep(50000);
+        MotorStatus st = mm.GetStatus(can_port, motor_id);
+        vmin = fminf(vmin, st.velocity);
+        vmax = fmaxf(vmax, st.velocity);
+        vlast = st.velocity;
+        if (i % 10 == 0) printf("    [急停] t=%.1fs vel=%+.2f\n", i * 0.05f, st.velocity);
+    }
+    printf("  急停 2s：轮速范围 %+.2f~%+.2f 末值%+.2f  | %s\n",
+           vmin, vmax, vlast,
+           (fabsf(vlast) < 0.5f) ? "制动到位" : "未完全停住（需加大 kvp 或检查速度反馈）");
+    mm.ClearWheelEmergency();
+
+    // 复位轮子（0 速弱增益）
+    mm.SendSpeed(can_port, motor_id, 0.0f, 0.5f, 0.0f);
+    usleep(500000);
+    mm.DisableMotor(can_port, motor_id);
+
+    // 失能 12 腿
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            mm.DisableMotor(cp, mi);
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    mm.Stop();
+    printf("[INFO] 示例49 完成\n");
+}
+
+// ================= 示例 50：趴下姿态手动标定（不使能电机） =================
+// 目的：不使能电机（零扭矩），手动把狗腿摆到目标「趴下」姿态，按回车记录
+//       当前 12 腿关节实际角度（标定后真机角），作为 LIE_DOWN_*_DEG 的目标值。
+// 流程：初始化（只启接收线程，不使能电机）→ 用户摆腿 → 回车 → 读参刷新 →
+//       打印每腿 hip/thigh/calf 角度（rad+deg）+ 四腿平均建议值。可多次记录，q 退出。
+// 安全：全程不使能电机（自由摆腿），读参帧只读不改。电机驱动须供电（Example31 模式）。
+void Example50_LieDownAngleRecord() {
+    printf("\n========== 示例 50：趴下姿态手动标定（不使能电机） ==========\n");
+    printf("[INFO] 电机未使能（零扭矩），可手动摆狗腿。\n");
+    printf("[INFO] 把狗腿摆到目标「趴下」姿态，按回车记录当前 12 关节角。\n");
+    printf("[INFO] 连续记录取稳态；q 退出。电机驱动须供电。\n\n");
+
+    MotorManager& mm = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    if (!mm.Initialize(thread_mgr)) { printf("[ERROR] 初始化失败\n"); return; }
+    thread_mgr.start_thread("motor_receive");   // 只启接收线程（读参回帧），不使能电机
+
+    // 读取 12 腿关节角：发读参数帧触发回帧，等回帧后取标定后角度（Example31 模式）
+    auto read_legs = [&](float out[12]) {
+        for (int cp = 0; cp < 4; cp++)
+            for (int mi = 1; mi <= 3; mi++)
+                mm.ReadParam(cp, mi, MOTOR_OR_angle);
+        usleep(150000);   // 12 帧串行回帧等待
+        for (int cp = 0; cp < 4; cp++)
+            for (int mi = 1; mi <= 3; mi++)
+                out[cp * 3 + mi - 1] = mm.GetStatus(cp, mi).position;
+    };
+
+    const char* legname[4] = {"FL", "FR", "RL", "RR"};
+    const char* jname[3]   = {"hip", "thigh", "calf"};
+    int record_cnt = 0;
+
+    while (true) {
+        printf("\n[操作] 摆好狗腿到目标趴下姿态 → 回车记录；q 退出\n  > ");
+        fflush(stdout);
+        char line[64];
+        if (!fgets(line, sizeof line, stdin)) break;
+        if (line[0] == 'q' || line[0] == 'Q') break;
+
+        // 连续读 5 次取稳态均值（排除摆腿过程中抖动读数）
+        const int N = 5;
+        float sum[12] = {0};
+        for (int k = 0; k < N; k++) {
+            float pos[12];
+            read_legs(pos);
+            for (int i = 0; i < 12; i++) sum[i] += pos[i];
+        }
+        record_cnt++;
+        printf("\n=== 记录 #%d（%d 次稳态均值）===\n", record_cnt, N);
+        for (int leg = 0; leg < 4; leg++) {
+            printf("  %s: ", legname[leg]);
+            for (int j = 0; j < 3; j++) {
+                float avg = sum[leg * 3 + j] / N;
+                printf("%s %+.3f rad (%+.1f°)  ", jname[j], avg, avg * 180.0f / 3.14159f);
+            }
+            printf("\n");
+        }
+        // 四腿平均 → 建议 LIE_DOWN_*_DEG（LIE_DOWN 是全腿同构目标）
+        float aj[3] = {0};
+        for (int j = 0; j < 3; j++) {
+            for (int leg = 0; leg < 4; leg++) aj[j] += sum[leg * 3 + j] / N;
+            aj[j] /= 4.0f;
+        }
+        printf("  → 建议 LIE_DOWN: hip %+.1f°  thigh %+.1f°  calf %+.1f°\n",
+               aj[0] * 180.0f / 3.14159f, aj[1] * 180.0f / 3.14159f, aj[2] * 180.0f / 3.14159f);
+        printf("    （填入 robot_calibration.h 的 LIE_DOWN_*_DEG）\n");
+    }
+
+    mm.Stop();
+    printf("[INFO] 示例50 完成\n");
+}
+
 // ================= 示例 21：Xbox 手柄控制 =================

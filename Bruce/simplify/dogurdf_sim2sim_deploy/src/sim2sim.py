@@ -359,6 +359,9 @@ def main() -> None:
     parser.add_argument("--cmd_vel_yaw", type=float, default=0.0)
     parser.add_argument("--episode_length", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--record", type=str, default=None,
+                        help="Export per-step trajectory CSV (qrel/vel/action/pgr, "
+                             "POLICY order, 50Hz) for sim2real comparison.")
     parser.add_argument("--save_video", action="store_true")
     parser.add_argument("--video_path", type=str, default="/tmp/sim2sim.mp4")
     parser.add_argument("--width", type=int, default=1280)
@@ -515,9 +518,16 @@ def main() -> None:
         return obs, action
 
     # ---- Real-time interactive path (viewer, optionally gamepad-driven) ----
+    # 统一记录初始化：headless 与 viewer/gamepad 都支持 --record（sim2real 对比）
+    record_f, record_w = (None, None)
+    if args.record:
+        record_f, record_w = _open_record(args.record)
+
     if args.viewer or args.gamepad or args.watch_dir:
         _run_viewer(args, mj_model, mj_data, indexer, default_pose,
-                    control_step, current)
+                    control_step, current, record_f, record_w)
+        if record_f is not None:
+            record_f.close()
         return
 
     # ---- Headless / video path (fixed command, fall detection) -------------
@@ -549,9 +559,13 @@ def main() -> None:
     start = time.perf_counter()
     fell = False
 
+    # record_f/record_w 已在上方统一初始化（_open_record），headless 复用
     try:
         for step in range(args.episode_length):
             obs, last_action = control_step(command, last_action, step)
+
+            if record_w is not None:
+                _record_row(record_w, mj_data, indexer, obs, last_action, command, step)
 
             if renderer is not None and (step % render_every == 0):
                 renderer.update_scene(mj_data, camera=video_cam)
@@ -566,6 +580,9 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\n  Interrupted.")
 
+    if record_f is not None:
+        record_f.close()
+
     elapsed = time.perf_counter() - start
     steps_done = step + 1
     print("-" * 60)
@@ -579,6 +596,35 @@ def main() -> None:
         _write_video(frames, args.video_path)
 
 
+# ---- 轨迹记录（sim2real 对比，2026-08-30）----
+# 统一字段：wall_ms(系统时间戳，与真机对齐) + step + cmd +
+#           qpos_00..15(16 编码器绝对位置, POLICY order) +
+#           qrel_0..11(腿相对位) + vel_00..15(16 关节速) + act_00..15 + pgr_x/y/z
+def _open_record(path):
+    import csv
+    fields = (["wall_ms", "step", "cmd_vx", "cmd_vy", "cmd_wz"] +
+              [f"qpos_{i:02d}" for i in range(16)] +
+              [f"qrel_{i}" for i in range(12)] +
+              [f"vel_{i:02d}" for i in range(16)] +
+              [f"act_{i:02d}" for i in range(16)] +
+              ["pgr_x", "pgr_y", "pgr_z"])
+    f = open(path, "w", newline="")
+    w = csv.writer(f)
+    w.writerow(fields)
+    return f, w
+
+
+def _record_row(w, mj_data, indexer, obs, action, command, step):
+    import time
+    joint_pos = indexer.joint_pos(mj_data)   # 16 编码器绝对位置 (POLICY order, rad)
+    w.writerow([f"{time.time()*1000:.0f}", step, command[0], command[1], command[2]] +
+               [f"{x:.5f}" for x in joint_pos] +
+               [f"{x:.4f}" for x in obs[9:21]] +
+               [f"{x:.4f}" for x in obs[21:37]] +
+               [f"{x:.4f}" for x in action] +
+               [f"{x:.4f}" for x in obs[6:9]])
+
+
 def _run_viewer(
     args: argparse.Namespace,
     mj_model: mujoco.MjModel,
@@ -587,6 +633,8 @@ def _run_viewer(
     default_pose: np.ndarray,
     control_step,
     current: dict,
+    record_f=None,
+    record_w=None,
 ) -> None:
     """Real-time interactive loop: passive viewer, 50 Hz wall-clock pacing.
 
@@ -660,6 +708,10 @@ def _run_viewer(
 
             command = pad.read(args.max_vx, args.max_vyaw) if pad is not None else fixed_cmd
             obs, last_action = control_step(command, last_action, sim_step)
+
+            if record_w is not None:
+                _record_row(record_w, mj_data, indexer, obs, last_action, command, sim_step)
+
             sim_step += 1
 
             # Auto-reset on fall so the session keeps going.

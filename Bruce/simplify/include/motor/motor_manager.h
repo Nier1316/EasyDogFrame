@@ -81,6 +81,23 @@ public:
 
     MotorStatus GetStatus(uint8_t can_port, uint8_t motor_id) const;
 
+    // ============ 轮子急停（安全，2026-08-29） ============
+
+    /**
+     * 触发轮子急停：置急停标志 + 直发 SPEED 0 速 + 制动增益帧。
+     * 触发后 SendOnce 每周期对 4 个轮子强制发 0 速制动帧（忽略上层目标），
+     * 直到 ClearWheelEmergency() 解除。轮速超 15 rad/s 也会自动置位。
+     * 制动增益 WHEEL_ESTOP_KVP（默认 3.0）= Example23 验证过的控轮增益，
+     * 速度反馈正常时固件速度环闭环到 0 速（主动制动，非自由滑行）。
+     */
+    void WheelEmergencyStop();
+
+    /** 解除轮子急停，恢复上层控制。 */
+    void ClearWheelEmergency();
+
+    /** 查询是否处于轮子急停状态（超速自动触发 / 手动触发）。 */
+    bool wheelEmergency() const { return m_wheel_estop.load(); }
+
     // ============ 单次 IO（线程注册移至 runtime/motor_io.h）============
     // MotorManager 只提供单次轮询，不拥有线程生命周期；线程由 runtime 层
     // RegisterMotorIoThreads() 注册到 ThreadManager 驱动。
@@ -113,6 +130,7 @@ private:
     const char* m_usb_dev  = "/dev/ttyACM0";   // USB2CAN 设备路径（达妙模块）
     uint8_t     m_usb_baud = 0;                // USB2CAN 波特率索引（0=1000k, 3=500k）
     bool m_initialized = false;   // Initialize() 全部成功后才置真，Stop() 据此避免关未打开的设备
+    std::atomic<bool> m_wheel_estop{false};    // 轮子急停标志（手动 WheelEmergencyStop / 超速自动置位）
 };
 
 #endif // MOTOR_MANAGER_H_

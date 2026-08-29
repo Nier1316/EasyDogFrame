@@ -26,7 +26,8 @@ fi
 PY="$(command -v python || command -v python3)"
 
 # --- checkpoint 校验 -----------------------------------------------------
-CKPT="checkpoints/dogurdf_velocity/iteration_450.pkl"
+# 默认用 traj_v28/iteration_3000（与真机 C++ policy_weights.h 一致，2026-08-30 对齐）
+CKPT="checkpoints/dogurdf_velocity/iteration_3000.pkl"
 if [ ! -f "$CKPT" ]; then
   echo "ERROR: checkpoint 不存在: $CKPT" >&2
   echo "  期望路径: $HERE/$CKPT" >&2

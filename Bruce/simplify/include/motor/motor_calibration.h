@@ -105,36 +105,37 @@ struct JointImpedanceParam
  * 注意量级：站稳时保持扭矩只有个位数到十几 N·m，占限幅 5~9%。
  * 填 40~60 这种量级会让关节直接顶过去——tau_ff 是前馈，不受位置误差约束。
  *
- * kp/kd = 200/20 取自 Example19 实测站稳值。
- * tau_ff 默认全 0 = 纯位置误差驱动，与 Example19 行为一致（它也没用前馈）。
- * Example19 在 tau_ff=0 下 Thigh 仅塌 1.6~1.8°，说明该姿态几何上省力，
- * 前馈不是必需项；若要减小残余误差再按上面量级小步填入。
+ * kp/kd 与 tau_ff（2026-08-29 更新）：RL 循环腿软改善——thigh/calf 填重力前馈
+ * （thigh=8, calf=5 Nm，个位数安全量级），直接给支撑力矩，不再靠位置误差塌换，
+ * 同时保留训练 kp/kd（LEG_KP/KD 由 rl_controller.h 下发，表内 kp/kd 仅作参考）。
+ * hip tau_ff=10 是站立理想姿态的关键（用户 2026-08-29 调）。
+ * 量级规则：站稳保持扭矩个位数~十几 Nm；填 40~60 会顶过关节。
  */
 static const JointImpedanceParam JOINT_IMPEDANCE[CAN_PORTS][3] = {
     //                kp      kd   tau_ff
     // CAN0 端口 (左前腿)
     {
-        {300.0f, 10.0f,  10.0f}, // Motor 1 (Hip)
-        {250.0f, 10.0f,  0.0f}, // Motor 2 (Thigh)
-        {250.0f, 10.0f,  0.0f}, // Motor 3 (Calf)
+        {300.0f, 10.0f,  -14.0f}, // Motor 1 (Hip)  tau_ff 10→8（hip 外翻漂移改善）
+        {250.0f, 10.0f,  -5.0f}, // Motor 2 (Thigh)  tau_ff=8 （）重力前馈（RL 腿软改善）
+        {250.0f, 10.0f,  16.0f}, // Motor 3 (Calf)   tau_ff=5 （）重力前馈（RL 腿软改善）
     },
     // CAN1 端口 (右前腿)
     {
-        {300.0f, 10.0f,  10.0f}, // Motor 1 (Hip)
-        {250.0f, 10.0f,  0.0f}, // Motor 2 (Thigh)
-        {250.0f, 10.0f,  0.0f}, // Motor 3 (Calf)
+        {300.0f, 10.0f,  -14.0f}, // Motor 1 (Hip)  tau_ff 10→8（hip 外翻漂移改善）
+        {250.0f, 10.0f,  -5.0f}, // Motor 2 (Thigh)  tau_ff=8 重力前馈（RL 腿软改善）
+        {250.0f, 10.0f,  16.0f}, // Motor 3 (Calf)   tau_ff=5 重力前馈（RL 腿软改善）
     },
     // CAN2 端口 (左后腿)
     {
-        {300.0f, 10.0f,  10.0f}, // Motor 1 (Hip)
-        {250.0f, 10.0f,  0.0f}, // Motor 2 (Thigh)
-        {250.0f, 10.0f,  0.0f}, // Motor 3 (Calf)
+        {300.0f, 10.0f,  -14.0f}, // Motor 1 (Hip)  tau_ff 10→8（hip 外翻漂移改善）
+        {250.0f, 10.0f,  -5.0f}, // Motor 2 (Thigh)  tau_ff=8 重力前馈（RL 腿软改善）
+        {250.0f, 10.0f,  26.0f}, // Motor 3 (Calf)   tau_ff=5 重力前馈（RL 腿软改善）
     },
     // CAN3 端口 (右后腿)
     {
-        {300.0f, 10.0f,  10.0f}, // Motor 1 (Hip)
-        {250.0f, 10.0f,  0.0f}, // Motor 2 (Thigh)
-        {250.0f, 10.0f,  0.0f}, // Motor 3 (Calf)
+        {300.0f, 10.0f,  -14.0f}, // Motor 1 (Hip)  tau_ff 10→8（hip 外翻漂移改善）
+        {250.0f, 10.0f,  -5.0f}, // Motor 2 (Thigh)  tau_ff=8 重力前馈（RL 腿软改善）
+        {250.0f, 10.0f,  26.0f}, // Motor 3 (Calf)   tau_ff=5 重力前馈（RL 腿软改善）
     },
 };
 

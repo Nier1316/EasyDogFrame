@@ -27,19 +27,50 @@ constexpr int OBS_DIM         = 64;
 // ---- 控制参数（对齐 RL_Train/code/src/sim2sim.py 默认值，traj_v28 权威）----
 constexpr float ACTION_SCALE        = 0.25f;
 constexpr float WHEEL_VEL_SCALE     = 12.5f;
-// LEG_KP/LEG_KD = 250/4：sim2sim.py 默认（traj_v28 训练 stiffness=250, damping=4，
-// 见 RL_Train/code commit 07884c7 回退 v28 默认）。
-// ⚠ 历史：曾用 250/40（真机实测标定）、300/10（V30 训练，非 v28），用户决定统一套 v28 sim2sim 默认。
-constexpr float LEG_KP              = 250.0f;
-constexpr float LEG_KD              = 4.0f;
+// LEG_KP/LEG_KD = 250/4：sim2sim.py 默认（traj_v28 训练 stiffness=250, damping=4）。
+// ⚠ 2026-08-29 真机调整：LEG_KD 4 → 10——hip 逐渐外翻漂移（180601 日志 hip +0.06→+0.15），
+//   阻尼 4 不足抑制外部负载漂移（电机内收力矩拉不回）。真机执行器有延迟，训练 damping=4 的
+//   等效阻尼被延迟吃掉一部分，10 是补偿真机延迟的常规做法（历史 250/40 也验证更稳）。
+//   若腿变"硬"影响策略动态，可退回 6~8。
+constexpr float LEG_KP              = 250.0f;//（）
+constexpr float LEG_KD              = 4.0f;//（）
 // WHEEL_KD = 2.0：sim2sim.py 默认。⚠ 历史：真机曾 2→1 抑制解除挂钩振荡，现按
 // sim2sim 默认回 2.0；若真机振荡复现需再评估。
-constexpr float WHEEL_KD            = 2.0f;
+constexpr float WHEEL_KD            = 1.0f;
 // LEG_TORQUE_LIMIT = 250：sim2sim.py 默认（v28）。⚠ 历史曾用 150。
 constexpr float LEG_TORQUE_LIMIT    = 250.0f;
 constexpr float WHEEL_TORQUE_LIMIT  = 53.0f;
 constexpr float CONTROL_DT          = 0.02f;   // 50 Hz
 constexpr float GAIT_CYCLE          = 0.6f;
+
+// ---- 轮子固件 SPEED 速度环（2026-08-29 迁移，见 FACT.md）----
+// 固件阻抗模式忽略 vel_des（tau = kp×(pos_des−pos) + kd×(0−vel) + tau_ff），轮子速度
+// 控制必须走 SPEED 模式（SendSpeed 下发 vel/kvp/ki，固件内部 1kHz 速度环）。
+// KVP/KVI 对齐 robot_calibration.h 的 WHEEL_KVP/WHEEL_KVI（Example23 实测 3.0/0.3：
+//   速度环收敛无振荡；0.5 起始有 33% 超调，2~3 是性价比平衡点）。
+// WHEEL_SOFT_KVP：起立/回位期间轮子 0 速弱增益（软启动，假速度偏移窗口内力矩小）。
+// WHEEL_CMD_ALPHA：轮速目标一阶低通（@50Hz τ≈100ms），抑制推杆/松杆 cmd 骤变导致的
+//   轮子振荡。作用于轮速目标（执行平滑），不影响策略观测的 cmd（保持训练分布）。
+constexpr float WHEEL_KVP        = 3.0f;    // 固件速度环比例增益
+// WHEEL_KVI = 0.05：固件速度环积分增益，取 Example49 悬空单轮稳定档（ki=0.05）。
+// ⚠ 历史 0.3（Example23 键盘控轮值）在 RL 上积分过强：50Hz 变化目标 + 反馈延迟 →
+//   速度环超调振荡疯转（031608 日志：target ±0.5 实际 +6.5 rad/s）。
+constexpr float WHEEL_KVI        = 0.05f;   // 固件速度环积分增益
+// WHEEL_SOFT_KVP：起立/回位期间轮子 0 速弱增益（软启动）。
+// ⚠ 2026-08-30 0.3→0.1：使能瞬间假速度偏移（CAN1 个体 +44 rad/s）会被速度环追，
+//   kvp=0.3 产生 ~13 Nm 驱动力致起立前轮子疯转；0.1 降到 ~4.4 Nm 可控。
+constexpr float WHEEL_SOFT_KVP   = 0.1f;    // 起立/回位期间轮子 0 速弱增益（软启动）
+constexpr float WHEEL_CMD_ALPHA  = 0.2f;    // 轮速目标低通系数（50Hz）
+// WHEEL_CMD_DEADZONE：轮速目标死区 (rad/s)。
+// ⚠ 2026-08-30 已弃用：死区 0.5 会削减转向差速 action（target 0.5~1.0），导致真机转向严重
+//   不到位（双开对比 035837 实证）。站立锁轮已由 WHEEL_CMD_MOVE_THR 门控接管（无移动指令
+//   强制 0 速），移动时策略轮 action 完整执行、不再削死区。常量保留仅作历史参考。
+constexpr float WHEEL_CMD_DEADZONE  = 0.5f;  // ⚠ 已弃用（门控取代），保留历史值
+// WHEEL_CMD_MOVE_THR：移动指令阈值 (m/s 或 rad/s)。|cmd vx/wz| 都低于此 = 静止意图，
+//   轮速目标强制 0。背景：策略站立时常给后轮正向微调 action（0.09~0.14 → target 1.1~1.75
+//   rad/s，033222 日志后轮持续前转溜车），死区 0.5 挡不住；真机固件速度环会精确执行成
+//   物理转。只有明确要移动才放开轮控。cmd 含 CMD_BIAS_VX（-0.05）< 阈值，站立正确锁轮。
+constexpr float WHEEL_CMD_MOVE_THR  = 0.1f;  // 移动/静止判定阈值
 
 // ---- 常量数组（定义见 rl_controller.cpp）----
 // （DEFAULT_POSE / CONV_A / CONV_B / urdf 转换已移至 strategy/sim2real_conv）

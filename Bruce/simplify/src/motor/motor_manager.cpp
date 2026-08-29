@@ -7,14 +7,32 @@
 #include "common/motor_logger.h"
 #include "common/log_control.h"
 #include "transport/canet_transport.h"
+#include "transport/usb2can_transport.h"
 #include "runtime/motor_io.h"
 // 轮控安全常量（WHEEL_VEL_SOFT_LIMIT / WHEEL_SOFT_LIMIT_TORQUE / WHEEL_TORQUE_LIMIT）：
 // SendOnce 对轮子做上位机速度环 + 软限位，与策略侧共用同一份常量，避免重复定义漂移。
 #include "strategy/rl_controller.h"
 #include <cstdio>
+#include <cmath>
 #include <chrono>
 
 using logctl::LogCat;   // LOG 宏按名引用枚举，需把 LogCat 引入全局作用域
+
+// ---- 轮子急停参数（2026-08-29）----
+// 急停 = SPEED 模式目标速度 WHEEL_ESTOP_VEL_CMD + WHEEL_ESTOP_KVP 制动增益：
+// 固件速度环闭环到目标速度（主动制动，非自由滑行）。
+// KVP 取 Example23 验证过的控轮增益 3.0（收敛无振荡）；超速阈值 15 rad/s（沿用此前兜底）。
+// ⚠ 制动目标不用精确 0，用微小非零值 WHEEL_ESTOP_VEL_CMD=0.02：用户反馈"0 速可能在系统
+//   层面产生 BUG"（历史疯转恰发生在零速度下发场景，固件速度环对 v=0 可能有特殊语义）。
+//   0.02 rad/s ≈ 0.002 m/s，停在它附近等同于停住，但避开了 v=0 的歧义。
+//   此常量是"标定系"目标，下发前按 MOTOR_CALIBRATION.vel_scale 逆标定。
+// 注：制动帧即便固件未切模式被误按 IMPEDANCE 布局解释也 = 0 扭矩（p=0rad,kp=kd=tau=0），安全。
+constexpr float WHEEL_ESTOP_KVP     = 3.0f;    // 急停制动增益
+constexpr float WHEEL_ESTOP_VEL_CMD = 0.02f;   // 急停制动目标速度 (rad/s，标定系，避零)
+constexpr float WHEEL_ESTOP_VEL     = 15.0f;   // 轮速超此阈值自动触发急停 (rad/s)
+// 自动急停静默窗口（周期数 @500Hz = 2s）：使能后等假速度偏移/使能冲击消退。
+// CAN1 轮使能瞬间实测假偏移 +44 rad/s（030148 日志），若立即自动急停会误锁轮子。
+constexpr int32_t WHEEL_ESTOP_GRACE_TICKS = 1000;   // = 2s
 
 // 单例实现
 MotorManager& MotorManager::GetInstance() {
@@ -29,7 +47,6 @@ MotorManager::~MotorManager() {
     Stop();
 }
 
-// 初始化4路 CANET TCP 连接，创建16个电机对象，并向外部 ThreadManager 注册任务函数
 void MotorManager::SetTransport(CanTransport* transport) {
     for (uint8_t i = 0; i < CAN_PORTS; i++) m_transport[i] = transport;
 }
@@ -41,11 +58,11 @@ void MotorManager::SetChannelTransport(uint8_t can_port, CanTransport* transport
 bool MotorManager::Initialize(ThreadManager& thread_mgr) {
     printf("[INFO] MotorManager initializing...\n");
 
-    // 传输后端兜底：每路未注入时默认 CANET TCP
+    // 传输后端兜底：每路未注入时默认达妙 USB2CAN（CANET 已弃用，2026-08-29）
     for (uint8_t i = 0; i < CAN_PORTS; i++) {
         if (m_transport[i] == nullptr) {
-            m_transport[i] = &CanetTransport::GetInstance();
-            if (i == 0) printf("[INFO] MotorManager: 使用默认传输后端 CanetTransport (CANET TCP)\n");
+            m_transport[i] = &Usb2CanTransport::GetInstance();
+            if (i == 0) printf("[INFO] MotorManager: 使用默认传输后端 Usb2CanTransport (达妙 USB2CAN)\n");
         }
     }
 
@@ -202,6 +219,10 @@ void MotorManager::EnableMotor(uint8_t can_port, uint8_t motor_id) {
     std::lock_guard<std::mutex> lock(m_motor_mutex[can_port][motor_id - 1]);
     EleMotor& motor = m_motors[can_port][motor_id - 1];
     motor.enable();
+    // 轮子使能后启动自动急停静默窗口（假速度偏移/使能冲击消退期，见 estop_grace_ticks 注释）
+    if (motor.motor_id == MOTORS_PER_CAN) {
+        motor.estop_grace_ticks = WHEEL_ESTOP_GRACE_TICKS;
+    }
     LOG(LogCat::SYSTEM, "[INFO] Motor enabled: CAN%d, motor_id=%d\n", can_port, motor_id);
 }
 
@@ -318,6 +339,32 @@ MotorStatus MotorManager::GetStatus(uint8_t can_port, uint8_t motor_id) const {
     return status;
 }
 
+void MotorManager::WheelEmergencyStop() {
+    m_wheel_estop = true;
+    // 直发：立即切 SPEED 模式并下发 0 速制动帧，不等 SendOnce 周期（500Hz）。
+    for (uint8_t cp = 0; cp < CAN_PORTS; cp++) {
+        std::lock_guard<std::mutex> lock(m_motor_mutex[cp][MOTORS_PER_CAN - 1]);
+        EleMotor& m = m_motors[cp][MOTORS_PER_CAN - 1];
+        if (m.hw_control_mode != SPEED) {
+            float2bag(m, (float)SPEED, 1, MOTOR_WR_CONTROL_MODE);
+            m.hw_control_mode = SPEED;
+            m.control_mode = SPEED;   // 同步期望模式，避免 SendOnce 把模式切回上层设置
+            m.mode_settle_ticks = MODE_SETTLE_TICKS;
+        }
+        // 制动目标速度逆标定到电机原始系（×vel_scale，非零值避 v=0 固件歧义）
+        float send_v = WHEEL_ESTOP_VEL_CMD * MOTOR_CALIBRATION[cp][MOTORS_PER_CAN - 1].vel_scale;
+        set_motor_para_bt(m, send_v, WHEEL_ESTOP_KVP, 0.0f, 0.0f, 0.0f, SPEED);
+    }
+    printf("[WARN] 轮子急停触发（SPEED 0 速 + kvp=%.1f 制动，保持到 ClearWheelEmergency）\n",
+           WHEEL_ESTOP_KVP);
+}
+
+void MotorManager::ClearWheelEmergency() {
+    if (m_wheel_estop.exchange(false)) {
+        printf("[INFO] 轮子急停已解除\n");
+    }
+}
+
 // 单次发送任务，由外部 ThreadManager 以 LOOP 模式驱动
 void MotorManager::SendOnce() {
     for (uint8_t can_port = 0; can_port < CAN_PORTS; can_port++) {
@@ -326,6 +373,43 @@ void MotorManager::SendOnce() {
             EleMotor& motor = m_motors[can_port][motor_id - 1];
 
             if (!motor.enabled) continue;
+
+            // ---- 轮子统一安全：急停保持 + 超速自动触发（2026-08-29）----
+            // 优先于一切（含上层 control_mode 与模式同步）：轮子疯转/超速时强制
+            // SPEED 0 速 + 制动增益。⚠ 2026-08-30 自动超速改为瞬态：只当次制动，轮速
+            // 回落自动恢复——假偏移/解码跳变（CAN1 -42.9、CAN3 3694 次超速，043726 日志）
+            // 触发后若保持 m_wheel_estop 会锁死全部轮子导致推杆无效。只有手动
+            // WheelEmergencyStop() 才保持（直到 ClearWheelEmergency）。真实疯转时持续
+            // 超速→每周期都制动，仍有效。注：0 速 SPEED 帧即便固件未切模式被误按
+            // IMPEDANCE 布局解释也 = 0 扭矩（p=0rad, kp=kd=tau=0），不会更危险。
+            if (motor.motor_id == MOTORS_PER_CAN) {
+                // 使能后静默窗口：等假速度偏移/使能冲击消退（≈2s），窗口内不自动触发
+                // 急停（CAN1 使能瞬间假偏移 +44 rad/s 会误锁轮子——030148 日志）。
+                // 手动 WheelEmergencyStop 不受窗口影响。
+                bool over = fabsf(motor.current_speed) > WHEEL_ESTOP_VEL;
+                if (motor.estop_grace_ticks > 0) {
+                    motor.estop_grace_ticks--;
+                    over = false;
+                }
+                if (m_wheel_estop || over) {
+                    if (motor.hw_control_mode != SPEED) {
+                        float2bag(motor, (float)SPEED, 1, MOTOR_WR_CONTROL_MODE);
+                        motor.hw_control_mode = SPEED;
+                        motor.control_mode = SPEED;
+                        motor.mode_settle_ticks = MODE_SETTLE_TICKS;
+                        continue;
+                    }
+                    if (motor.mode_settle_ticks > 0) {
+                        motor.mode_settle_ticks--;
+                        continue;
+                    }
+                    // 制动目标速度逆标定（非零值避 v=0 固件歧义，见 WHEEL_ESTOP_VEL_CMD 注释）
+                    float send_v = WHEEL_ESTOP_VEL_CMD
+                        * MOTOR_CALIBRATION[can_port][motor_id - 1].vel_scale;
+                    set_motor_para_bt(motor, send_v, WHEEL_ESTOP_KVP, 0.0f, 0.0f, 0.0f, SPEED);
+                    continue;
+                }
+            }
 
             // 固件模式必须与期望模式一致，否则电机会用错误的字节布局解释控制帧。
             // 不一致时先写模式，之后等 MODE_SETTLE_TICKS 个周期再发新布局的控制帧。
@@ -359,31 +443,18 @@ void MotorManager::SendOnce() {
             switch (motor.control_mode) {
                 case IMPEDANCE:
                     if (motor.motor_id == MOTORS_PER_CAN) {   // 每路最后一个电机 = 轮子（motor_id=4）
-                        // ⚠ 轮子：上位机速度阻尼环（SendOnce 500Hz 执行，对齐 CONTROL_HZ）。
-                        //   策略只下发目标轮速/阻尼/前馈（SendImpedance 的 vel/kd/torque 字段），
-                        //   真正 PD 在 SendOnce 用最新轮速反馈每 2ms 算一次——50Hz 决策 + 500Hz 闭环，
-                        //   与 legged_gym 架构一致（策略低频、PD 高频）。修复"轮子 50Hz 上位机闭环跟不上物理动态"。
-                        //   参数：target_speed=目标轮速(rad/s, 标定系)、kd=速度阻尼(Nm·s/rad)、
-                        //         target_torque=前馈扭矩(Nm)。kd=0 时退化为纯扭矩（兼容 Example44/34/35）。
-                        float tau = motor.kd * (motor.target_speed - motor.current_speed)
-                                  + motor.target_torque;
-                        // ⚠ 诊断打印（排查 FR 轮疯转方向）：tgt/cur/tau 符号关系。
-                        // 判读：cur 正(+5) 时 tau 应为负(刹车)；若 tau 正(驱动) → 方向反。
-                        // fbtorq = 反馈扭矩(cal_torque)，若 ≈ -tau → 固件反馈负施加，刹车有效。
-                        static int g_wheel_dbg = 0;
-                        if (++g_wheel_dbg % 50 == 0)   // 500Hz/50 = 10Hz
-                            printf("[WHEEL] c%u id%u tgt=%+.3f cur=%+.3f tau=%+.3f fbtorq=%+.3f\n",
-                                   can_port, motor_id, motor.target_speed,
-                                   motor.current_speed, tau, motor.current_torque);
-                        // 速度软限位（限幅式，非硬制动）：超速只夹加速方向，留自然制动
-                        if      (motor.current_speed >  rl::WHEEL_VEL_SOFT_LIMIT)
-                            tau = (tau >  rl::WHEEL_SOFT_LIMIT_TORQUE) ?  rl::WHEEL_SOFT_LIMIT_TORQUE : tau;
-                        else if (motor.current_speed < -rl::WHEEL_VEL_SOFT_LIMIT)
-                            tau = (tau < -rl::WHEEL_SOFT_LIMIT_TORQUE) ? -rl::WHEEL_SOFT_LIMIT_TORQUE : tau;
-                        // 扭矩随 pos_scale 翻转（与接收方向对称，避免正反馈）
-                        float send_tau = tau;
-                        ApplyMotorCalibrationInverse(can_port, motor_id, send_pos, send_vel, &send_tau);
-                        set_motor_para_bt(motor, 0.0f, 0.0f, 0.0f, 0.0f, send_tau, IMPEDANCE);
+                        // ⚠ 轮子阻抗（2026-08-29 修正结论）：固件阻抗模式忽略 vel_des——
+                        //   tau = kp×(pos_des−pos) + kd×(0−vel) + tau_ff，vel_des 不参与。
+                        //   kd 只是位置环阻尼，kp=0 时无驱动力 → 实测轮子不动（Example49）。
+                        //   轮子速度控制必须走 SPEED 模式（SendSpeed）；此分支仅用于前馈
+                        //   扭矩下发（tau_ff 直接输出，兼容上位机闭环 / 悬空自由轮）。
+                        //   超速/急停由循环前部统一安全段处理（SPEED 0 速制动），此处不再兜底。
+                        float send_vel_w = motor.target_speed
+                            * MOTOR_CALIBRATION[can_port][motor_id - 1].vel_scale;
+                        float send_tau_w = motor.target_torque
+                            * MOTOR_CALIBRATION[can_port][motor_id - 1].pos_scale;
+                        set_motor_para_bt(motor, 0.0f, send_vel_w, 0.0f, motor.kd,
+                                          send_tau_w, IMPEDANCE);
                     } else {
                         set_motor_para_bt(motor,
                             send_pos, send_vel,

@@ -98,7 +98,7 @@ public:
 
         if (m_recv_file) {
             fprintf(m_recv_file,
-                "elapsed_ms,can_port,motor_id,"
+                "wall_ms,elapsed_ms,can_port,motor_id,"
                 "raw_pos,raw_vel,raw_torque,"
                 "cal_pos,cal_vel,cal_torque\n");
             fflush(m_recv_file);
@@ -125,7 +125,7 @@ public:
         if (m_rl_file) {
             // RL 循环诊断（每控制步一行，供离线分析策略观测/动作/扭矩）
             fprintf(m_rl_file,
-                "elapsed_ms,step,cmd_vx,cmd_vy,cmd_wz,"
+                "wall_ms,elapsed_ms,step,cmd_vx,cmd_vy,cmd_wz,"
                 "qrel_hFL,qrel_tFL,qrel_cFL,"
                 "qrel_hFR,qrel_tFR,qrel_cFR,"
                 "qrel_hRL,qrel_tRL,qrel_cRL,"
@@ -195,8 +195,8 @@ public:
 
         int64_t elapsed = ElapsedMs();
         fprintf(m_recv_file,
-            "%ld,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
-            elapsed, can_port, motor_id,
+            "%lld,%ld,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+            (long long)WallMs(), elapsed, can_port, motor_id,
             raw_pos, raw_vel, raw_torque,
             cal_pos, cal_vel, cal_torque);
     }
@@ -241,8 +241,8 @@ public:
         std::lock_guard<std::mutex> lock(m_mutex);
 
         int64_t elapsed = ElapsedMs();
-        fprintf(m_rl_file, "%ld,%d,%.3f,%.3f,%.3f,",
-                elapsed, step, cmd[0], cmd[1], cmd[2]);
+        fprintf(m_rl_file, "%lld,%ld,%d,%.3f,%.3f,%.3f,",
+                (long long)WallMs(), elapsed, step, cmd[0], cmd[1], cmd[2]);
         // joint_pos_rel[12] = obs[9..20]
         for (int i = 0; i < 12; i++) fprintf(m_rl_file, "%.4f,", obs[9 + i]);
         // base_ang_vel[3] = obs[3..5], projected_gravity[3] = obs[6..8]
@@ -289,6 +289,13 @@ private:
         auto now = std::chrono::steady_clock::now();
         return std::chrono::duration_cast<std::chrono::milliseconds>(
             now - m_start_time).count();
+    }
+
+    // 系统墙钟时间戳（epoch ms），用于 sim2real 对比时间对齐
+    //（sim2sim --record 也记 wall_ms；两边 wall_ms 直接可对齐）
+    static int64_t WallMs() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
     }
 
     std::mutex m_mutex;

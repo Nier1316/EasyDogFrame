@@ -14,51 +14,12 @@ static void signal_handler(int) {
 // =====================================================================
 //  示例切换说明
 //  = 只运行一个示例：目标示例的 3 行取消注释、其余保持注释即可。
-//  = 当前启用：Example44（USB2CAN 手柄控制）。
+//  = Example1-16 已清理（早期实验），现存 17~48。
+//  = 当前启用：Example37（RL 遥操作，手柄前进/后退 + 转向，USB2CAN 4 路）。
 //  =====================================================================
 int main() {
     signal(SIGINT,  signal_handler);
     signal(SIGTERM, signal_handler);
-
-    // 运行示例9 - 基础电机控制
-    // printf("[INFO] Running Example9_BasicMotorCtr...\n");
-    // Example9_BasicMotorCtr();
-    // printf("[INFO] Example9 completed.\n");
-
-    // 运行示例10 - 多电机扭矩控制
-    // printf("[INFO] Running Example10_MultiMotorTorqueControl...\n");
-    // Example10_MultiMotorTorqueControl();
-    // printf("[INFO] Example10 completed.\n");
-
-    // 运行示例11 - 全电机扭矩控制（CAN0~3）
-    // printf("[INFO] Running Example11_MoveAll...\n");
-    // Example11_MoveAll();
-    // printf("[INFO] Example11 completed.\n");
-
-    // 运行示例12 - 正弦周期运动控制
-    // printf("[INFO] Running Example12_SinusoidalMotion...\n");
-    // Example12_SinusoidalMotion();
-    // printf("[INFO] Example12 completed.\n");
-
-    // 运行示例13 - 多电机正弦运动
-    // printf("[INFO] Running Example13_MultiMotorSinusoidalMotion...\n");
-    // Example13_MultiMotorSinusoidalMotion();
-    // printf("[INFO] Example13 completed.\n");
-
-    // 运行示例14 - 标定检测
-    // printf("[INFO] Running Example14_CalibrationDetect...\n");
-    // Example14_CalibrationDetect();
-    // printf("[INFO] Example14 completed.\n");
-
-    // 运行示例15 - 标定验证
-    // printf("[INFO] Running Example15_CalibrationVerify...\n");
-    // Example15_CalibrationVerify();
-    // printf("[INFO] Example15 completed.\n");
-
-    // 运行示例16 - 电机测试
-    // printf("[INFO] Running Example16_MotorTest...\n");
-    // Example16_MotorTest();
-    // printf("[INFO] Example16 completed.\n");
 
     // 运行示例17 - SimSync 仿真集成
     // printf("[INFO] Running Example17_SimSyncIntegration...\n");
@@ -120,7 +81,7 @@ int main() {
     // Example28_CANetBatchProbe();
     // printf("[INFO] Example28 completed.\n");
 
-    // 运行示例29 - 控制环频率测试（拆锁后，电机可下电）
+    // 运行示例29 - 控制环频率测试
     // printf("[INFO] Running Example29_MainLoopCadenceTest...\n");
     // Example29_MainLoopCadenceTest();
     // printf("[INFO] Example29 completed.\n");
@@ -160,23 +121,13 @@ int main() {
     // Example36_RLStandLoop();
     // printf("[INFO] Example36 completed.\n");
 
-    // 运行示例47 - 悬空 chirp 扫频 + 最小二乘参数辨识（辨识 J/B/f_c/b → tau_ff + KP/KD）
-    // printf("[INFO] Running Example47_ChirpSysId...\n");
-    // Example47_ChirpSysId();
-    // printf("[INFO] Example47 completed.\n");
-
-    // 运行示例48 - 轮子扭矩方向安全验证（单轮开环测向，无 RL 失控风险）
-    // printf("[INFO] Running Example48_WheelDirectionVerify...\n");
-    // Example48_WheelDirectionVerify();
-    // printf("[INFO] Example48 completed.\n");
-
-    // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，USB2CAN 4 路）
+    // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，USB2CAN 4 路）【当前启用】
     printf("[INFO] Running Example37_RLTeleopControl...\n");
     Example37_RLTeleopControl();
-    // printf("[INFO] Example37 completed.\n");
+    printf("[INFO] Example37 completed.\n");
+
 
     // 运行示例38 - 执行器延迟辨识（扫频测 Action Delay，定 action_delay_steps）
-
     // printf("[INFO] Running Example38_ActionDelayMeasure...\n");
     // Example38_ActionDelayMeasure();
     // printf("[INFO] Example38 completed.\n");
@@ -186,7 +137,7 @@ int main() {
     // Example39_Usb2CanProbe();
     // printf("[INFO] Example39 completed.\n");
 
-    // 运行示例40 - USB2CAN 读 CAN1 电机姿态（走完整 MotorManager 链路）
+    // 运行示例40 - USB2CAN 读电机姿态（4 路诊断寄存器，走完整 MotorManager 链路）
     // printf("[INFO] Running Example40_Usb2CanReadStatus...\n");
     // Example40_Usb2CanReadStatus();
     // printf("[INFO] Example40 completed.\n");
@@ -206,7 +157,7 @@ int main() {
     // Example43_CANOrderCalibrate();
     // printf("[INFO] Example43 completed.\n");
 
-    // 运行示例44 - Xbox 手柄控制（USB2CAN 4 路）
+    // 运行示例44 - Xbox 手柄控制（USB2CAN 4 路，轮阻抗前馈）
     // printf("[INFO] Running Example44_USB2CanXboxControl...\n");
     // Example44_USB2CanXboxControl();
     // printf("[INFO] Example44 completed.\n");
@@ -220,6 +171,42 @@ int main() {
     // printf("[INFO] Running Example46_USB2CanSingleMotorStep...\n");
     // Example46_USB2CanSingleMotorStep();
     // printf("[INFO] Example46 completed.\n");
+
+    // 运行示例47 - 悬空 chirp 扫频 + 最小二乘参数辨识（12 关节扫描 J/B/f_c/K_g/b）
+    // printf("[INFO] Running Example47_ChirpSysId...\n");
+    // Example47_ChirpSysId();
+    // printf("[INFO] Example47 completed.\n");
+
+    // 运行示例48 - 轮子扭矩方向安全验证（单轮开环测向，无 RL 失控风险）
+    // printf("[INFO] Running Example48_WheelDirectionVerify...\n");
+    // Example48_WheelDirectionVerify();
+    // printf("[INFO] Example48 completed.\n");
+
+
+    // 运行示例49 - 整狗站立 + 单轮 SPEED 模式速度环测试（软启动 + kvp 扫描）
+    // printf("[INFO] Running Example49_StandAndWheelSpeedLoopTest...\n");
+    // Example49_StandAndWheelSpeedLoopTest();
+    // printf("[INFO] Example49 completed.\n");
+
+    // 运行示例50 - 趴下姿态手动标定（不使能电机，摆腿回车记录，标定 LIE_DOWN_*）
+    // printf("[INFO] Running Example50_LieDownAngleRecord...\n");
+    // Example50_LieDownAngleRecord();
+    // printf("[INFO] Example50 completed.\n");
+
+    // 运行示例51 - 起立 → RL 站立循环 → 回车缓慢趴下（完整流程）
+    // printf("[INFO] Running Example51_StandRLThenLieDown...\n");
+    // Example51_StandRLThenLieDown();
+    // printf("[INFO] Example51 completed.\n");
+
+    // 运行示例52 - 固定转向命令 RL（yaw=0.5，5s，sim2real 对比数据采集）
+    // printf("[INFO] Running Example52_FixedCmdYaw...\n");
+    // Example52_FixedCmdYaw();
+    // printf("[INFO] Example52 completed.\n");
+
+    // 运行示例53 - RL 站立下重力前馈测量（读稳态 cal_torque，标定 tau_ff）【当前启用】
+    // printf("[INFO] Running Example53_MeasureGravityFF...\n");
+    // Example53_MeasureGravityFF();
+    // printf("[INFO] Example53 completed.\n");
 
     return 0;
 }

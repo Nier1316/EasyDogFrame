@@ -25,3 +25,6 @@ void Example45_USB2CanMoveToZero();
 void Example46_USB2CanSingleMotorStep();
 void Example47_ChirpSysId();
 void Example48_WheelDirectionVerify();
+void Example49_StandAndWheelSpeedLoopTest();
+// 趴下姿态实际角度记录（起立→趴下→记录稳态角，用于标定 LIE_DOWN_*_DEG）
+void Example50_LieDownAngleRecord();

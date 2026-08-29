@@ -57,6 +57,12 @@ public:
     uint16_t error_code;      // 错误码
     bool enabled;             // 使能状态
 
+    // 轮子自动急停静默窗口（2026-08-29）：使能后剩余周期数（≈2s）。
+    // 背景：CAN1 轮使能瞬间速度反馈假偏移 +44 rad/s（固件初始化冲击），若自动急停
+    // 立即按此触发会误锁轮子（030148 日志：kvp 扫描全程被劫持，轮几乎不动）。
+    // 窗口内不自动触发急停，靠软启动低 kvp 扛住假偏移；手动 WheelEmergencyStop 不受影响。
+    int32_t estop_grace_ticks = 0;
+
     void init();
     void enable();
     void disable();

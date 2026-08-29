@@ -147,6 +147,16 @@ constexpr float STAND_HIP_DEG   =   0.0f;
 constexpr float STAND_THIGH_DEG = -60.0f;
 constexpr float STAND_CALF_DEG  =  60.0f;
 
+// ---- 趴下姿态（2026-08-29 Example50 手动标定，MotionController::lieDown 用）----
+// 用户手动摆狗腿到趴下姿态，Example50 记录的实际角度（标定后真机角，四腿平均）：
+//   hip +11.4°（外展撑开）、thigh -55.2°、calf +12.6°（小腿近伸直，身体趴低）。
+// ⚠ 注意：hip +11.4 > θ₁ 上限(0)、calf +12.6 < θ₃ 下限(60)——趴下姿态本身超出"站立限位"。
+//   lieDown 走 sendInterpFrame 无 clamp 直接下发，固件位置量程 ±12.5 rad 容纳，可正常到达。
+//   仅当需要趴下后再走带 clamp 的路径（如 RL 循环）才需考虑放宽限位。
+constexpr float LIE_DOWN_HIP_DEG   =  11.4f;
+constexpr float LIE_DOWN_THIGH_DEG = -55.2f;
+constexpr float LIE_DOWN_CALF_DEG  =  12.6f;
+
 // ---- 起立过程 ----
 // Example19 用 10 s 慢速插值能站稳；2 s 过快，惯量冲击大容易失稳。
 constexpr int   STAND_INTERP_FRAMES = 1000;       // 1000/100Hz = 10 s
