@@ -122,9 +122,9 @@ int main() {
     // printf("[INFO] Example36 completed.\n");
 
     // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，USB2CAN 4 路）【当前启用】
-    printf("[INFO] Running Example37_RLTeleopControl...\n");
-    Example37_RLTeleopControl();
-    printf("[INFO] Example37 completed.\n");
+    // printf("[INFO] Running Example37_RLTeleopControl...\n");
+    // Example37_RLTeleopControl();
+    // printf("[INFO] Example37 completed.\n");
 
 
     // 运行示例38 - 执行器延迟辨识（扫频测 Action Delay，定 action_delay_steps）
@@ -158,9 +158,9 @@ int main() {
     // printf("[INFO] Example43 completed.\n");
 
     // 运行示例44 - Xbox 手柄控制（USB2CAN 4 路，轮阻抗前馈）
-    // printf("[INFO] Running Example44_USB2CanXboxControl...\n");
-    // Example44_USB2CanXboxControl();
-    // printf("[INFO] Example44 completed.\n");
+    printf("[INFO] Running Example44_USB2CanXboxControl...\n");
+    Example44_USB2CanXboxControl();
+    printf("[INFO] Example44 completed.\n");
 
     // 运行示例45 - 选择电机移动到物理零位（USB2CAN）
     // printf("[INFO] Running Example45_USB2CanMoveToZero...\n");
