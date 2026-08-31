@@ -1,7 +1,7 @@
 /**
- * @file   bsp_can.cpp
- * @brief  CAN 硬件抽象层（BSP）实现
- *         基于现有 CanDevice，提供统一的 CAN 收发接口
+ * @file   canet_transport.cpp
+ * @brief  CANET TCP 传输层实现
+ *         基于 CanDevice，提供 CANET TCP 的统一 CAN 收发接口
  */
 #include "transport/canet_transport.h"
 #include "transport/can_device.h"

@@ -22,7 +22,7 @@ HWT606 IMU ─(115200 串口, Z朝下绕X翻)─► imu_device
                                urdf_to_status + 重排 CAN order ─► SendImpedance(16 电机)
 ```
 
-**推理后端**：手写 C++ MLP（`include/strategy/mlp.h`，零依赖，不用 libtorch/onnxruntime），适配仅 CPU 的 NUC i7。**控制架构**：RL 策略 50Hz，电机收发独立线程（receive 2ms/500Hz、send 1ms/1000Hz）。
+**推理后端**：手写 C++ MLP（`include/strategy/mlp.h`，零依赖，不用 libtorch/onnxruntime），适配仅 CPU 的 NUC i7。**控制架构**：RL 策略 50Hz，电机收发独立线程（receive 2ms/500Hz、send 2ms/500Hz）。
 
 ---
 
@@ -39,29 +39,29 @@ HWT606 IMU ─(115200 串口, Z朝下绕X翻)─► imu_device
 | `imu_device.h/.cpp` | HWT606 串口读取 + 安装方向变换 |
 
 ### 部署入口（`src/app/`）
-- `examples/ex_rl.cpp`：Example25/30/31/32/35/36/37/38（RL 相关）
-- `main.cpp`：当前激活 **Example36_RLStandLoop**（4 路 USB2CAN RL 站立循环）
+- `examples/ex_rl.cpp`：Example25/30/31/32/35/36/37/38/51/52/53（RL 相关）
+- `examples/ex_diag.cpp`：Example24/26-29/33/34/39-50（诊断 + USB2CAN）
+- `main.cpp`：当前激活 **Example44_USB2CanXboxControl**（USB2CAN 手柄控制）
 
 ### 权重导出
-- `tool/export_policy.py`：读取 `RL_Train/code/checkpoints/.../traj_v26/iteration_1100.pkl` → 写 `include/strategy/policy_weights.h` + `policy_test_ref.h`（含 numpy/flax 交叉校验）。
+- `tool/export_policy.py`：读取 `RL_Train/code/checkpoints/.../traj_v28/iteration_3000.pkl` → 写 `include/strategy/policy_weights.h` + `policy_test_ref.h`（含 numpy/flax 交叉校验）。
 
 ---
 
-## 3. 策略规格（traj_v26 / iteration_1100）
+## 3. 策略规格（traj_v28 / iteration_3000）
 
 | 项 | 值 |
 |---|---|
 | 观测 / 动作 | 64 维入 → 16 维出 |
-| 控制频率 | RL **50 Hz**；电机 send 1000Hz / receive 500Hz |
+| 控制频率 | RL **50 Hz**；电机 send 2ms/500Hz / receive 2ms/500Hz |
 | 网络 | MLP 64→512→256→128→16，**ELU**，确定性 `act()` |
 | 站姿 default pose（URDF 约定） | hip=0, thigh=0.20, calf=−0.35, wheel=0（站高 0.45 m） |
-| 腿控制律（代码实际） | `τ = 250·(q_t−q) − 40·q̇`（LEG_KP=250, **LEG_KD=40**） |
-| 轮控制律 | `τ = 2·(w_t − qd)`（WHEEL_KD=2, kp=0） |
-| 扭矩限幅 | 腿 150 N·m，轮 53 N·m |
+| 腿控制律（代码实际） | `τ = 250·(q_t−q) − 4·q̇`（LEG_KP=250, LEG_KD=4，对齐 v28 sim2sim 默认） |
+| 轮控制律 | **固件 SPEED 速度环**（`SendSpeed(vel, kvp, ki)`，WHEEL_KVP=3.0/WHEEL_KVI=0.05） |
+| 扭矩限幅 | 腿 250 N·m，轮 53 N·m |
 | 关节限位 | hip ±0.6，thigh −0.7~1.75，calf −1.0~0.35（rad） |
 
-> ⚠ **LEG_KD 疑点**：代码 `LEG_KD=40`，而训练权威（`RL_Train/code` 的 sim2sim.py / config）为 **4.0**，差 10 倍。此值可能为真机现场标定，文档按代码写 40；部署前建议复核是否与训练一致，避免 PD 阻尼不对。
-> ⚠ **扭矩限三源分歧**：训练 config=150、`RL_Train/code` sim2sim.py=250、代码=150。文档按代码写 150；若策略在 150 训练，真机勿超 150。
+> 部署参数已统一对齐 v28 sim2sim.py 默认（LEG_KP/KD=250/4、LEG_TORQUE_LIMIT=250）。⚠ 300/10 是 V30 参数勿混淆。
 
 ### 观测 64 维布局（`rl_controller.cpp: build_observation`）
 与训练 `sim2sim.py::_build_observation` 严格一致：
@@ -108,7 +108,7 @@ CONV_B: hip+0.0297 / thigh−0.9624 / calf−1.2832 / wheel 0   (rad)
 - `status_vel_to_urdf(vel, j)`：速度只保留符号（B 是常数）
 - `urdf_to_status(angle, j)`：动作下发转真机指令角
 
-> ⚠ 代码注释仍写旧值（thigh −1.0524 / calf −1.3832），数组实际为 −0.9624 / −1.2832；文档按数组实际值写，注释待同步修正。
+> CONV_B 值基于 2026-08-20 真机 L 形测量，代码注释与数组已一致（thigh −0.9624 / calf −1.2832）。
 
 ---
 
@@ -132,23 +132,23 @@ CONV_B: hip+0.0297 / thigh−0.9624 / calf−1.2832 / wheel 0   (rad)
 ```bash
 cd simplify
 cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j$(nproc)
-# main.cpp 当前激活 Example36_RLStandLoop（4 路 USB2CAN），直接运行：
+# main.cpp 当前激活 Example44_USB2CanXboxControl（USB2CAN 手柄控制），直接运行：
 ./bin/can_motor_app
 ```
 
-- **达妙 USB2CAN 链接**：`libdm_device.so` 需新版 libstdc++(GLIBCXX_3.4.32) + libusb(≥1.0.26)。本机 `CONDA_LIB_DIR=/home/sysu/miniconda3/lib`（已 conda 装 libusb）；libusb 用绝对路径避免解析到系统老版本。
+- **达妙 USB2CAN 链接**：`libdm_device.so` 需新版 libstdc++(GLIBCXX_3.4.32) + libusb(≥1.0.26)。CMakeLists **自动探测** conda lib 路径（bruce 机 `/home/bruce/miniforge3/lib`、sysu 机 `/home/sysu/miniconda3/lib`），可用 `-DCONDA_LIB_DIR` 覆盖；libusb 用绝对路径避免解析到系统老版本。
 - 起立目标 = `urdf_to_status(DEFAULT_POSE)`（与 RL 目标一致，消除跳变）。
-- 轮子走上位机扭矩前馈：`SendImpedance(cp,4, 0,0,0,0, τ)`（kp=kd=0），**不用固件速度环**。
-- 手柄命令量程：vx ±1.0 m/s，wz ±1.0 rad/s（训练 yaw 范围为 ±2.0，注意差异）。
+- **轮子走固件 SPEED 速度环**（`SendSpeed(vel, WHEEL_KVP, WHEEL_KVI)`，固件内部 1kHz 闭环），带软启动 `WHEEL_SOFT_KVP` 与移动门控 `WHEEL_CMD_MOVE_THR`（站立锁轮）。
+- 手柄命令量程：vx ±1.0 m/s，wz ±1.0 rad/s（训练 yaw 范围为 ±2.0，注意差异）；`CMD_BIAS_VX=-0.05` 抵消前冲（须 < 训练 turn_lin_threshold 0.1）。
 
 ---
 
 ## 8. 数值验证结果（已通过）
 
-| 校验项 | 结果（traj_v26） |
+| 校验项 | 结果（traj_v28） |
 |---|---|
-| flax vs numpy 前向（`export_policy.py`） | 3.80e-07 |
-| C++ mlp_forward vs 参考 | 9.54e-07 |
+| flax vs numpy 前向（`export_policy.py`） | 9.54e-07 |
+| C++ mlp_forward vs 参考 | 2.38e-06 |
 | 工程编译 | ✅ 通过 |
 | Example30 离线回归门（`max_err < 1e-3`） | 需上机前跑一次确认 |
 | IMU 真实数据（115200） | gyro 静止≈0，重力投影模长≈1 |
@@ -158,14 +158,15 @@ cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j$(nproc)
 ## 9. 剩余工作
 
 1. **CONV_B 现场微调**：基于一次 L 形目测，真机低增益验证（Example32）后微调；当前新值下默认姿态已在限位内。
-2. **LEG_KD / 扭矩限复核**：代码 LEG_KD=40 vs 训练 4.0、扭矩限 150 vs 训练 sim2sim 250，需现场确认是否有意。
-3. **真机起步**：先 PD 保持站姿确认能托住，再小 yaw 指令起步，逐步加大（v26 训练含 action_delay，抗 20-60ms 总线时延，无需额外补偿）。
+2. **LEG_KD 真机复核**：代码 LEG_KD=4 对齐 v28 训练；曾评估提至 10（hip 外翻漂移）未落地，若真机 hip 仍漂移可现场试提 6~10。
+3. **真机起步**：先 PD 保持站姿确认能托住，再小 yaw 指令起步，逐步加大（v28 训练含 action_delay，抗 20-60ms 总线时延，无需额外补偿）。
 
 ---
 
 ## 10. 已知坑
 
 - **BRLTTY 抢占串口**：Linux 上 brltty 抢 CH340 导致 `/dev/ttyUSB0` 不出现，需 `systemctl stop/disable/mask brltty` 后重新插拔；udev 规则 CH340 → MODE=0666。
-- **轮子固件速度环不可靠**：务必走上位机扭矩前馈。
+- **轮子阻抗前馈已废弃**（2026-08-29 SPEED 迁移）：轮速控制走固件 SPEED 速度环；阻抗模式忽略 vel_des，勿再用阻抗扭矩通道控轮。
+- **WHEEL_KVI 别用 0.3**：RL 上积分过强会振荡疯转，用 0.05。
 - **权重生成物路径**：`export_policy.py` 必须输出到 `include/strategy/`（`include/rl/` 已废弃，编译不引用）。
-- **达妙链接环境**：依赖本机 conda 的 libstdc++/libusb，换机器需重设 `CONDA_LIB_DIR`。
+- **达妙链接环境**：依赖本机 conda 的 libstdc++/libusb，CMakeLists 自动探测，换机器可用 `-DCONDA_LIB_DIR` 覆盖。

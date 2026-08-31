@@ -13,10 +13,10 @@
 ## 概述
 
 **MotorManager** 是四足机器狗 16 电机（12 关节 + 4 轮）控制系统的核心管理器，负责：
-- 管理 4 路 CANET TCP 连接（CAN0~CAN3）
+- 管理 4 路 CAN 传输（CANET TCP / 达妙 USB2CAN，CAN0~CAN3）
 - 管理 16 个电机对象（4 路 × 4 电机：3 关节 + 1 轮）
-- 后台接收电机状态（1ms 周期）
-- 后台发送控制命令（1ms 周期）
+- 后台接收电机状态（2ms 周期，500Hz）
+- 后台发送控制命令（2ms 周期，500Hz）
 - 提供线程安全的控制接口
 
 ### 硬件拓扑
@@ -38,7 +38,7 @@ TCP: 192.168.0.178, 端口 4001~4004
 | **线程安全** | 每个电机独立互斥锁 |
 | **异步驱动** | 由外部 ThreadManager 驱动 |
 | **三种控制模式** | 阻抗/速度/位置 |
-| **实时性** | 1ms 周期接收/发送 |
+| **实时性** | 2ms 周期接收/发送（500Hz） |
 
 ---
 
@@ -158,10 +158,10 @@ motor_mgr.SendImpedance(0, 1, 0.5f, 0.0f, 10.0f, 1.0f, 0.0f);
 
 **参数范围：**
 - `pos`: ±12.5 rad
-- `vel`: ±65 rad/s
+- `vel`: 关节 ±3 / 轮 ±48 rad/s
 - `kp`: 0~500
-- `kd`: 0~5
-- `torque`: ±18 Nm
+- `kd`: 0~100
+- `torque`: 腿 ±150 / 轮 ±52 Nm
 
 **发送命令：** `set_motor_para_bt(..., IMPEDANCE)`
 
@@ -176,7 +176,7 @@ motor_mgr.SendSpeed(0, 1, 1.0f, 10.0f, 0.5f);
 ```
 
 **参数范围：**
-- `vel`: ±65 rad/s
+- `vel`: 关节 ±3 / 轮 ±48 rad/s
 - `kp`: 0~500
 - `ki`: 0~500
 
@@ -196,7 +196,7 @@ motor_mgr.SendPosition(0, 1, 0.5f, 5.0f, 10.0f, 1.0f, 0.5f);
 - `pos`: ±12.5 rad
 - `kvp`: 0~500
 - `kp`: 0~500
-- `kd`: 0~5
+- `kd`: 0~100
 - `kvi`: 0~500
 
 **发送命令：** `set_motor_para_bt(..., POSITION)`
@@ -253,7 +253,7 @@ struct MotorStatus {
 │ - 设置 motor.control_mode = IMPEDANCE                   │
 └────────────────┬────────────────────────────────────────┘
                  │
-                 ↓ (1ms 周期)
+                 ↓ (2ms 周期)
 ┌─────────────────────────────────────────────────────────┐
 │ SendThreadFunc()                                        │
 │ - 遍历所有 enabled 电机                                 │
@@ -274,7 +274,7 @@ struct MotorStatus {
 │ - 返回状态帧                                            │
 └────────────────┬────────────────────────────────────────┘
                  │
-                 ↓ (1ms 周期)
+                 ↓ (2ms 周期)
 ┌─────────────────────────────────────────────────────────┐
 │ ReceiveThreadFunc()                                     │
 │ - 轮询 4 路 CAN 口                                      │
@@ -447,14 +447,14 @@ motor_mgr.SendImpedance(0, 3, 0.2f, 0.0f, 10.0f, 1.0f, 0.0f);
 
 ### Q2：SendThreadFunc 何时被调用？
 
-**A：** SendThreadFunc 由外部 ThreadManager 以 1ms 周期驱动，不需要手动调用。
+**A：** SendThreadFunc 由外部 ThreadManager 以 2ms 周期驱动，不需要手动调用。
 
 ```cpp
 // Initialize() 中已注册
 thread_mgr.register_thread(
     "motor_send",
     [this]() { SendThreadFunc(); },
-    ThreadMode::LOOP, 1, 80  // 1ms 间隔
+    ThreadMode::LOOP, 2, 80  // 2ms 间隔
 );
 ```
 
@@ -489,7 +489,7 @@ while (running) {
 | 参数 | 范围 | 单位 |
 |------|------|------|
 | 位置 (pos) | ±12.5 | rad |
-| 速度 (vel) | ±65 | rad/s |
+| 速度 (vel) | 关节 ±3 / 轮 ±48 | rad/s |
 | 扭矩 (torque) | ±18 | Nm |
 | Kp | 0~500 | — |
 | Kd | 0~5 | — |

@@ -96,3 +96,25 @@
 - `CanDevice::Stop()`：改为返回 `VCI_ResetCAN` 的实际结果。
 - `MotorManager`：移除残留的 `m_can_devices` 成员，设备初始化仅走 `BspCan` 单例。
 
+
+---
+
+## 2026-08-30 | 分层重组 + USB2CAN + traj_v28 + 轮控 SPEED 迁移
+
+### 2026-08-26 框架分层重组
+- `src/` 拆为 `app|runtime|strategy|motion|motor|transport` 分层；`include/` 同步分层（`bsp/`、`thread/`、`RoboTasks/`、`motor_drive/` 目录移除）。
+
+### 2026-08-27 达妙 USB2CAN + 策略迁移
+- 接入达妙 USB2CAN（`lib/damiao_sdk`，默认后端；需新版 libstdc++ + libusb，CMake 自动探测 `CONDA_LIB_DIR`）。
+- 策略迁移到 traj_v28/iteration_3000（`RL_Train/code`，v28 默认 PD250/damping4）。
+
+### 2026-08-28 参数辨识 + 站立稳定
+- Example47 整狗 chirp 参数辨识；motor_send 1ms→2ms（500Hz）；USB2CAN recv 取空队列。
+- 站立稳定：JOINT_IMPEDANCE（hip 300/10/tau_ff-10 等）、CMD_BIAS_VX=-0.05、WHEEL_KD 2→1。
+
+### 2026-08-29 RL 轮控 SPEED 迁移
+- 轮子从「阻抗前馈扭矩」迁移到「固件 SPEED 速度环」（`SendSpeed(vel, kvp, ki)`，1kHz 闭环）。
+- 轮控安全层：WHEEL_SOFT_KVP（软启动）、WHEEL_CMD_ALPHA（轮速低通）、WHEEL_CMD_MOVE_THR（移动门控锁轮）。
+
+### 2026-08-30
+- sim2real 双开对比工具（`run_dual_compare.sh` + `tool/compare_sim2real.py`）、趴下姿态（Example51）、重力前馈测量（Example53）。

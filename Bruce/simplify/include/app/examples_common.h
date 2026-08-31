@@ -1,5 +1,5 @@
 #pragma once
-// 示例公共 helper：终端 raw 模式 / 方向键解析 / 全局急停标志（阶段3 从 example.cpp 提取）
+// 示例公共 helper：终端 raw 模式 / 方向键解析 / 全局急停标志（阶段3 从原 example.cpp 提取）
 #include <termios.h>
 #include <fcntl.h>
 #include <unistd.h>

@@ -1,5 +1,9 @@
 # 四足机器狗电机控制框架 — 完整使用指南
 
+> ⚠ **2026-08-30 标注：本文描述重构前的框架结构（架构图/目录树/示例代码为旧版）。
+> 现工程已分层重组（`src/app|runtime|strategy|motion|motor|transport`）、接入达妙 USB2CAN、
+> 示例扩展到 17~53。结构性内容以当前代码为准，详见 `docs/MOTION_RL_KNOWLEDGE.md` 与 `memory/FACT.md`。**
+
 ## 目录
 1. [框架概述](#框架概述)
 2. [架构设计](#架构设计)
@@ -49,11 +53,11 @@
 
 | 模块 | 文件 | 职责 |
 |------|------|------|
-| **ThreadManager** | `include/thread/thread_manager.h` | 线程生命周期管理、共享数据区 |
-| **CanDevice** | `include/can_device.h` | CANET 设备封装、TCP 连接管理 |
-| **EleMotor** | `include/motor_drive/ele_motor.h` | 单电机数据结构、状态管理 |
+| **ThreadManager** | `include/runtime/thread_manager.h` | 线程生命周期管理、共享数据区 |
+| **CanDevice** | `include/transport/can_device.h` | CAN 设备封装、TCP/USB 连接管理 |
+| **EleMotor** | `include/motor/ele_motor.h` | 单电机数据结构、状态管理 |
 | **MotorManager** | `include/motor_manager.h` | 16 电机批量管理、命令分发 |
-| **BspCan** | `include/bsp/bsp_can.h` | CAN 收发底层接口 |
+| **CanTransport** | `include/transport/`（canet/usb2can） | 传输抽象（⚠ BspCan 已删，重构为 CanTransport 子类） |
 | **DataTypes** | `include/data_types.h` | 通用数据结构定义 |
 
 ---
@@ -319,8 +323,7 @@ if (bsp.ReceiveFrames(0, frames, 1000)) {
 **依赖前提**：
 
 - CMake ≥ 3.8、支持 C++17 的编译器（gcc/g++）
-- **SDL2 开发库**：Example21（Xbox 手柄控制）依赖 SDL2。由于 `main.cpp` 默认
-  启用的就是 Example21，缺少 SDL2 会导致编译失败
+- **SDL2 开发库**：Example21（Xbox 手柄控制）依赖 SDL2。由于 `main.cpp` 默认启用的 Example44（USB2CAN 手柄）也依赖 SDL2，缺少 SDL2 会导致编译失败
   （`fatal error: SDL2/SDL.h: No such file or directory`）。安装：
 
   ```bash
@@ -330,7 +333,7 @@ if (bsp.ReceiveFrames(0, frames, 1000)) {
   若不需要手柄控制，可在 `main.cpp` 中改用其它不依赖 SDL2 的示例，即可跳过此依赖。
 
 ```bash
-cd /home/bruce/Desktop/EasyDogFrame/Bruce/simplify
+cd /home/sysu/Desktop/Project/Bruce/EasyDogFrame/Bruce/simplify
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 ```
@@ -352,7 +355,7 @@ int main() {
         return -1;
     }
     
-    // 启动收发线程（各 1ms 间隔）
+    // 启动收发线程（各 2ms 间隔，500Hz）
     // 注意：必须同时启动 motor_receive 和 motor_send，
     //       只启动接收线程时，控制命令不会被下发到电机
     thread_mgr.start_thread("motor_receive");
@@ -414,7 +417,7 @@ mgr.register_thread(
     "receive",              // 线程名称
     []() { /* 任务函数 */ },
     ThreadMode::LOOP,       // 循环模式
-    1,                      // 1ms 间隔
+    2,                      // 2ms 间隔
     0                       // 普通优先级
 );
 
@@ -549,10 +552,10 @@ enum ControlMode {
 | 参数 | 范围 | 单位 | 说明 |
 |------|------|------|------|
 | 位置 (pos) | ±12.5 | rad | 关节角度 |
-| 速度 (vel) | ±65 | rad/s | 关节角速度 |
-| 扭矩 (torque) | ±18 | Nm | 关节扭矩 |
+| 速度 (vel) | 关节 ±3 / 轮 ±48 | rad/s | 角速度（固件实测量程） |
+| 扭矩 (torque) | 腿 ±150 / 轮 ±52 | Nm | 关节扭矩 |
 | Kp | 0~500 | - | 刚度/位置环比例系数 |
-| Kd | 0~5 | - | 阻尼系数 |
+| Kd | 0~100 | - | 阻尼系数 |
 | Ki | 0~500 | - | 速度环积分系数 |
 
 ---
@@ -1105,7 +1108,7 @@ thread_mgr.register_thread(
     "motor_receive",
     []() { /* 任务 */ },
     ThreadMode::LOOP,
-    1,      // 1ms 间隔
+    2,      // 2ms 间隔
     50      // SCHED_FIFO 优先级 50（1~99）
 );
 ```
@@ -1149,7 +1152,7 @@ printf("Thread state: %d\n", (int)state);
 #### 1.1 快速编译（Release 模式）
 
 ```bash
-cd /home/bruce/Desktop/EasyDogFrame/Bruce/simplify
+cd /home/sysu/Desktop/Project/Bruce/EasyDogFrame/Bruce/simplify
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 ```
@@ -1369,7 +1372,7 @@ CMake Error: The source directory does not appear to contain CMakeLists.txt.
 **解决方案**：
 ```bash
 # 确保在项目根目录
-cd /home/bruce/Desktop/EasyDogFrame/Bruce/simplify
+cd /home/sysu/Desktop/Project/Bruce/EasyDogFrame/Bruce/simplify
 ls CMakeLists.txt  # 确认文件存在
 ```
 
@@ -1425,7 +1428,7 @@ sudo ./bin/can_motor_app
 fatal error: SDL2/SDL.h: No such file or directory
 ```
 
-**原因**：Example21（Xbox 手柄控制）依赖 SDL2，而 `main.cpp` 默认启用 Example21。
+**原因**：手柄示例依赖 SDL2，而 `main.cpp` 默认启用的 Example44（USB2CAN Xbox 手柄）也需要 SDL2。
 
 **解决方案**：
 ```bash
@@ -1479,7 +1482,7 @@ taskset -p $$
 
 ```bash
 # 1. 进入项目目录
-cd /home/bruce/Desktop/EasyDogFrame/Bruce/simplify
+cd /home/sysu/Desktop/Project/Bruce/EasyDogFrame/Bruce/simplify
 
 # 2. 清理旧编译
 rm -rf build bin

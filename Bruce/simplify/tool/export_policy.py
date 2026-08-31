@@ -2,7 +2,7 @@
 """Export the dogurdf policy actor weights into a C++ header.
 
 Reads the dogurdf RL training checkpoint
-``/home/sysu/Desktop/Project/Bruce/RL_Train/code/checkpoints/.../iteration_1100.pkl``
+``/home/sysu/Desktop/Project/Bruce/RL_Train/code/checkpoints/.../traj_v28/iteration_3000.pkl``
 (flax ``ActorCriticMLP`` state dict), extracts the 4 actor layers, and writes:
 
   * ``include/strategy/policy_weights.h``  — const float arrays for the C++ MLP.

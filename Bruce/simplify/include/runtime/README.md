@@ -87,7 +87,6 @@ ThreadState get_thread_state(const std::string& name);
 | `REGISTERED` | 已注册，未启动 |
 | `RUNNING` | 运行中 |
 | `STOPPED` | 已停止，可重启 |
-| `ERROR` | 内部异常（预留） |
 
 ### get_shared_data
 

@@ -111,7 +111,7 @@ constexpr float UPPER_LIMIT_THETA1_DEG =   0.0f;
 
 // --- θ2 大腿 ---
 // 下界原为 −45°，但 Example19 实测站稳的姿态需要 −60°（见 §5 STAND_THIGH_DEG）。
-// 若仍用 −45°，Example21 主循环的 clamp（example.cpp:1822）会把站立指令削掉 15°，
+// 若仍用 −45°，Example21 主循环的 clamp（src/app/examples/ex_basic.cpp）会把站立指令削掉 15°，
 // 站姿被悄悄改成一个站不住的姿态。放宽到 −70° 给 IK 留调节余量。
 constexpr float ZERO_OFFSET_THETA2_DEG = rad2deg(THIGH_POS_OFFSET_RAD);  // 25.27°
 constexpr float LOWER_LIMIT_THETA2_DEG = -70.0f;

@@ -16,7 +16,7 @@ extern const float DEFAULT_POSE[16];
 
 // 真机 GetStatus 角 ↔ URDF 角每关节映射（2026-08-20 真机 L 形测量）：
 //   URDF = CONV_A[joint]*GetStatus + CONV_B[joint]（rad）
-//   hip   A=+1 B=+0.0297   thigh A=-1 B=-1.0524   calf A=+1 B=-1.3832   wheel A=+1 B=0
+//   hip   A=+1 B=+0.0297   thigh A=-1 B=-0.9624   calf A=+1 B=-1.2832   wheel A=+1 B=0
 // ⚠ 基于一次 L 形目测，数值待真机低增益验证后再微调。
 extern const float CONV_A[16];   // ±1 符号
 extern const float CONV_B[16];   // 偏移 (rad)

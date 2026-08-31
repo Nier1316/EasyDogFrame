@@ -126,7 +126,7 @@ private:
 
     EleMotor m_motors[CAN_PORTS][MOTORS_PER_CAN];
     mutable std::mutex m_motor_mutex[CAN_PORTS][MOTORS_PER_CAN];
-    CanTransport* m_transport[CAN_PORTS] = {nullptr};  // 每路传输后端（Initialize 时兜底 CanetTransport）
+    CanTransport* m_transport[CAN_PORTS] = {nullptr};  // 每路传输后端（Initialize 时默认 Usb2CanTransport，见 motor_manager.cpp）
     const char* m_usb_dev  = "/dev/ttyACM0";   // USB2CAN 设备路径（达妙模块）
     uint8_t     m_usb_baud = 0;                // USB2CAN 波特率索引（0=1000k, 3=500k）
     bool m_initialized = false;   // Initialize() 全部成功后才置真，Stop() 据此避免关未打开的设备

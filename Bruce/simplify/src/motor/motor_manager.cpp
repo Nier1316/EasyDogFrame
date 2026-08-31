@@ -168,7 +168,7 @@ void MotorManager::ReceiveOnce() {
     }
 }
 
-// 写固件控制模式后等待其生效的周期数（发送线程 1ms/周期 → 约 20ms）
+// 写固件控制模式后等待其生效的周期数（发送线程 2ms/周期 → 约 40ms）
 static const int MODE_SETTLE_TICKS = 20;
 
 // 在使能之前把固件控制模式写下去。

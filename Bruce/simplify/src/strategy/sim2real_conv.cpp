@@ -22,7 +22,7 @@ const float DEFAULT_POSE[16] = {
 
 // 真机 GetStatus ↔ URDF 每关节转换（POLICY order：12 腿 + 4 轮）。
 // 见 sim2real_conv.h 注释，基于 2026-08-20 真机 L 形测量。
-// 每腿 hip/thigh/calf：髋(+1,+0.0297) 大腿(-1,-1.0524) 小腿(+1,-1.3832)
+// 每腿 hip/thigh/calf：髋(+1,+0.0297) 大腿(-1,-0.9624) 小腿(+1,-1.2832)
 const float CONV_A[16] = {
     +1, -1, +1,    // FL
     +1, -1, +1,    // FR

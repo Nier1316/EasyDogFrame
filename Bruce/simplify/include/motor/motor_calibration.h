@@ -42,9 +42,8 @@ constexpr MotorCalibrationParam MOTOR_CALIBRATION[CAN_PORTS][MOTORS_PER_CAN] = {
     },
     // CAN1 端口 (右前腿)
     {
-        // Motor 1 (Hip) pos_offset 2026-08-22 试改：0.611 → 0.78。
-        //   依据：FR hip 下发位置命令偏(RL +0.18 / Example21 +0.108 rad)，反推 offset 应≈0.78~0.80。
-        //   若 FR hip 反偏/过调，调回 0.70 或 0.75；若仍不足再往上。
+        // Motor 1 (Hip) pos_offset 当前 0.611。曾评估提至 0.78（FR hip 下发位置偏 RL +0.18，
+        //   反推 offset≈0.78~0.80）但未落地/已回退；若 FR hip 仍位置偏，现场核实后再调。
         {1.0f, 1.0f, 0.611f},  // Motor 1 (Hip)
         {-1.0f, 1.0f, 0.441f}, // Motor 2 (Thigh)
         {1.0f, 1.0f, 0.211f},  // Motor 3 (Calf)
@@ -106,36 +105,36 @@ struct JointImpedanceParam
  * 填 40~60 这种量级会让关节直接顶过去——tau_ff 是前馈，不受位置误差约束。
  *
  * kp/kd 与 tau_ff（2026-08-29 更新）：RL 循环腿软改善——thigh/calf 填重力前馈
- * （thigh=8, calf=5 Nm，个位数安全量级），直接给支撑力矩，不再靠位置误差塌换，
- * 同时保留训练 kp/kd（LEG_KP/KD 由 rl_controller.h 下发，表内 kp/kd 仅作参考）。
- * hip tau_ff=10 是站立理想姿态的关键（用户 2026-08-29 调）。
+ * 直接给支撑力矩，不再靠位置误差塌换。表内实际 tau_ff：hip=-10、thigh=-5、
+ * calf=+12（前腿）/ +20（后腿）Nm。同时保留训练 kp/kd（LEG_KP/KD 由
+ * rl_controller.h 下发，表内 kp/kd 仅作参考，RL 循环只取此表的 tau_ff）。
  * 量级规则：站稳保持扭矩个位数~十几 Nm；填 40~60 会顶过关节。
  */
 static const JointImpedanceParam JOINT_IMPEDANCE[CAN_PORTS][3] = {
     //                kp      kd   tau_ff
     // CAN0 端口 (左前腿)
     {
-        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-14
+        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-10
         {250.0f, 10.0f, -5.0f},  // Motor 2 (Thigh)  tau_ff=-5
-        {250.0f, 10.0f, 12.0f},  // Motor 3 (Calf)   tau_ff=16
+        {250.0f, 10.0f, 12.0f},  // Motor 3 (Calf)   tau_ff=12
     },
     // CAN1 端口 (右前腿)
     {
-        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-14
+        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-10
         {250.0f, 10.0f, -5.0f},  // Motor 2 (Thigh)  tau_ff=-5
-        {250.0f, 10.0f, 12.0f},  // Motor 3 (Calf)   tau_ff=16
+        {250.0f, 10.0f, 12.0f},  // Motor 3 (Calf)   tau_ff=12
     },
     // CAN2 端口 (左后腿)
     {
-        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-14
+        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-10
         {250.0f, 10.0f, -5.0f},  // Motor 2 (Thigh)  tau_ff=-5
-        {250.0f, 10.0f, 20.0f},  // Motor 3 (Calf)   tau_ff=26
+        {250.0f, 10.0f, 20.0f},  // Motor 3 (Calf)   tau_ff=20
     },
     // CAN3 端口 (右后腿)
     {
-        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-14
+        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-10
         {250.0f, 10.0f, -5.0f},  // Motor 2 (Thigh)  tau_ff=-5
-        {250.0f, 10.0f, 20.0f},  // Motor 3 (Calf)   tau_ff=26
+        {250.0f, 10.0f, 20.0f},  // Motor 3 (Calf)   tau_ff=20
     },
 };
 

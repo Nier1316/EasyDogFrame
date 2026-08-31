@@ -5,8 +5,8 @@
  * 所有线程在此处注册和启动，各模块（MotorManager 等）只提供任务函数，
  * 不自己持有线程。线程注册表：
  *
- *   motor_receive  LOOP 1ms   优先级80  CAN 数据接收
- *   motor_send     LOOP 1ms   优先级80  控制指令发送（预留）
+ *   motor_receive  LOOP 2ms   优先级80  CAN 数据接收（500Hz）
+ *   motor_send     LOOP 2ms   优先级80  控制指令发送（500Hz）
  *   state_calc     LOOP 5ms   优先级50  数据解算（预留）
  *   monitor        LOOP 100ms 优先级0   状态监控（预留）
  */

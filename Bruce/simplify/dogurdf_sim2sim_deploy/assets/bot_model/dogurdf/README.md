@@ -139,7 +139,7 @@ URDF 里四个关节的 `effort` 全是 `300`、`velocity` 全是 `14` —— �
 
 | | 力矩限幅 | 速度限幅 |
 |---|---|---|
-| 腿关节（hip / thigh / calf） | **150 N·m** | 14 rad/s |
+| 腿关节（hip / thigh / calf） | **250 N·m** | 14 rad/s |
 | 轮电机 | **53 N·m** | **12.5 rad/s** |
 
 轮速上限直接决定车速上限：
@@ -231,8 +231,8 @@ MuJoCo 的 GPU 后端 MJX（版本 3.4.0）**不支持 box↔cylinder 碰撞**�
 | 项 | 值 | 备注 |
 |---|---|---|
 | 动作维度 | 16 | 前 12 腿位置偏移，后 4 轮速 |
-| 观测 actor / critic | 56 / 80 | 轮子只进速度不进位置 |
-| 腿 PD 增益 | Kp=150, Kd=4 | 实测站姿下沉 2 cm |
+| 观测 actor / critic | 64（含 gait-phase）| 旧 checkpoint 为 56（无 gait-phase），auto-detect |
+| 腿 PD 增益 | Kp=250, Kd=4 | v28 训练配置 |
 | 轮速度环 | Kp=0, Kd=2.0 | 实测跟踪误差 0.01 rad/s |
 | 动作缩放 | 腿 0.25 rad, 轮 12.5 rad/s | |
 | 控制周期 | 0.02 s | dt=0.005 × decimation 4 |

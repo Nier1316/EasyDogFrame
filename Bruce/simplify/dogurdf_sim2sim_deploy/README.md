@@ -14,7 +14,7 @@
 |---|---|
 | 机器人 | dogurdf 轮足四足，16 DoF（4×[hip, thigh, calf, wheel]） |
 | 训练框架 | MJX/JAX PPO（自研管线），8192 envs |
-| **checkpoint** | `checkpoints/dogurdf_velocity/iteration_450.pkl`（traj_v13） |
+| **checkpoint** | `checkpoints/dogurdf_velocity/iteration_3000.pkl`（traj_v28） |
 | 观测维度 | **64**（含 gait-phase 时钟） |
 | 动作维度 | 16（12 腿位置目标 + 4 轮速目标） |
 | **控制频率** | **50 Hz**（控制步 0.02 s；仿真步 0.005 s，decimation=4） |
@@ -41,7 +41,7 @@ dogurdf_sim2sim_deploy/
 │   ├── meshes/*.STL                  # 视觉/碰撞网格
 │   └── urdf/                         # 原始 URDF（参考，不直接使用）
 └── checkpoints/dogurdf_velocity/
-    └── iteration_450.pkl            # 训练好的策略权重（traj_v13，~5MB）
+    └── iteration_3000.pkl           # 训练好的策略权重（traj_v28，~5MB）
 ```
 
 ---
@@ -92,7 +92,7 @@ cd dogurdf_sim2sim_deploy
 
 ```
 腿（位置环）: q_target = clip(default_pose + 0.25 * action[0:12], 关节限位)
-               tau = kp * (q_target - q) + kd * (0 - qd)        # kp=150, kd=4
+               tau = kp * (q_target - q) + kd * (0 - qd)        # kp=250, kd=4
 轮（速度环）:  w_target = 12.5 * action[12:16]                   # WHEEL_VEL_SCALE
                tau = kd_w * (w_target - qd)                     # kd_w=2, kp_w=0
 ```
@@ -101,7 +101,7 @@ cd dogurdf_sim2sim_deploy
 |---|---|---|
 | kp | **150.0** | 0.0 |
 | kd | **4.0** | **2.0** |
-| 扭矩上限 | 150 N·m | 53 N·m |
+| 扭矩上限 | 250 N·m | 53 N·m |
 | 速度上限 | 14.0 rad/s | 12.5 rad/s（→ 线速度 1.41 m/s） |
 | 动作缩放 | action_scale = 0.25 | wheel_vel_scale = 12.5 |
 
@@ -145,7 +145,7 @@ cd dogurdf_sim2sim_deploy
 | yaw rate 跟踪 | ±1.03 rad/s（指令 ±1.0，跟随良好） |
 | 平面漂移 | ~0.10 m/s（原地转弯，非平移） |
 
-> ⚠️ **已知风险（务必阅读）**：训练在 iter ~4000+ 可能复现 reward hacking（四轮高频乱摆腿刷抬腿奖励）。**本包选用 traj_v13 的 iteration_450（达标：reward 253.6 / episode 1985.5）**，是退化前的 checkpoint。部署时不要对更高 iteration 的 checkpoint 抱期望；若需重新训练，参考 `src/cfg/` 的奖励配置并注意早期停止。
+> ⚠️ **已知风险（务必阅读）**：训练在 iter ~4000+ 可能复现 reward hacking（四轮高频乱摆腿刷抬腿奖励）。**本包现用 traj_v28 的 iteration_3000**（2026-08-30 对齐；训练权威 RL_Train/code）。部署时不要对更高 iteration 的 checkpoint 抱期望；若需重新训练，参考 `src/cfg/` 的奖励配置并注意早期停止。
 
 ---
 
@@ -164,7 +164,7 @@ cd dogurdf_sim2sim_deploy
 ## 9. 训练溯源
 
 - 训练框架：`/home/sysu/Desktop/Project/Bruce/RL_Train/code`（MJX/JAX PPO）
-- 本策略：`run_name=traj_v13`，`checkpoints_20260822_054003_traj_v13/iteration_450.pkl`
+- 本策略：`run_name=traj_v28`，`checkpoints_20260827_044715_traj_v28/iteration_3000.pkl`
 - 站高 0.45 m（default pose thigh=0.20, calf=−0.35，FK 实测 0.449 m，抬腿能力 0.10 m）
 - 真机标定：质量 56.71 kg（实测校准），kp=250，扭矩限 250 N·m，轮地摩擦 1.36
 - 奖励要点：`feet_air_time_turn=50` + `feet_lift_turn=3` + `rotation_gait_symmetry=15`（242a371 成功配方），`phase_gait=0`

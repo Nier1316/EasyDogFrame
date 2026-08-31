@@ -125,7 +125,7 @@ PD 峰值扭矩 = 250 × 0.03 = 7.5 Nm，接近每腿承重保持力矩（4~7.5 
 
 ## 7. 复现指引
 
-运行 `Example38_ActionDelayMeasure`（当前 main.cpp 已启用）：
+运行 `Example38_ActionDelayMeasure`（需在 main.cpp 中切换启用，当前激活 Example44）：
 
 ```
 前置条件：狗架起，四腿支撑承重、轮子悬空（同 Example35 条件）

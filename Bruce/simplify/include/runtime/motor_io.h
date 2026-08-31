@@ -17,9 +17,9 @@ class MotorManager;
  * @param thread_mgr 统一线程管理器（示例持有的 ThreadManager）
  * @param mm         MotorManager（调用其 ReceiveOnce/SendOnce）
  *
- * 线程名/节拍/优先级保持与原 MotorManager::Initialize 一致：
- *   motor_receive  LOOP 10ms  优先级 80  （对齐 SDK VCI_Receive ~10ms 节拍）
- *   motor_send     LOOP 1ms   优先级 80
+ * 线程名/节拍/优先级（当前实现）：
+ *   motor_receive  LOOP 2ms  优先级 80  （对齐 CONTROL_HZ=500；USB2CAN 回调队列 2ms 取最新反馈）
+ *   motor_send     LOOP 2ms  优先级 80  （500Hz；原 1ms 冗余，每 2ms 重复发相同帧）
  */
 void RegisterMotorIoThreads(ThreadManager& thread_mgr, MotorManager& mm);
 

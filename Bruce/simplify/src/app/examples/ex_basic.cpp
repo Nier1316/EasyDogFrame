@@ -1,5 +1,5 @@
 // ===== 基础运动示例 17-23 =====
-// 由 src/app/example.cpp 拆分而来（阶段3：示例拆包），公共 helper 见 app/examples_common.h
+// 由原单文件 example.cpp 示例拆包而来（现拆到 src/app/examples/），公共 helper 见 app/examples_common.h
 #include "app/examples/ex_basic.h"
 #include "app/examples_common.h"
 #include "transport/canet_transport.h"
@@ -183,7 +183,7 @@ void Example18_LegIKControl() {
     const float STEP_LEN = 0.25f;      // 步长 (m)
     const float STEP_HEIGHT = 0.25f;   // 抬腿高度 (m)
     const int   HZ = 1000;             // 控制频率 1kHz
-    const int   TOTAL_FRAMES = 20000;  // 运行 10 秒
+    const int   TOTAL_FRAMES = 20000;  // 运行 20 秒（@1kHz）
 
     // 站立基值: 足端在身体坐标系中的位置
     // 计算: 用 leg_fk_all 验证过的站立姿态 [0°, -30°, 60°]
@@ -289,7 +289,7 @@ void Example18_LegIKControl() {
             fflush(stdout);
         }
 
-        usleep(1000000 / HZ);  // 20ms
+        usleep(1000000 / HZ);  // 1ms（HZ=1000）
     }
 
     // ---- 归零站立 ----
@@ -373,7 +373,7 @@ void Example19_ReadAndStand() {
     //   标定坐标系 0 = 物理零位
     printf("========== Phase 2: Moving to Standing Pose ==========\n");
     printf("  Target: Hip=%5.1f°, Thigh=%5.1f°, Calf=%5.1f°\n\n",
-           0.0f, -30.0f, 60.0f);
+           0.0f, -60.0f, 60.0f);
     fflush(stdout);
 
     const float TGT_PHYS[3] = {
@@ -931,7 +931,7 @@ void Example22_StandAndWheelTest() {
     printf("\n========== 示例 22：起立 + 轮子阻抗模式测试 ==========\n");
     printf("[INFO] 阶段1: 读取当前姿态\n");
     printf("[INFO] 阶段2: 缓慢起立\n");
-    printf("[INFO] 阶段3: 4秒后轮子以 1rad/s 滚动 (KP=3, KD=0.3)\n\n");
+    printf("[INFO] 阶段3: 4秒后轮子 SPEED 速度环滚动 (KVP=1.0, KVI=0.0)\n\n");
 
     // ---- 初始化 ----
     MotorManager& motor_mgr = MotorManager::GetInstance();
@@ -999,6 +999,8 @@ void Example22_StandAndWheelTest() {
 
     // ======== 阶段 2：缓慢起立 ========
     printf("\n========== 阶段2: 起立 ==========\n");
+    // ⚠ thigh=-30° 与 STAND_THIGH_DEG(-60°) 不一致（历史遗留，-30° 实测站不起来）；
+    //   若此例起立失败，改用 robot_calibration.h 的 STAND_* 指令角。
     const float TGT[3] = { deg2rad(0.0f), deg2rad(-30.0f), deg2rad(60.0f) };
     const float KP = 150.0f, KD = 20.0f;
     const int   STAND_DURATION = 3;
@@ -1198,7 +1200,7 @@ void Example23_SingleCanKeyboardControl() {
     motor_mgr.SendSpeed(can_port, 4, 0.0f, WHEEL_SOFT_KVP, WHEEL_SOFT_KVI);
 
     // ---- 进入终端 raw 模式，开始键盘控制 ----
-    printf("\n[操作] ↑/↓ = 升高/降低身体   ←/→ = 轮子反转/正转 0.5rad/s   q = 退出\n\n");
+    printf("\n[操作] ↑/↓ = 升高/降低身体   ←/→ = 轮子反转/正转 1.5rad/s   q = 退出\n\n");
     fflush(stdout);
 
     RawTerminal term;

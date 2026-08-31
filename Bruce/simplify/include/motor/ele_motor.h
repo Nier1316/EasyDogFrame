@@ -36,9 +36,9 @@ public:
     bool  vel_lp_init = false; // 是否已用首帧对齐
 
     // 目标状态
-    float target_speed;       // 目标速度 (rpm)
+    float target_speed;       // 目标速度 (rad/s)
     float target_torque;      // 目标扭矩 (Nm)
-    float target_position;    // 目标位置 (degree)
+    float target_position;    // 目标位置 (rad)
 
     // 控制模式和增益参数
     int control_mode;         // 期望控制模式 (IMPEDANCE/SPEED/POSITION)
