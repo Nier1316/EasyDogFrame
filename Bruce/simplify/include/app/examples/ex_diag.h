@@ -28,3 +28,5 @@ void Example48_WheelDirectionVerify();
 void Example49_StandAndWheelSpeedLoopTest();
 // 趴下姿态实际角度记录（起立→趴下→记录稳态角，用于标定 LIE_DOWN_*_DEG）
 void Example50_LieDownAngleRecord();
+// 吊装摩擦辨识（重力标定 + 前馈恒速 + 双向配对 → 离线回归出 LEG_FF_FC/FV）
+void Example54_FrictionSysId();

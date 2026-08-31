@@ -14,8 +14,8 @@ static void signal_handler(int) {
 // =====================================================================
 //  示例切换说明
 //  = 只运行一个示例：目标示例的 3 行取消注释、其余保持注释即可。
-//  = Example1-16 已清理（早期实验），现存 17~48。
-//  = 当前启用：Example37（RL 遥操作，手柄前进/后退 + 转向，USB2CAN 4 路）。
+//  = Example1-16 已清理（早期实验），现存 17~54。
+//  = 当前启用：Example54（吊装摩擦辨识）。
 //  =====================================================================
 int main() {
     signal(SIGINT,  signal_handler);
@@ -121,7 +121,7 @@ int main() {
     // Example36_RLStandLoop();
     // printf("[INFO] Example36 completed.\n");
 
-    // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，USB2CAN 4 路）【当前启用】
+    // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，USB2CAN 4 路）
     // printf("[INFO] Running Example37_RLTeleopControl...\n");
     // Example37_RLTeleopControl();
     // printf("[INFO] Example37 completed.\n");
@@ -158,9 +158,14 @@ int main() {
     // printf("[INFO] Example43 completed.\n");
 
     // 运行示例44 - Xbox 手柄控制（USB2CAN 4 路，轮阻抗前馈）
-    printf("[INFO] Running Example44_USB2CanXboxControl...\n");
-    Example44_USB2CanXboxControl();
-    printf("[INFO] Example44 completed.\n");
+    // printf("[INFO] Running Example44_USB2CanXboxControl...\n");
+    // Example44_USB2CanXboxControl();
+    // printf("[INFO] Example44 completed.\n");
+
+    // 运行示例54 - 吊装摩擦辨识（重力标定 + 前馈恒速 + 双向配对，数据落盘 log/fric_id/）
+    printf("[INFO] Running Example54_FrictionSysId...\n");
+    Example54_FrictionSysId();
+    printf("[INFO] Example54 completed.\n");
 
     // 运行示例45 - 选择电机移动到物理零位（USB2CAN）
     // printf("[INFO] Running Example45_USB2CanMoveToZero...\n");
@@ -203,7 +208,7 @@ int main() {
     // Example52_FixedCmdYaw();
     // printf("[INFO] Example52 completed.\n");
 
-    // 运行示例53 - RL 站立下重力前馈测量（读稳态 cal_torque，标定 tau_ff）【当前启用】
+    // 运行示例53 - RL 站立下重力前馈测量（读稳态 cal_torque，标定 tau_ff）
     // printf("[INFO] Running Example53_MeasureGravityFF...\n");
     // Example53_MeasureGravityFF();
     // printf("[INFO] Example53 completed.\n");

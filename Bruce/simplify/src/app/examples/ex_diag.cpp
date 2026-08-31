@@ -1,5 +1,5 @@
 // ===== 诊断/只读示例 24,26-29,33,34 =====
-// 由 src/app/example.cpp 拆分而来（阶段3：示例拆包），公共 helper 见 app/examples_common.h
+// 由原单文件 example.cpp 示例拆包而来（现拆到 src/app/examples/），公共 helper 见 app/examples_common.h
 #include "app/examples/ex_diag.h"
 #include "app/examples_common.h"
 #include "transport/canet_transport.h"
@@ -127,10 +127,8 @@ void Example24_ReadMotorParams() {
     fflush(stdout);
 }
 
-// ================= 示例 25：RL 策略控制（dogurdf sim2real 部署） =================
-// 部署 dogurdf_sim2sim_deploy 的 64 维观测 / 16 维动作策略到真机，控制 50 Hz。
-// 注意：零位对齐暂用占位值（rl::DEFAULT_POSE），起立仍用真机实测站立指令角
-// （STAND_*），避免起立到错误姿态。策略输出当前仅用于验证链路。
+// ================= 示例 26：键盘输入接收测试（纯诊断，不碰电机） =================
+// 验证当前运行环境（集成终端/调试器）能否收到键盘输入（行模式 + raw 模式两段）。
 void Example26_KeyboardInputTest() {
     printf("\n========== 示例 26：键盘输入接收测试 ==========\n");
     printf("[INFO] 纯诊断，不初始化 CAN、不使能电机。\n");
@@ -1103,10 +1101,10 @@ void Example42_Usb2CanRateTest() {
     printf("[INFO] Example42 完成\n");
 }
 
-// ================= 示例 43：4 路 USB2CAN 读全部 16 电机参数 =================
-// 4 个达妙模块全接（CAN0~3 各一路），走完整 MotorManager 链路：
-//   不使能电机，读 16 电机角度/速度/扭矩 + 控制模式 0x5B（回报打印 [PARAM]）。
-// 判定：每路 [Usb2Can: CANx] 出现 + GetStatus 各电机有值 = 该路 USB2CAN 通。
+// ================= 示例 43：CAN 顺序标定（轮电机为准） =================
+// 4 个达妙模块全接（CAN0~3 各一路），走完整 MotorManager 链路，读电机反馈
+// 判断各 USB2CAN 模块的逻辑路序。判定：每路 [Usb2Can: CANx] 出现 + GetStatus
+// 各电机有值 = 该路 USB2CAN 通。
 // ⚠ 设备插入顺序 = 逻辑路：第一个插入的模块是 CAN0，依次 CAN1/CAN2/CAN3。
 void Example43_CANOrderCalibrate() {
     printf("\n========== Example 43: CAN 顺序标定（轮电机为准） ==========\n");
@@ -1562,11 +1560,11 @@ void Example44_USB2CanXboxControl() {
     thread_mgr.stop_thread("motor_send");
     motor_mgr.Stop();
 
-    printf("[INFO] 示例21 完成\n");
+    printf("[INFO] 示例44 完成\n");
     fflush(stdout);
 }
 
-// ================= 示例 22：起立 + 轮子阻抗模式测试 =================
+// ================= 示例 45：USB2CAN 移到物理零位 =================
 
 void Example45_USB2CanMoveToZero() {
     printf("\n========== Example 45: Move Selected Motor to Physical Zero (USB2CAN) ==========\n");
@@ -1674,7 +1672,7 @@ void Example45_USB2CanMoveToZero() {
     thread_mgr.stop_thread("motor_send");
     motor_mgr.Stop();
 
-    printf("[INFO] Example20 完成\n");
+    printf("[INFO] Example45 完成\n");
     fflush(stdout);
 }
 
@@ -2349,4 +2347,268 @@ void Example50_LieDownAngleRecord() {
     printf("[INFO] 示例50 完成\n");
 }
 
-// ================= 示例 21：Xbox 手柄控制 =================
+// ================= 示例 54：吊装摩擦辨识（重力标定 + 前馈恒速 + 双向配对） =================
+// 目的：辨识腿关节摩擦参数 [b 粘性, fc 库仑]，供摩擦前馈（rl_controller.h LEG_FF_FC/FV）。
+// 流程（⚠ 狗必须吊起悬空、base 刚性固定、腿悬空不触地）：
+//   [0] 初始化 USB2CAN + 使能 12 腿关节（轮子不使能）
+//   [1] 读吊起后当前姿态 → 每关节扫掠中心 θ_c + 自适应半幅（不撞限位）
+//   [2] 逐关节：其他 11 关节锁定 → 阶段C 重力标定(20点×4遍，位置保持读 τ_hold)
+//             → 阶段D 前馈恒速扫掠(位置斜坡 + tau_ff=g_est，多档×往返圈×4回合)
+//   [3] 数据落盘 log/fric_id/（grav/回合/info CSV），失能退出
+//   [4] 离线回归 tool/friction_id_offline.py → b/fc ± σ
+//
+// 原理（real_robot_identification_plan.md 重力抵消法）：
+//   同一 θ 下 τ(+v)=g(θ)+b·v+fc，τ(−v)=g(θ)−b·v−fc，相减消重力 → 2b·v+2fc。
+//   g_est 只用于控制前馈（让 PD 有余量跟上斜坡恒速），不参与辨识（配对消掉）。
+//   真机速度环在关节电机上危险（高减速比），故用阻抗位置斜坡 + 重力前馈实现恒速。
+//
+// ⚠ 安全：全程阻抗位置闭环；位置误差超 POS_ERR_LIMIT 立即失能退出。
+// ⚠ 参数集中在下方的宏区，实测现场改这里重编译即可。
+void Example54_FrictionSysId() {
+    // ============ 辨识参数（实测现场可调，改这里重编译）============
+    // 扫掠半幅 (rad，指令角)：hip / thigh / calf，会再自适应限位（不撞限位）
+    const float SWEEP_AMP[3] = {0.35f, 0.50f, 0.45f};
+    const int   N_VEL        = 3;                  // 速度档数
+    const float VEL_STEPS[3] = {0.3f, 0.5f, 0.8f}; // 双向恒速档 (rad/s)，关节量程 3 的 10~27%
+    const int   CYC_PER_VEL  = 5;                  // 每档往返圈数（1 圈 = 正+反两个单程）
+    const int   ROUNDS       = 4;                  // 阶段D 独立回合数（每回合单独回归 → 误差带 σ）
+    const int   GRID_PTS     = 20;                 // 阶段C 重力标定点数（区间大了要加密）
+    const int   GRID_ROUNDS  = 4;                  // 阶段C 重复遍数（平均去静摩擦随机）
+    const float GRAV_HOLD_S  = 1.5f;               // 阶段C 每点位置保持时长 (s)
+    const float LOCK_KP      = 500.0f, LOCK_KD = 50.0f;  // 锁定关节 PD（扛腿自重）
+    const float SWEEP_KP     = 500.0f, SWEEP_KD = 50.0f; // 目标关节扫掠 PD
+    const float MOVE_RATE    = 0.15f;              // 移到扫掠中心斜坡速度 (rad/s)
+    const float DT           = 0.002f;             // 控制节拍 500Hz
+    const float POS_ERR_LIMIT = 0.20f;             // 位置误差保护（超过失能）
+    const float MIN_AMP      = 0.12f;              // 最小扫掠半幅（限位太窄时）
+
+    // 指令角限位 (rad)：θ₁/θ₂/θ₃（robot_calibration.h §4，站立姿态压边界须注意）
+    const float LIM_LO[3] = {deg2rad(-60), deg2rad(-70), deg2rad(60)};
+    const float LIM_HI[3] = {deg2rad(0),   deg2rad(90),  deg2rad(180)};
+
+    printf("\n========== 示例 54：吊装摩擦辨识 ==========\n");
+    printf("[WARN] 狗必须吊起悬空、base 刚性固定、腿悬空不触地！\n");
+    printf("[INFO] 逐关节：重力标定(20点×4遍) → 前馈恒速扫掠(3档×5圈×4回合)，落盘 log/fric_id/\n");
+    printf("[INFO] 12 关节约 50~70 分钟；异常立即 Ctrl+C 失能。\n\n");
+
+    MotorManager& mm = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    mm.SetTransport(&Usb2CanTransport::GetInstance());
+    if (!mm.Initialize(thread_mgr)) { printf("[ERROR] 初始化失败\n"); return; }
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    // ---- 使能 12 腿关节（轮子不使能，悬空无负载）----
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            mm.SetControlMode(cp, mi, IMPEDANCE);
+    usleep(100000);
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            mm.PreEnableZeroTorque(cp, mi);
+    usleep(100000);
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            mm.EnableMotor(cp, mi);
+    usleep(300000);
+
+    // 急停：Ctrl+C → g_rl_stop=1 → 各循环退出 → 统一失能（安全）
+    g_rl_stop = 0;
+    signal(SIGINT, rl_signal_handler);
+
+    ::mkdir("log/fric_id", 0755);
+
+    // ---- 读吊起后当前姿态 → 每关节扫掠中心 + 自适应半幅 ----
+    float theta_c[12], amp[12];
+    const char* jn[3] = {"hip", "thigh", "calf"};
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++) {
+            int j = mi - 1;
+            float th = mm.GetStatus(cp, mi).position;
+            float a = fminf(SWEEP_AMP[j],
+                            fminf((th - LIM_LO[j]) * 0.9f, (LIM_HI[j] - th) * 0.9f));
+            if (a < MIN_AMP) {
+                printf("[WARN] CAN%d-M%d(%s) 当前角 %+.2f 贴近限位，半幅压到 %.2f rad\n",
+                       cp, mi, jn[j], th, MIN_AMP);
+                a = MIN_AMP;
+            }
+            theta_c[cp * 3 + j] = th;
+            amp[cp * 3 + j] = a;
+            printf("[INFO] CAN%d-M%d(%s): θ_c=%+.2f amp=%.2f (限位[%.2f,%.2f])\n",
+                   cp, mi, jn[j], th, a, LIM_LO[j], LIM_HI[j]);
+        }
+
+    // 锁定目标姿态 = 各关节 θ_c（逐关节辨识时其他关节锁定到这）
+    float q_hold[12];
+    for (int i = 0; i < 12; i++) q_hold[i] = theta_c[i];
+
+    auto keep_others = [&](int cp, int mi) {
+        for (int c2 = 0; c2 < 4; c2++)
+            for (int m2 = 1; m2 <= 3; m2++) {
+                if (c2 == cp && m2 == mi) continue;
+                mm.SendImpedance(c2, m2, q_hold[c2 * 3 + m2 - 1],
+                                 0.0f, LOCK_KP, LOCK_KD, 0.0f);
+            }
+    };
+
+    auto t0 = std::chrono::steady_clock::now();
+    auto ms = [&]() -> float {
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - t0).count() / 1000.0f;
+    };
+    struct Sample { float t, th, w, tau, v; };
+
+    int done = 0, failed = 0;
+    for (int cp = 0; cp < 4 && !g_rl_stop; cp++) {
+        for (int mi = 1; mi <= 3 && !g_rl_stop; mi++) {
+            int idx = cp * 3 + mi - 1;
+            int j = mi - 1;
+            float c = theta_c[idx], a = amp[idx];
+            printf("\n===== [%d/12] CAN%d-M%d(%s) θ_c=%+.2f amp=%.2f =====\n",
+                   ++done, cp, mi, jn[j], c, a);
+
+            // ---- 先把目标关节移到 θ_c（慢速闭环斜坡，读实际位置推进）----
+            {
+                for (int t = 0; t < 3000 && !g_rl_stop; t++) {   // 最多 6s
+                    keep_others(cp, mi);
+                    float actual = mm.GetStatus(cp, mi).position;
+                    float e = c - actual;
+                    if (fabsf(e) < 0.005f) break;
+                    float pos = clamp(actual + (e > 0 ? 1.0f : -1.0f) * MOVE_RATE * DT,
+                                      LIM_LO[j], LIM_HI[j]);
+                    mm.SendImpedance(cp, mi, pos, 0.0f, SWEEP_KP, SWEEP_KD, 0.0f);
+                    usleep((useconds_t)(DT * 1e6f));
+                }
+                float after = mm.GetStatus(cp, mi).position;
+                if (fabsf(after - c) > 0.05f)
+                    printf("[WARN] 移到 θ_c 偏差 %.3f rad（将靠重力标定拉回）\n", after - c);
+                printf("[INFO] 移到 θ_c（%+.2f）完成\n", after);
+            }
+
+            bool abort = false;
+
+            // ---- 阶段 C：重力标定（GRID_PTS 点 × GRID_ROUNDS 遍）----
+            std::vector<float> g_theta(GRID_PTS), g_tau(GRID_PTS, 0.0f);
+            for (int k = 0; k < GRID_PTS; k++)
+                g_theta[k] = c - a + (2.0f * a) * k / (GRID_PTS - 1);
+            for (int r = 0; r < GRID_ROUNDS && !abort && !g_rl_stop; r++) {
+                for (int k = 0; k < GRID_PTS && !g_rl_stop; k++) {
+                    keep_others(cp, mi);
+                    mm.SendImpedance(cp, mi, g_theta[k], 0.0f, SWEEP_KP, SWEEP_KD, 0.0f);
+                    int hold = (int)(GRAV_HOLD_S / DT);
+                    float acc = 0.0f;
+                    for (int h = 0; h < hold && !g_rl_stop; h++) {
+                        MotorStatus st = mm.GetStatus(cp, mi);
+                        acc += st.torque;
+                        if (fabsf(st.position - g_theta[k]) > POS_ERR_LIMIT) abort = true;
+                        usleep((useconds_t)(DT * 1e6f));
+                    }
+                    g_tau[k] += acc / hold;
+                }
+                printf("  重力标定第 %d/%d 遍完成\n", r + 1, GRID_ROUNDS);
+            }
+            if (abort || g_rl_stop) {
+                printf("[ABORT] 位置误差超限或用户急停（Ctrl+C），失能退出\n");
+                failed++;
+                break;
+            }
+            for (int k = 0; k < GRID_PTS; k++) g_tau[k] /= GRID_ROUNDS;
+            float gmin = g_tau[0], gmax = g_tau[0];
+            for (int k = 1; k < GRID_PTS; k++) {
+                gmin = fminf(gmin, g_tau[k]);
+                gmax = fmaxf(gmax, g_tau[k]);
+            }
+            printf("[阶段C] 重力标定完成：θ∈[%+.2f,%+.2f], g∈[%+.1f,%+.1f] Nm (Δg=%.1f)\n",
+                   g_theta[0], g_theta[GRID_PTS - 1], gmin, gmax, gmax - gmin);
+            char gp[128];
+            snprintf(gp, sizeof gp, "log/fric_id/C%dM%d_grav.csv", cp, mi);
+            FILE* fg = fopen(gp, "w");
+            if (fg) {
+                fprintf(fg, "theta,g\n");
+                for (int k = 0; k < GRID_PTS; k++)
+                    fprintf(fg, "%.6f,%.6f\n", g_theta[k], g_tau[k]);
+                fclose(fg);
+            }
+
+            // g_est 线性插值（扫掠前馈用）
+            auto g_interp = [&](float th) -> float {
+                if (th <= g_theta[0]) return g_tau[0];
+                if (th >= g_theta[GRID_PTS - 1]) return g_tau[GRID_PTS - 1];
+                int k = 0;
+                while (k < GRID_PTS - 1 && g_theta[k + 1] < th) k++;
+                float t = (th - g_theta[k]) / (g_theta[k + 1] - g_theta[k]);
+                return g_tau[k] + t * (g_tau[k + 1] - g_tau[k]);
+            };
+
+            // ---- 阶段 D：前馈恒速扫掠（ROUNDS 回合 × N_VEL 档 × CYC_PER_VEL 圈）----
+            for (int rd = 0; rd < ROUNDS && !abort && !g_rl_stop; rd++) {
+                std::vector<Sample> buf;
+                buf.reserve(40000);
+                for (int vi = 0; vi < N_VEL && !abort && !g_rl_stop; vi++) {
+                    float v = VEL_STEPS[vi];
+                    int n_scan = (int)(2.0f * a / v / DT);   // 单程步数
+                    float pos = c - a;
+                    float dir = +1.0f;
+                    for (int cyc = 0; cyc < CYC_PER_VEL * 2 && !abort && !g_rl_stop; cyc++) {
+                        for (int s = 0; s < n_scan && !g_rl_stop; s++) {
+                            keep_others(cp, mi);
+                            pos = clamp(pos + v * dir * DT, c - a, c + a);
+                            mm.SendImpedance(cp, mi, pos, 0.0f, SWEEP_KP, SWEEP_KD,
+                                             g_interp(pos));
+                            MotorStatus st = mm.GetStatus(cp, mi);
+                            if (fabsf(st.position - pos) > POS_ERR_LIMIT) { abort = true; break; }
+                            buf.push_back({ms(), st.position, st.velocity, st.torque, v * dir});
+                            usleep((useconds_t)(DT * 1e6f));
+                        }
+                        dir = -dir;
+                    }
+                    printf("  回合%d 档v=%.1f 完成（%zu 样本）\n", rd + 1, v, buf.size());
+                }
+                char fp[128];
+                snprintf(fp, sizeof fp, "log/fric_id/C%dM%d_R%d.csv", cp, mi, rd);
+                FILE* f = fopen(fp, "w");
+                if (f) {
+                    fprintf(f, "elapsed_ms,theta,omega,tau,v_des\n");
+                    for (auto& s : buf)
+                        fprintf(f, "%.1f,%.6f,%.6f,%.6f,%.3f\n",
+                                s.t, s.th, s.w, s.tau, s.v);
+                    fclose(f);
+                    printf("  回合%d 落盘 → %s\n", rd + 1, fp);
+                }
+            }
+            if (abort || g_rl_stop) {
+                printf("[ABORT] 位置误差超限或用户急停（Ctrl+C），失能退出\n");
+                failed++;
+                break;
+            }
+
+            // info 元数据（离线脚本读：θ_c/amp/速度档）
+            char ip[128];
+            snprintf(ip, sizeof ip, "log/fric_id/C%dM%d_info.txt", cp, mi);
+            FILE* fi = fopen(ip, "w");
+            if (fi) {
+                fprintf(fi, "theta_c=%.6f\namp=%.6f\n", c, a);
+                fprintf(fi, "n_vel=%d\n", N_VEL);
+                for (int vi = 0; vi < N_VEL; vi++)
+                    fprintf(fi, "vel%d=%.3f\n", vi, VEL_STEPS[vi]);
+                fclose(fi);
+            }
+            printf("===== CAN%d-M%d(%s) 完成 =====\n", cp, mi, jn[j]);
+        }
+        if (failed) break;
+    }
+
+    // 失能 + 停机
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            mm.DisableMotor(cp, mi);
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    mm.Stop();
+    signal(SIGINT, SIG_DFL);
+    if (g_rl_stop)
+        printf("[INFO] 用户急停，已失能。已完成的关节数据保留在 log/fric_id/。\n");
+    printf("\n[INFO] Example54 完成：%d 关节完成，%d 失败。\n", done - failed, failed);
+    printf("[INFO] 数据 → log/fric_id/，离线回归：python tool/friction_id_offline.py\n");
+}
