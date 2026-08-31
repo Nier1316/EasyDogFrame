@@ -85,6 +85,14 @@ void set_motor_para_bt(const EleMotor& motor, float p1, float p2, float p3, floa
     uint8_t temp[8];
     const MotorLimits& lim = limits_of(motor.motor_id);                //按电机类型取限幅
     if(model == IMPEDANCE){                                            //阻抗控制模式
+        // 命令扭矩上限 clamp（TORQUE_CMD_LIMIT，真机保护；float_to_uint 无 clip，须先 clamp）
+        {
+            int t_idx = (motor.motor_id >= 1 && motor.motor_id <= MOTOR_TYPE_NUM)
+                        ? (motor.motor_id - 1) : 0;
+            float tau_lim = TORQUE_CMD_LIMIT[t_idx];
+            if (p5 >  tau_lim) p5 =  tau_lim;
+            if (p5 < -tau_lim) p5 = -tau_lim;
+        }
         uint16_t p_int = float_to_uint(p1, lim.p_min, lim.p_max, 15);   //期望角度   单位：弧度
         uint16_t v_int = float_to_uint(p2, lim.v_min, lim.v_max, 12);   //期望角速度 单位：弧度每秒
         uint16_t kp_int = float_to_uint(p3, lim.kp_min, lim.kp_max, 12); //刚度系数

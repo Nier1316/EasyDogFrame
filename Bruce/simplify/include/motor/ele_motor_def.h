@@ -122,10 +122,23 @@ struct MotorLimits {
 //   ki_max 固件无对应寄存器可读，暂留 500 待厂商确认。
 static const MotorLimits MOTOR_LIMITS[MOTOR_TYPE_NUM] = {
 	//            p_min   p_max   v_min  v_max   t_min    t_max   kp     kp_max  kd    kd_max  ki    ki_max
-	/* Hip   */ {-12.5f, 12.5f,  -3.0f,  3.0f, -150.0f, 150.0f, 0.0f, 500.0f, 0.0f, 100.0f, 0.0f, 500.0f},
-	/* Thigh */ {-12.5f, 12.5f,  -3.0f,  3.0f, -150.0f, 150.0f, 0.0f, 500.0f, 0.0f, 100.0f, 0.0f, 500.0f},
-	/* Calf  */ {-12.5f, 12.5f,  -3.0f,  3.0f, -150.0f, 150.0f, 0.0f, 500.0f, 0.0f, 100.0f, 0.0f, 500.0f},
+	// ⚠ 【协议编解码量程】= 固件 CAN_REPLY_MAX_Torque。2026-08-30 用户在固件层改扭矩限幅：
+	//   Hip(侧摆)/Thigh(髋)=±110、Calf(膝)=±200、Wheel=±52。编码下发与反馈解码都按此解析；
+	//   命令扭矩另经 TORQUE_CMD_LIMIT clamp（float_to_uint 无 clip，防越界）。
+	/* Hip   */ {-12.5f, 12.5f,  -3.0f,  3.0f, -110.0f, 110.0f, 0.0f, 500.0f, 0.0f, 100.0f, 0.0f, 500.0f},
+	/* Thigh */ {-12.5f, 12.5f,  -3.0f,  3.0f, -110.0f, 110.0f, 0.0f, 500.0f, 0.0f, 100.0f, 0.0f, 500.0f},
+	/* Calf  */ {-12.5f, 12.5f,  -3.0f,  3.0f, -200.0f, 200.0f, 0.0f, 500.0f, 0.0f, 100.0f, 0.0f, 500.0f},
 	/* Wheel */ {-12.5f, 12.5f, -48.0f, 48.0f,  -52.0f,  52.0f, 0.0f, 500.0f, 0.0f, 100.0f, 0.0f, 500.0f},
+};
+
+// 命令扭矩上限（真机保护，2026-08-30 用户改，与 MOTOR_LIMITS 协议量程一致）：
+//   Hip/Thigh=110、Calf=200、Wheel=52。编码前 clamp 命令扭矩，防 float_to_uint 越界
+//   （float_to_uint 为纯线性映射无 clip，命令 > 量程会编码越界被固件错误解析）。
+static const float TORQUE_CMD_LIMIT[MOTOR_TYPE_NUM] = {
+	/* Hip   */ 110.0f,
+	/* Thigh */ 110.0f,
+	/* Calf  */ 200.0f,
+	/* Wheel */ 52.0f,
 };
 
 // 按 motor_id(1~4) 取限幅；越界回退到 Hip 行

@@ -45,6 +45,23 @@ const float WHEEL_FF[4][2] = {
     { +0.500f, -0.400f },  // RR(C3)
 };
 
+// 腿摩擦前馈库仑摩擦 fc（Example47 辨识，RL_TRAINING_REFERENCE §2.1 绝对值，
+// POLICY order：FL,FR,RL,RR × hip/thigh/calf，共 12）。异常值（RR calf=4.6）置 0。
+// ⚠ 方向由 tanh(τ_pd) 决定，此处只存幅值；真机验证后按需微调。
+const float LEG_FF_FC[12] = {
+    0.55f, 0.29f, 0.07f,   // FL hip/thigh/calf
+    0.03f, 0.09f, 0.15f,   // FR
+    0.01f, 0.36f, 0.04f,   // RL
+    0.24f, 0.64f, 0.00f,   // RR（calf 辨识异常置 0）
+};
+// 粘性阻尼 fv：Example47 辨识 B 不可靠（速度反馈延迟，多数负值），暂全 0。
+const float LEG_FF_FV[12] = {
+    0.0f, 0.0f, 0.0f,
+    0.0f, 0.0f, 0.0f,
+    0.0f, 0.0f, 0.0f,
+    0.0f, 0.0f, 0.0f,
+};
+
 void world2self(const float* q, const float* v, float* out) {
     // q = [w, x, y, z]；等价于 demo.py/sim2sim.py 的 world2self：
     //   out = v*(2w²-1) - cross(q_vec,v)*2w + q_vec*(q_vec·v)*2

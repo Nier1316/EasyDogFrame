@@ -1,5 +1,5 @@
 // ===== RL/前馈/延迟辨识示例 25,30-32,35-38 =====
-// 由 src/app/example.cpp 拆分而来（阶段3：示例拆包），公共 helper 见 app/examples_common.h
+// 由原单文件 example.cpp 示例拆包而来（现拆到 src/app/examples/），公共 helper 见 app/examples_common.h
 #include "app/examples/ex_rl.h"
 #include "app/examples_common.h"
 #include "motion/motion_controller.h"
@@ -38,7 +38,8 @@ void Example25_RLPolicyControl() {
     // ---- 初始化电机 ----
     MotorManager& motor_mgr = MotorManager::GetInstance();
     ThreadManager thread_mgr;
-    // CAN1 换达妙 USB2CAN（需 udev 0666 + 波特率 1M 匹配电机总线；其余 3 路仍 CANET）
+    // CAN1 显式换达妙 USB2CAN（需 udev 0666 + 波特率 1M 匹配电机总线；
+    // 其余 3 路走 motor_manager.cpp 的默认后端 USB2CAN）
     motor_mgr.SetChannelTransport(1, &Usb2CanTransport::GetInstance());
     if (!motor_mgr.Initialize(thread_mgr)) {
         printf("[ERROR] MotorManager 初始化失败\n");
@@ -185,10 +186,14 @@ void Example25_RLPolicyControl() {
                 if (mi <= 3) {
                     // 动作目标角是 URDF 约定，转回真机 GetStatus 约定再下发
                     float q_target = rl::urdf_to_status(rl::leg_pos_target(action[p], p), p);
-                    // 扭矩前馈取 JOINT_IMPEDANCE.tau_ff（motor_calibration.h，按关节填）
+                    // 扭矩前馈：JOINT_IMPEDANCE.tau_ff（重力）+ 腿摩擦前馈（库仑）
                     const JointImpedanceParam& ip = GetJointImpedance(cp, mi);
+                    float q_t_urdf = rl::leg_pos_target(action[p], p);
+                    float tau_pd = rl::LEG_KP * (q_t_urdf - pos_policy[p])
+                                 - rl::LEG_KD * vel_policy[p];
+                    float tau_ff = ip.tau_ff + rl::leg_friction_ff(tau_pd, vel_policy[p], p);
                     motor_mgr.SendImpedance(cp, mi, q_target, 0.0f,
-                                            rl::LEG_KP, rl::LEG_KD, ip.tau_ff);
+                                            rl::LEG_KP, rl::LEG_KD, tau_ff);
                 } else {
                     int w_idx = p - rl::NUM_LEG_JOINTS;   // POLICY 轮索引 12..15 → 0..3
                     // 轮子：SPEED 固件速度环（2026-08-29 迁移）。固件阻抗忽略 vel_des 实测轮
@@ -196,7 +201,7 @@ void Example25_RLPolicyControl() {
                     // 目标速度一阶低通抑制推杆/松杆 cmd 骤变振荡（τ≈100ms @50Hz）。
                     float tv_raw = rl::WHEEL_VEL_SCALE * action[p];
                     wheel_v_lp[w_idx] += rl::WHEEL_CMD_ALPHA * (tv_raw - wheel_v_lp[w_idx]);
-                    // 死区：策略微小 action 归零（防固件速度环填摩擦死区造成溜车）
+                    // 轮速目标：低通后原样执行（死区已弃用，见 rl_controller.h WHEEL_CMD_DEADZONE）
                     float cmd_v = wheel_v_lp[w_idx];
                     // 站立门控：无移动指令时轮子强制静止（策略站立时后轮常有正 action，真机会精确执行成溜车）
                     if (fabsf(cmd[0]) < rl::WHEEL_CMD_MOVE_THR && fabsf(cmd[2]) < rl::WHEEL_CMD_MOVE_THR)
@@ -1000,10 +1005,14 @@ void Example36_RLStandLoop() {
                 int p = rl::POLICY_TO_MJX[mjx];
                 if (mi <= 3) {
                     float q_target = rl::urdf_to_status(rl::leg_pos_target(action[p], p), p);
-                    // 扭矩前馈取 JOINT_IMPEDANCE.tau_ff（motor_calibration.h，按关节填）
+                    // 扭矩前馈：JOINT_IMPEDANCE.tau_ff（重力）+ 腿摩擦前馈（库仑）
                     const JointImpedanceParam& ip = GetJointImpedance(cp, mi);
+                    float q_t_urdf = rl::leg_pos_target(action[p], p);
+                    float tau_pd = rl::LEG_KP * (q_t_urdf - pos_policy[p])
+                                 - rl::LEG_KD * vel_policy[p];
+                    float tau_ff = ip.tau_ff + rl::leg_friction_ff(tau_pd, vel_policy[p], p);
                     motor_mgr.SendImpedance(cp, mi, q_target, 0.0f,
-                                            rl::LEG_KP, rl::LEG_KD, ip.tau_ff);
+                                            rl::LEG_KP, rl::LEG_KD, tau_ff);
                 } else {
                     int w_idx = p - rl::NUM_LEG_JOINTS;
                     // 轮子：SPEED 固件速度环（2026-08-29 迁移）。固件阻抗忽略 vel_des 实测轮
@@ -1011,7 +1020,7 @@ void Example36_RLStandLoop() {
                     // 目标速度一阶低通：抑制推杆/松杆 cmd 骤变导致的轮子振荡（τ≈100ms @50Hz）。
                     float tv_raw = rl::WHEEL_VEL_SCALE * action[p];
                     wheel_v_lp[w_idx] += rl::WHEEL_CMD_ALPHA * (tv_raw - wheel_v_lp[w_idx]);
-                    // 死区：策略微小 action 归零（防固件速度环填摩擦死区造成溜车）
+                    // 轮速目标：低通后原样执行（死区已弃用，见 rl_controller.h WHEEL_CMD_DEADZONE）
                     float cmd_v = wheel_v_lp[w_idx];
                     // 站立门控：无移动指令时轮子强制静止（策略站立时后轮常有正 action，真机会精确执行成溜车）
                     if (fabsf(cmd[0]) < rl::WHEEL_CMD_MOVE_THR && fabsf(cmd[2]) < rl::WHEEL_CMD_MOVE_THR)

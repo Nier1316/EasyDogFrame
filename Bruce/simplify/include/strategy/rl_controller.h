@@ -15,6 +15,7 @@
  */
 #pragma once
 
+#include <cmath>                       // std::tanh（摩擦前馈）
 #include "strategy/sim2real_conv.h"   // DEFAULT_POSE / CONV_A/B / urdf 转换
 
 namespace rl {
@@ -28,17 +29,18 @@ constexpr int OBS_DIM         = 64;
 constexpr float ACTION_SCALE        = 0.25f;
 constexpr float WHEEL_VEL_SCALE     = 12.5f;
 // LEG_KP/LEG_KD = 250/4：sim2sim.py 默认（traj_v28 训练 stiffness=250, damping=4）。
-// ⚠ 2026-08-29 真机调整：LEG_KD 4 → 10——hip 逐渐外翻漂移（180601 日志 hip +0.06→+0.15），
-//   阻尼 4 不足抑制外部负载漂移（电机内收力矩拉不回）。真机执行器有延迟，训练 damping=4 的
-//   等效阻尼被延迟吃掉一部分，10 是补偿真机延迟的常规做法（历史 250/40 也验证更稳）。
-//   若腿变"硬"影响策略动态，可退回 6~8。
-constexpr float LEG_KP              = 250.0f;//（）
-constexpr float LEG_KD              = 4.0f;//（）
-// WHEEL_KD = 2.0：sim2sim.py 默认。⚠ 历史：真机曾 2→1 抑制解除挂钩振荡，现按
-// sim2sim 默认回 2.0；若真机振荡复现需再评估。
+// ⚠ 2026-08-29 曾评估 LEG_KD 提至 10（hip 外翻漂移 180601 日志 +0.06→+0.15，阻尼 4 偏弱、
+//   真机延迟吃掉部分阻尼），但未落地——当前仍 4.0，对齐 v28 训练。若真机 hip 仍漂移，
+//   可现场试提 6~10（历史 250/40 也验证更稳）再定。
+constexpr float LEG_KP              = 250.0f;
+constexpr float LEG_KD              = 4.0f;
+// WHEEL_KD = 1.0：轮速阻尼（RL 阻抗诊断路径用）。⚠ 历史 2.0（sim2sim 默认）→ 1.0 抑制
+// 解除挂钩振荡；SPEED 迁移后轮子走固件速度环（kvp/ki），此量仅诊断用。
 constexpr float WHEEL_KD            = 1.0f;
-// LEG_TORQUE_LIMIT = 250：sim2sim.py 默认（v28）。⚠ 历史曾用 150。
-constexpr float LEG_TORQUE_LIMIT    = 250.0f;
+// ⚠ LEG_TORQUE_LIMIT 当前未使用（腿扭矩由固件阻抗环限制）。真机扭矩量程（编解码 + 命令上限）
+// 以 ele_motor_def.h 为准：MOTOR_LIMITS 协议量程 = TORQUE_CMD_LIMIT 命令上限 = Hip/Thigh±110、
+// Calf±200、Wheel±52（2026-08-30 用户改固件限幅；编码前 clamp 防越界，反馈按新量程解析）。
+constexpr float LEG_TORQUE_LIMIT    = 250.0f;   // 历史值，未参与 clamp
 constexpr float WHEEL_TORQUE_LIMIT  = 53.0f;
 constexpr float CONTROL_DT          = 0.02f;   // 50 Hz
 constexpr float GAIT_CYCLE          = 0.6f;
@@ -46,8 +48,8 @@ constexpr float GAIT_CYCLE          = 0.6f;
 // ---- 轮子固件 SPEED 速度环（2026-08-29 迁移，见 FACT.md）----
 // 固件阻抗模式忽略 vel_des（tau = kp×(pos_des−pos) + kd×(0−vel) + tau_ff），轮子速度
 // 控制必须走 SPEED 模式（SendSpeed 下发 vel/kvp/ki，固件内部 1kHz 速度环）。
-// KVP/KVI 对齐 robot_calibration.h 的 WHEEL_KVP/WHEEL_KVI（Example23 实测 3.0/0.3：
-//   速度环收敛无振荡；0.5 起始有 33% 超调，2~3 是性价比平衡点）。
+// KVP = 3.0 对齐 robot_calibration.h 的 WHEEL_KVP（Example23 实测 3.0：速度环收敛无振荡；
+//   0.5 起始有 33% 超调，2~3 是性价比平衡点）。KVI 取 0.05（见下，非 0.3）。
 // WHEEL_SOFT_KVP：起立/回位期间轮子 0 速弱增益（软启动，假速度偏移窗口内力矩小）。
 // WHEEL_CMD_ALPHA：轮速目标一阶低通（@50Hz τ≈100ms），抑制推杆/松杆 cmd 骤变导致的
 //   轮子振荡。作用于轮速目标（执行平滑），不影响策略观测的 cmd（保持训练分布）。
@@ -130,10 +132,29 @@ extern const float WHEEL_FF[4][2];
 // 符号在 0 附近抖动会让前馈在 ±静摩擦间跳变 → 轮子被反复推正推负。先关掉验证。
 constexpr bool WHEEL_FF_ENABLE = false;
 
+// ---- 腿摩擦前馈（Coulomb + Viscous，参考 project_5_Matrix_deploy/friction_model.py）----
+// 模型：τ_ff = fc·tanh(τ_pd / 2) + fv·dq
+//   - 方向用 PD 扭矩方向 tanh(τ_pd/2)：始终帮 PD、绝不抵抗，避免速度方向在站立/静止时
+//     符号抖动（WHEEL_FF 乱转教训）。τ_pd 为当前 PD 输出（kp·(q_t−q) − kd·q̇，URDF 约定）。
+//   - fv·dq：粘性阻尼前馈。Example47 辨识 B（粘性）不可靠（速度反馈延迟），暂置 0。
+//   - fc：每关节库仑摩擦（RL_TRAINING_REFERENCE §2.1，多数 0.05~0.6 Nm 可靠，异常置 0）。
+// ⚠ 值小（<0.65 Nm），风险低；若真机表现异常（越动越快/振荡），关闭 LEG_FF_ENABLE 复核。
+constexpr bool   LEG_FF_ENABLE  = true;
+constexpr float  LEG_FF_TANH_K  = 0.5f;   // tanh(τ_pd/K) 方向光滑参数
+extern const float LEG_FF_FC[12];          // 每关节库仑摩擦 (Nm)，POLICY order（12 腿）
+extern const float LEG_FF_FV[12];          // 每关节粘性阻尼 (Nm·s/rad)，POLICY order（12 腿）
+
+/** 腿摩擦前馈扭矩（URDF 约定，叠加到 SendImpedance 的 tau_ff 上） */
+inline float leg_friction_ff(float tau_pd, float dq, int policy_idx) {
+    if (!LEG_FF_ENABLE) return 0.0f;
+    return LEG_FF_FC[policy_idx] * std::tanh(tau_pd * LEG_FF_TANH_K)
+         + LEG_FF_FV[policy_idx] * dq;
+}
+
 // ---- 轮子速度软限位（安全兜底，2026-08-21）----
-// 背景：RL 轮子曾被带到 48 rad/s 饱和（≈10.8 m/s，危险）。软限位在轮速超阈值时
-// 速度软限位：轮速超阈值 → 把扭矩夹在 ±WHEEL_SOFT_LIMIT_TORQUE 内（限幅式，不是硬制动）。
-// ⚠ 阈值 10 rad/s = 1.13 m/s 线速（v = vx/0.113）。满 action 目标轮速 12.5 rad/s 会超限，
+// 背景：RL 轮子曾被带到 48 rad/s 饱和（≈10.8 m/s，危险）。软限位 = 限幅式（非硬制动）：
+//   轮速超阈值 → 把扭矩夹在 ±WHEEL_SOFT_LIMIT_TORQUE 内。
+// ⚠ 阈值 5.0 rad/s ≈ 0.565 m/s 线速（v = ω·r，r=0.113）。满 action 目标轮速 12.5 rad/s 会超限，
 //   即满摇杆/满 action 行驶时会触发保护（限加速方向，仍保留自然制动）。若需高速行驶再放宽。
 constexpr bool   WHEEL_SOFT_LIMIT_ENABLE = true;   // 软限位开关
 constexpr float  WHEEL_VEL_SOFT_LIMIT    = 5.0f;  // 异常速度阈值 (rad/s)
