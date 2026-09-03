@@ -26,10 +26,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(HERE)  # simplify/
 # 训练框架（权威规格来源）
 TRAIN = "/home/sysu/Desktop/Project/Bruce/RL_Train/code"
+# 默认指向最新训练结果（v28_v3_resume，2026-09-03），可用 --ckpt 覆盖
 CKPT = os.path.join(
     TRAIN,
-    "checkpoints/dogurdf_velocity/checkpoints_20260827_044715_traj_v28/"
-    "iteration_3000.pkl",
+    "checkpoints/dogurdf_velocity/checkpoints_20260903_001143_v28_v3_resume/"
+    "iteration_2100.pkl",
 )
 # 实际编译用的权重在 include/strategy/（include/rl/ 已废弃）
 OUT_WEIGHTS = os.path.join(PROJECT, "include/strategy/policy_weights.h")
@@ -70,11 +71,16 @@ def write_float_array(f, name, arr):
 
 
 def main() -> int:
-    if not os.path.exists(CKPT):
-        print(f"ERROR: checkpoint not found: {CKPT}", file=sys.stderr)
+    import argparse
+    ap = argparse.ArgumentParser(description="导出 dogurdf actor 权重到 C++ header")
+    ap.add_argument("--ckpt", default=CKPT, help="训练 checkpoint .pkl 路径")
+    args = ap.parse_args()
+    ckpt = args.ckpt
+    if not os.path.exists(ckpt):
+        print(f"ERROR: checkpoint not found: {ckpt}", file=sys.stderr)
         return 1
 
-    with open(CKPT, "rb") as f:
+    with open(ckpt, "rb") as f:
         data = pickle.load(f)
     params = data["params"]["params"]
 
