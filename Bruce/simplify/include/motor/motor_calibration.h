@@ -31,13 +31,18 @@ struct MotorCalibrationParam
  * 访问：calibration_matrix[can_port][motor_id - 1]
  *
  * motor_id=1 (Hip), 2 (Thigh), 3 (Calf), 4 (Wheel)
+ *
+ * ⚠ vel_scale 必须 = pos_scale（反装关节速度跟随位置一起翻符号）。
+ *   2026-09-04 曾漏翻转：pos_scale=-1 的腿关节 vel_scale 仍 +1，导致速度反馈与真实
+ *   运动反向（Ex54 摩擦辨识 CAN0 hip 实测 corr(dθ/dt, ω)≈-0.6、fc 回归为负）。轮子
+ *   早已 vel=pos 跟随，腿按同规则补齐。改任一 pos_scale 必同步改 vel_scale。
  */
 constexpr MotorCalibrationParam MOTOR_CALIBRATION[CAN_PORTS][MOTORS_PER_CAN] = {
     // CAN0 端口 (左前腿)
     {
-        {-1.0f, 1.0f, 0.611f}, // Motor 1 (Hip)
+        {-1.0f, -1.0f, 0.611f}, // Motor 1 (Hip)
         {1.0f, 1.0f, 0.441f},  // Motor 2 (Thigh)
-        {-1.0f, 1.0f, 0.211f}, // Motor 3 (Calf)
+        {-1.0f, -1.0f, 0.211f}, // Motor 3 (Calf)
         {-1.0f, -1.0f, 0.0f},  // Motor 4 (Wheel) — pos_scale=-1 实测(2026-08-21 扭矩测向:固件负扭矩=前滚,故策略正扭矩=前滚)；vel_scale=-1 保持
     },
     // CAN1 端口 (右前腿)
@@ -45,7 +50,7 @@ constexpr MotorCalibrationParam MOTOR_CALIBRATION[CAN_PORTS][MOTORS_PER_CAN] = {
         // Motor 1 (Hip) pos_offset 当前 0.611。曾评估提至 0.78（FR hip 下发位置偏 RL +0.18，
         //   反推 offset≈0.78~0.80）但未落地/已回退；若 FR hip 仍位置偏，现场核实后再调。
         {1.0f, 1.0f, 0.611f},  // Motor 1 (Hip)
-        {-1.0f, 1.0f, 0.441f}, // Motor 2 (Thigh)
+        {-1.0f, -1.0f, 0.441f}, // Motor 2 (Thigh)
         {1.0f, 1.0f, 0.211f},  // Motor 3 (Calf)
         {1.0f, 1.0f, 0.0f},    // Motor 4 (Wheel) — 与其他右后腿(CAN3)方向相反
     },
@@ -53,13 +58,13 @@ constexpr MotorCalibrationParam MOTOR_CALIBRATION[CAN_PORTS][MOTORS_PER_CAN] = {
     {
         {1.0f, 1.0f, 0.611f},  // Motor 1 (Hip)
         {1.0f, 1.0f, 0.441f},  // Motor 2 (Thigh)
-        {-1.0f, 1.0f, 0.211f}, // Motor 3 (Calf)
+        {-1.0f, -1.0f, 0.211f}, // Motor 3 (Calf)
         {-1.0f, -1.0f, 0.0f},  // Motor 4 (Wheel) — pos_scale=-1 实测(2026-08-21 扭矩测向:固件负扭矩=前滚,故策略正扭矩=前滚)；vel_scale=-1 保持
     },
     // CAN3 端口 (右后腿)
     {
-        {-1.0f, 1.0f, 0.611f}, // Motor 1 (Hip)
-        {-1.0f, 1.0f, 0.441f}, // Motor 2 (Thigh)
+        {-1.0f, -1.0f, 0.611f}, // Motor 1 (Hip)
+        {-1.0f, -1.0f, 0.441f}, // Motor 2 (Thigh)
         {1.0f, 1.0f, 0.211f},
         // Motor 3 (Calf)
         {1.0f, 1.0f, 0.0f}, // Motor 4 (Wheel) — 待实测
@@ -114,27 +119,27 @@ static const JointImpedanceParam JOINT_IMPEDANCE[CAN_PORTS][3] = {
     //                kp      kd   tau_ff
     // CAN0 端口 (左前腿)
     {
-        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-10
+        {300.0f, 10.0f, -20.0f}, // Motor 1 (Hip)  tau_ff=-10
         {250.0f, 10.0f, -5.0f},  // Motor 2 (Thigh)  tau_ff=-5
-        {250.0f, 10.0f, 12.0f},  // Motor 3 (Calf)   tau_ff=12
+        {250.0f, 10.0f, 0.0f},  // Motor 3 (Calf)   tau_ff=12
     },
     // CAN1 端口 (右前腿)
     {
-        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-10
+        {300.0f, 10.0f, -20.0f}, // Motor 1 (Hip)  tau_ff=-10
         {250.0f, 10.0f, -5.0f},  // Motor 2 (Thigh)  tau_ff=-5
-        {250.0f, 10.0f, 12.0f},  // Motor 3 (Calf)   tau_ff=12
+        {250.0f, 10.0f, 0.0f},  // Motor 3 (Calf)   tau_ff=12
     },
     // CAN2 端口 (左后腿)
     {
-        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-10
+        {300.0f, 10.0f, -20.0f}, // Motor 1 (Hip)  tau_ff=-10
         {250.0f, 10.0f, -5.0f},  // Motor 2 (Thigh)  tau_ff=-5
-        {250.0f, 10.0f, 20.0f},  // Motor 3 (Calf)   tau_ff=20
+        {250.0f, 10.0f, 0.0f},  // Motor 3 (Calf)   tau_ff=20
     },
     // CAN3 端口 (右后腿)
     {
-        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-10
+        {300.0f, 10.0f, -20.0f}, // Motor 1 (Hip)  tau_ff=-10
         {250.0f, 10.0f, -5.0f},  // Motor 2 (Thigh)  tau_ff=-5
-        {250.0f, 10.0f, 20.0f},  // Motor 3 (Calf)   tau_ff=20
+        {250.0f, 10.0f, 0.0f},  // Motor 3 (Calf)   tau_ff=20
     },
 };
 

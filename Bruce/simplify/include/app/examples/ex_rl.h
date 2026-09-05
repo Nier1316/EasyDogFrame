@@ -14,3 +14,5 @@ void Example51_StandRLThenLieDown();
 void Example52_FixedCmdYaw();
 // RL 站立下重力前馈测量（读稳态 cal_torque，标定 JOINT_IMPEDANCE.tau_ff）
 void Example53_MeasureGravityFF();
+// 固定 yaw 转向真机遥测录制（静置→yaw=0.5 转5s→停，每步落盘 s2r_fixedyaw_*.csv，sim2real 对比）
+void Example56_FixedYawRecord();

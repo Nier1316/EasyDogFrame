@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """真机摩擦辨识离线回归：读 Example54 落盘 log/fric_id/ → [b, fc] ± σ。
 
-管线（对齐 verify_friction_ff.py 方案 B 重力抵消法，real_robot_identification_plan.md）：
+管线（2026-09-04 由"稳态配对"改为"逐样本直接回归"）：
   1. 遍历 log/fric_id/C{c}M{m}_R{r}.csv（按关节分组），读 info.txt 取 θ_c/amp/速度档
-  2. 稳态提取：|ω − v_des| < max(0.15·|v_des|, 0.05)（丢弃端点加减速瞬态）
-  3. θ 分箱（N_BIN），正向(v_des>0)/反向(v_des<0)样本同 bin 配对
-  4. 每配对 bin：τ_diff = mean(τ_p) − mean(τ_n) = 2b·|ω| + 2fc（重力项同 θ 相消）
-  5. 回归 τ_diff ~ [2·|ω|, 2] → b/fc（clip 非负；用实际 |ω| 而非 v_des，跟不上也正确）
-  6. 每回合独立回归 → b±σ, fc±σ（误差带），质量检查 σ/均值 < 30%
+  2. 逐样本扣重力：τ_res = τ − g_est(θ)（阶段C 已实测 g(θ) 插值）
+  3. 滤低速：|ω| < W_MIN(0.15) 剔除（sign 抖动/换向区）
+  4. 回归 τ_res ~ [ω, sign(ω)] → b(粘性)/fc(库仑)（clip 非负）
+  5. 每回合独立回归 → b±σ, fc±σ（误差带），质量检查 σ/均值 < 30% 且 R² > 0.7
+旧配对法失效原因：位置斜坡+PD 跟踪下实际速度有纹波，|ω−v_des|<tol 稳态样本仅
+  2~4%、正反向在 θ 上踩不齐 → 配对恒空（实测多关节 0 配对）。
 
 用法：
   /home/sysu/miniconda3/envs/MJX/bin/python tool/friction_id_offline.py            # 回归真机数据
@@ -29,8 +30,9 @@ DATA_DIR = os.path.join(PROJECT, "log", "fric_id")
 N_BIN = 15          # θ 分箱数
 STEADY_REL = 0.15   # 稳态速度容差（相对 v_des）
 STEADY_ABS = 0.05   # 稳态速度容差下限（rad/s）
-N_MIN = 5           # 每个配对 bin 最少样本数
+N_MIN = 5           # 每个配对 bin 最少样本数（旧配对法用，直接回归不再依赖）
 SIGMA_RATIO_MAX = 0.30   # 误差带质量阈值：σ/均值
+W_MIN = 0.15        # 直接回归最低 |ω| (rad/s)：滤 sign 抖动/换向区
 
 J_NAMES = ["hip", "thigh", "calf"]
 
@@ -70,65 +72,29 @@ def read_grav(path):
 
 
 def regress_round(theta, omega, tau, v, theta_c, amp, g_est=None):
-    """单回合：扣重力 + 按速度档稳态提取 + 档内 θ 分箱配对 + 回归 → (b, fc, n_pair, r2)。
+    """单回合直接回归 → (b, fc, n, r2)。
 
-    g_est：阶段C重力标定插值函数（真机连续扫掠时同 θ bin 内 Δg≈0.5 Nm 会污染配对，
-    先扣掉重力只剩残差，再配对相减更稳；残差被配对消掉）。
-    ⚠ 必须按速度档分组配对：若把 0.3/0.5/0.8 档样本混在同一 bin 配对，|ω| 平均后
-    恒定、τ_diff 被平均，回归矩阵退化成单点（b/fc 不可分）。
-    返回 b/fc 估计，以及配对点数与线性拟合 R²（质量指标）。
+    扣重力后逐样本回归 τ_res = b·ω + fc·sign(ω)：
+      - τ_res = τ − g_est(θ)：阶段C 已实测重力，逐样本扣掉（无需同 θ 配对消重力）
+      - 滤 |ω| < W_MIN：剔除换向/静止区的 sign 抖动
+      - 回归矩阵 [ω, sign(ω)] → b(粘性 N·m·s/rad), fc(库仑 N·m)
+    ⚠ 相比旧"稳态配对"法：位置斜坡+PD 跟踪下实际速度有纹波，稳态窗只捕获 2~4% 且
+    正反向在 θ 上踩不齐 → 配对恒空。直接回归用全部中高速样本，抗纹波、样本量大。
+    返回 b/fc 估计、有效样本数 n、线性拟合 R²。
     """
-    # 先扣重力（若提供 g_est）
     tau = tau - g_est(theta) if g_est is not None else tau
-    lo, hi = theta_c - amp, theta_c + amp
-    X, Y = [], []
-
-    # 按速度档分组（v_des 列含 ±，取绝对档位；每个档位内稳态提取 + 配对）
-    for v_abs in sorted(set(abs(x) for x in v)):
-        sel = np.abs(np.abs(v) - v_abs) < 1e-3
-        th, om, ta, vv = theta[sel], omega[sel], tau[sel], v[sel]
-        if len(th) < N_BIN * 2:
-            continue
-        # 稳态样本（丢弃端点加减速瞬态）
-        tol = np.maximum(STEADY_REL * v_abs, STEADY_ABS)
-        steady = np.abs(om - vv) < tol
-        th, om, ta, vv = th[steady], om[steady], ta[steady], vv[steady]
-        if len(th) < N_BIN:
-            continue
-        # 档内 θ 分箱 + 正向/反向归 bin
-        bins_p = [[] for _ in range(N_BIN)]
-        bins_n = [[] for _ in range(N_BIN)]
-        for t_, w_, tau_, v_ in zip(th, om, ta, vv):
-            b_ = int((t_ - lo) / (2 * amp) * N_BIN)
-            if b_ < 0 or b_ >= N_BIN:
-                continue
-            if v_ > 0:
-                bins_p[b_].append((w_, tau_))
-            else:
-                bins_n[b_].append((w_, tau_))
-        # 同 bin 配对相减 → τ_diff = 2b·|ω| + 2fc
-        for k in range(N_BIN):
-            if len(bins_p[k]) >= N_MIN and len(bins_n[k]) >= N_MIN:
-                tau_p = np.mean([s[1] for s in bins_p[k]])
-                tau_n = np.mean([s[1] for s in bins_n[k]])
-                w_abs = 0.5 * (np.mean([abs(s[0]) for s in bins_p[k]])
-                               + np.mean([abs(s[0]) for s in bins_n[k]]))
-                X.append([2.0 * w_abs, 2.0])
-                Y.append(tau_p - tau_n)
-
-    if len(X) < 3:
+    ok = np.abs(omega) > W_MIN            # 滤低速/换向 sign 抖动
+    X = np.column_stack([omega[ok], np.sign(omega[ok])])
+    Y = tau[ok]
+    if len(Y) < 30:
         return None
-    Xa, Ya = np.array(X), np.array(Y)
-    sol, res, *_ = np.linalg.lstsq(Xa, Ya, rcond=None)
+    sol, *_ = np.linalg.lstsq(X, Y, rcond=None)
     b_hat, fc_hat = float(sol[0]), float(sol[1])
-    # R²（线性度质量）
-    if len(Y) > 2 and Ya.std() > 0:
-        ss_res = float(np.sum((Ya - Xa @ sol) ** 2))
-        ss_tot = float(np.sum((Ya - Ya.mean()) ** 2))
-        r2 = 1.0 - ss_res / ss_tot
-    else:
-        r2 = 0.0
-    return b_hat, fc_hat, len(X), r2
+    pred = X @ sol
+    ss_res = float(np.sum((Y - pred) ** 2))
+    ss_tot = float(np.sum((Y - Y.mean()) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 1e-9 else 0.0
+    return b_hat, fc_hat, len(Y), r2
 
 
 def identify_joint(cp, mi, n_rounds=4):

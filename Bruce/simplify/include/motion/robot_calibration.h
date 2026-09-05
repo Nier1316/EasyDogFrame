@@ -87,11 +87,12 @@ constexpr float LEG_MOUNT[4][3] = {
 //
 //  物理角 = ZERO_OFFSET + 指令角，指令角必须落在 [LOWER, UPPER] 内。
 //
-//  ⚠ 当前站立姿态（§5 STAND_*）有两个角压在限位边界上：
-//     θ₁ 指令 0° == UPPER_LIMIT_THETA1_DEG，髋朝正方向零余量
-//     θ₃ 指令 60° == LOWER_LIMIT_THETA3_DEG，小腿朝负方向零余量
+//  ⚠ 站立姿态限位余量（2026-09-04 逐项核对，依据 Example55 单腿实测 + Ex54 摩擦扫掠需求）：
+//     θ₁ 原指令 0° == UPPER_LIMIT_THETA1_DEG（髋正方向零余量，压死摩擦扫掠区）
+//        → 已放宽到 +30°（FR 挡点实测 +35.4°，留 5° 裕量）
+//     θ₃ 现仍 60° == LOWER_LIMIT_THETA3_DEG（小腿负方向零余量，STAND calf=60 贴边）
+//        → 若需摩擦扫掠/调姿态放大小腿区间，同样要放宽（FR 伸直挡点实测 ≈+10°）
 //  IK 反解只要略微越界就会被 clamp 削掉，表现为该关节"跟不上指令"。
-//  调站立姿态时优先把这两个角挪进区间内部。
 // =====================================================================
 
 // ---- 零位偏移的唯一真值来源 ----
@@ -107,7 +108,11 @@ constexpr float CALF_POS_OFFSET_RAD  = MOTOR_CALIBRATION[0][2].pos_offset;
 // --- θ1 髋外摆 ---
 constexpr float ZERO_OFFSET_THETA1_DEG = rad2deg(HIP_POS_OFFSET_RAD);    // 35.01°
 constexpr float LOWER_LIMIT_THETA1_DEG = -60.0f;
-constexpr float UPPER_LIMIT_THETA1_DEG =   0.0f;
+// 上限放宽 0°→+30°（2026-09-04，Ex54 摩擦辨识需要）：原 0° 使 STAND hip=0° 贴边界，
+//   扫掠区自适应被压到 MIN_AMP，摩擦配对区间过窄(仅 8 格)失败。Example55 实测 FR hip
+//   指令角挡点 ≈+35.4°，放宽到 +30°（留 ~5° 裕量）。正常站姿 hip=0° 不受影响；
+//   顶机械挡仍有 Ex54 的 err>0.2 abort 保护兜底。
+constexpr float UPPER_LIMIT_THETA1_DEG =  15.0f;
 
 // --- θ2 大腿 ---
 // 下界原为 −45°，但 Example19 实测站稳的姿态需要 −60°（见 §5 STAND_THIGH_DEG）。

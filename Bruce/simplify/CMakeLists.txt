@@ -45,6 +45,9 @@ endif()
 
 # ============ 源文件列表（按分层目录） ============
 set(SOURCES
+    # L0.5 公共工具（RL 遥测记录器）
+    src/common/s2r_recorder.cpp
+
     # L7 应用
     src/app/main.cpp
     # 示例（按功能拆分，公共 helper）

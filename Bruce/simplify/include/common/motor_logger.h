@@ -38,6 +38,7 @@ struct LogFileSwitch {
     static constexpr bool XBOX    = false;  // xbox_*.csv    手柄输入（测手柄/遥操时才开）
     static constexpr bool KEY     = false;  // key_*.csv     键盘事件（键盘交互示例才开）
     static constexpr bool RL      = true;   // rl_*.csv      RL 循环诊断（qrel/action/扭矩/姿态，离线分析）
+    static constexpr bool CTRL    = true;   // ctrl_*.csv    控制循环状态（手柄+目标高度+16电机角度，诊断 Example44 调高等）
 };
 
 class MotorLogger {
@@ -67,6 +68,7 @@ public:
         std::string xbox_path = std::string("log/xbox_") + stamp + ".csv";
         std::string key_path = std::string("log/key_") + stamp + ".csv";
         std::string rl_path = std::string("log/rl_") + stamp + ".csv";
+        std::string ctrl_path = std::string("log/ctrl_") + stamp + ".csv";
 
         // 按 LogFileSwitch 开关打开对应文件（关掉的不创建、不记录）
         if (LogFileSwitch::SEND)     m_send_file    = fopen(send_path.c_str(), "w");
@@ -75,6 +77,7 @@ public:
         if (LogFileSwitch::XBOX)     m_xbox_file    = fopen(xbox_path.c_str(), "w");
         if (LogFileSwitch::KEY)      m_key_file     = fopen(key_path.c_str(), "w");
         if (LogFileSwitch::RL)       m_rl_file      = fopen(rl_path.c_str(), "w");
+        if (LogFileSwitch::CTRL)     m_ctrl_file    = fopen(ctrl_path.c_str(), "w");
 
         if (m_send_file) {
             fprintf(m_send_file,
@@ -122,6 +125,25 @@ public:
             fflush(m_key_file);
         }
 
+        if (m_ctrl_file) {
+            // 控制循环状态（每帧一行，与 recv/xbox 同 elapsed_ms 基准，可三方对齐）：
+            //   手柄全部输入 + 目标高度 + 16 电机标定后角度(rad)。
+            //   诊断场景：Example44 等"手柄改目标(高度)→IK→电机执行"链路里，
+            //   指令意图(body_height/手柄)与实际反馈(16 pos)对照，定位方向/限位/不到位。
+            //   电机列按 CAN 序命名 FL=CAN0,FR=CAN1,RL=CAN2,RR=CAN3（每腿 h/t/c/w）。
+            fprintf(m_ctrl_file,
+                "wall_ms,elapsed_ms,body_height,"
+                "left_stick_x,left_stick_y,right_stick_x,right_stick_y,"
+                "left_trigger,right_trigger,"
+                "a,b,x,y,lb,rb,back,start,ls,rs,"
+                "dpad_up,dpad_down,dpad_left,dpad_right,"
+                "p_FL_h,p_FL_t,p_FL_c,p_FL_w,"
+                "p_FR_h,p_FR_t,p_FR_c,p_FR_w,"
+                "p_RL_h,p_RL_t,p_RL_c,p_RL_w,"
+                "p_RR_h,p_RR_t,p_RR_c,p_RR_w\n");
+            fflush(m_ctrl_file);
+        }
+
         if (m_rl_file) {
             // RL 循环诊断（每控制步一行，供离线分析策略观测/动作/扭矩）
             fprintf(m_rl_file,
@@ -144,12 +166,14 @@ public:
         m_start_time = std::chrono::steady_clock::now();
         m_initialized = true;
         printf("[INFO] MotorLogger initialized (开关见 LogFileSwitch):\n");
-        printf("   send=%s recv=%s sendcan=%s xbox=%s key=%s\n",
+        printf("   send=%s recv=%s sendcan=%s xbox=%s key=%s rl=%s ctrl=%s\n",
                LogFileSwitch::SEND    ? "ON " : "OFF",
                LogFileSwitch::RECV    ? "ON " : "OFF",
                LogFileSwitch::SENDCAN ? "ON " : "OFF",
                LogFileSwitch::XBOX    ? "ON " : "OFF",
-               LogFileSwitch::KEY     ? "ON " : "OFF");
+               LogFileSwitch::KEY     ? "ON " : "OFF",
+               LogFileSwitch::RL      ? "ON " : "OFF",
+               LogFileSwitch::CTRL    ? "ON " : "OFF");
         printf("   目录: %s%s\n", send_path.c_str(),
                LogFileSwitch::SENDCAN ? "" : "  (sendcan 已关)");
     }
@@ -221,6 +245,35 @@ public:
             du, dd, dl, dr);
     }
 
+    // 记录控制循环状态（log/ctrl_*.csv）：手柄全部输入 + 目标高度 + 16 电机标定后角度。
+    // 每帧调用一次（500Hz），与 recv_*.csv 共用 elapsed_ms / wall_ms，可把
+    //   「手柄意图 + 目标高度 + 电机实际位置」三方按时间戳对齐，逐帧追调高链路。
+    // body_height：目标高度偏移 (m)。pos16：CAN 顺序 [每腿 hip,thigh,calf,wheel]×4
+    // （标定后角度 rad，即 GetStatus().position）。手柄字段同 LogXbox。
+    void LogCtrl(float body_height,
+                 float lx, float ly, float rx, float ry, float lt, float rt,
+                 int a, int b, int x, int y, int lb, int rb,
+                 int back, int start, int ls, int rs,
+                 int du, int dd, int dl, int dr,
+                 const float pos16[16]) {
+        if (!m_initialized || !m_ctrl_file) return;
+        std::lock_guard<std::mutex> lock(m_mutex);
+
+        int64_t elapsed = ElapsedMs();
+        fprintf(m_ctrl_file,
+            "%lld,%ld,%.4f,"
+            "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,"
+            "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
+            "%d,%d,%d,%d,",
+            (long long)WallMs(), elapsed, body_height,
+            lx, ly, rx, ry, lt, rt,
+            a, b, x, y, lb, rb, back, start, ls, rs,
+            du, dd, dl, dr);
+        // 16 电机角（CAN 序: leg0 FL, leg1 FR, leg2 RL, leg3 RR，各 hip/thigh/calf/wheel）
+        for (int i = 0; i < 16; i++) fprintf(m_ctrl_file, "%.4f,", pos16[i]);
+        fprintf(m_ctrl_file, "\n");
+    }
+
     // 记录键盘按键事件（时间戳与 send/recv 共用同一 steady_clock 基准，便于对齐排查）。
     // key_code：1=↑ 2=↓ 3=← 4=→ 5=q；0=特殊事件（如 CAN_SELECT，value 存所选路号）。
     void LogKey(int frame, int key_code, const char* key_name, int value = 0) {
@@ -266,6 +319,7 @@ public:
         if (m_xbox_file) fflush(m_xbox_file);
         if (m_key_file) fflush(m_key_file);
         if (m_rl_file) fflush(m_rl_file);
+        if (m_ctrl_file) fflush(m_ctrl_file);
     }
 
     // 关闭日志文件
@@ -277,6 +331,7 @@ public:
         if (m_xbox_file) { fclose(m_xbox_file); m_xbox_file = nullptr; }
         if (m_key_file) { fclose(m_key_file); m_key_file = nullptr; }
         if (m_rl_file) { fclose(m_rl_file); m_rl_file = nullptr; }
+        if (m_ctrl_file) { fclose(m_ctrl_file); m_ctrl_file = nullptr; }
         m_initialized = false;
     }
 
@@ -305,6 +360,7 @@ private:
     FILE* m_xbox_file = nullptr;
     FILE* m_key_file = nullptr;
     FILE* m_rl_file = nullptr;
+    FILE* m_ctrl_file = nullptr;
     std::chrono::steady_clock::time_point m_start_time;
     bool m_initialized = false;
 };

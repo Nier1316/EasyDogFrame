@@ -2375,16 +2375,27 @@ void Example54_FrictionSysId() {
     const int   GRID_PTS     = 20;                 // 阶段C 重力标定点数（区间大了要加密）
     const int   GRID_ROUNDS  = 4;                  // 阶段C 重复遍数（平均去静摩擦随机）
     const float GRAV_HOLD_S  = 1.5f;               // 阶段C 每点位置保持时长 (s)
-    const float LOCK_KP      = 500.0f, LOCK_KD = 50.0f;  // 锁定关节 PD（扛腿自重）
-    const float SWEEP_KP     = 500.0f, SWEEP_KD = 50.0f; // 目标关节扫掠 PD
+    const float LOCK_KP      = 300.0f, LOCK_KD = 10.0f;  // 锁定关节 PD（扛腿自重）
+    const float SWEEP_KP     = 300.0f, SWEEP_KD = 10.0f; // 目标关节扫掠 PD
     const float MOVE_RATE    = 0.15f;              // 移到扫掠中心斜坡速度 (rad/s)
     const float DT           = 0.002f;             // 控制节拍 500Hz
-    const float POS_ERR_LIMIT = 0.20f;             // 位置误差保护（超过失能）
+    // 位置误差保护（放宽 2026-09-04：0.20→0.35 + 持续容忍 0.25s）
+    // ⚠ 旧判据瞬时 err>0.2 即 abort：全幅扫掠高速档换向瞬时滞后常破 0.2 → 误停。
+    //   吊装无碰撞风险，改 err 连续超限 0.25s 才判真挡/失控（顶死会持续超限）。
+    const float POS_ERR_LIMIT = 0.30f;
+    const float POS_ERR_TOL_S = 0.25f;
+    const int   POS_ERR_TOL_N = (int)(POS_ERR_TOL_S / DT);   // 连续超限容忍帧数
     const float MIN_AMP      = 0.12f;              // 最小扫掠半幅（限位太窄时）
 
-    // 指令角限位 (rad)：θ₁/θ₂/θ₃（robot_calibration.h §4，站立姿态压边界须注意）
-    const float LIM_LO[3] = {deg2rad(-60), deg2rad(-70), deg2rad(60)};
-    const float LIM_HI[3] = {deg2rad(0),   deg2rad(90),  deg2rad(180)};
+    // 指令角限位 (rad)：θ₁/θ₂/θ₃ —— 引用 robot_calibration.h §4 宏（单一真值）。
+    // ⚠ 曾本地硬编码 calf 下限 60°：与 §4(Example55 实测已放宽 20°)不一致，会把
+    //   STAND calf=60° 基准的下行(伸直)扫掠空间吞成 0，半幅被压死。故改为引用宏。
+    const float LIM_LO[3] = {deg2rad(LOWER_LIMIT_THETA1_DEG),
+                             deg2rad(LOWER_LIMIT_THETA2_DEG),
+                             deg2rad(LOWER_LIMIT_THETA3_DEG)};
+    const float LIM_HI[3] = {deg2rad(UPPER_LIMIT_THETA1_DEG),
+                             deg2rad(UPPER_LIMIT_THETA2_DEG),
+                             deg2rad(UPPER_LIMIT_THETA3_DEG)};
 
     printf("\n========== 示例 54：吊装摩擦辨识 ==========\n");
     printf("[WARN] 狗必须吊起悬空、base 刚性固定、腿悬空不触地！\n");
@@ -2412,6 +2423,7 @@ void Example54_FrictionSysId() {
         for (int mi = 1; mi <= 3; mi++)
             mm.EnableMotor(cp, mi);
     usleep(300000);
+    printf("[INIT] 12 腿关节已使能(阻抗模式)\n");
 
     // 急停：Ctrl+C → g_rl_stop=1 → 各循环退出 → 统一失能（安全）
     g_rl_stop = 0;
@@ -2419,21 +2431,59 @@ void Example54_FrictionSysId() {
 
     ::mkdir("log/fric_id", 0755);
 
-    // ---- 读吊起后当前姿态 → 每关节扫掠中心 + 自适应半幅 ----
+    // ---- 辨识基准姿态 = 标准站立 STAND [0°, -60°, +60°]（指令角，四腿同构）----
+    // 原版：θ_c 取吊起后当前姿态（随吊装各异、不可复现）→ 改为整狗先移到 STAND，
+    // 再以 STAND 指令角为扫掠中心做重力标定/扫掠（贴近 RL 站立工况）。基准角可改这里。
+    const float STAND_RAD[3] = {deg2rad(STAND_HIP_DEG),
+                                deg2rad(STAND_THIGH_DEG),
+                                deg2rad(STAND_CALF_DEG)};
     float theta_c[12], amp[12];
     const char* jn[3] = {"hip", "thigh", "calf"};
     for (int cp = 0; cp < 4; cp++)
+        for (int j = 0; j < 3; j++)
+            theta_c[cp * 3 + j] = STAND_RAD[j];
+
+    // 预设站立：12 关节从吊起姿态同步慢速斜坡到 STAND，到位后再逐关节辨识
+    {
+        float q_from[12];
+        for (int cp = 0; cp < 4; cp++)
+            for (int mi = 1; mi <= 3; mi++)
+                q_from[cp * 3 + mi - 1] = mm.GetStatus(cp, mi).position;
+        const float MOVE_S = 5.0f;
+        const int   MF     = (int)(MOVE_S / DT);
+        printf("[INFO] 整狗移到站立基准 STAND[%+.0f,%+.0f,%+.0f]°（%.0fs）...\n",
+               STAND_HIP_DEG, STAND_THIGH_DEG, STAND_CALF_DEG, MOVE_S);
+        for (int f = 0; f <= MF && !g_rl_stop; f++) {
+            float t = (float)f / MF;
+            for (int cp = 0; cp < 4; cp++)
+                for (int mi = 1; mi <= 3; mi++) {
+                    int idx = cp * 3 + mi - 1;
+                    float pos = q_from[idx] + (theta_c[idx] - q_from[idx]) * t;
+                    mm.SendImpedance(cp, mi, pos, 0.0f, SWEEP_KP, SWEEP_KD, 0.0f);
+                }
+            usleep((useconds_t)(DT * 1e6f));
+        }
+        float maxe = 0.0f;
+        for (int cp = 0; cp < 4; cp++)
+            for (int mi = 1; mi <= 3; mi++) {
+                float e = fabsf(mm.GetStatus(cp, mi).position - theta_c[cp * 3 + mi - 1]);
+                if (e > maxe) maxe = e;
+            }
+        printf("[INFO] 预设站立到位，max|q−STAND|=%.3f rad\n", maxe);
+    }
+
+    // 自适应半幅（以 STAND 角离限位距离为准，不撞限位；hip 若贴 0° 边界会压到 MIN_AMP）
+    for (int cp = 0; cp < 4; cp++)
         for (int mi = 1; mi <= 3; mi++) {
             int j = mi - 1;
-            float th = mm.GetStatus(cp, mi).position;
+            float th = theta_c[cp * 3 + j];
             float a = fminf(SWEEP_AMP[j],
                             fminf((th - LIM_LO[j]) * 0.9f, (LIM_HI[j] - th) * 0.9f));
             if (a < MIN_AMP) {
-                printf("[WARN] CAN%d-M%d(%s) 当前角 %+.2f 贴近限位，半幅压到 %.2f rad\n",
+                printf("[WARN] CAN%d-M%d(%s) STAND 角 %+.2f 贴近限位，半幅压到 %.2f rad\n",
                        cp, mi, jn[j], th, MIN_AMP);
                 a = MIN_AMP;
             }
-            theta_c[cp * 3 + j] = th;
             amp[cp * 3 + j] = a;
             printf("[INFO] CAN%d-M%d(%s): θ_c=%+.2f amp=%.2f (限位[%.2f,%.2f])\n",
                    cp, mi, jn[j], th, a, LIM_LO[j], LIM_HI[j]);
@@ -2468,16 +2518,21 @@ void Example54_FrictionSysId() {
             printf("\n===== [%d/12] CAN%d-M%d(%s) θ_c=%+.2f amp=%.2f =====\n",
                    ++done, cp, mi, jn[j], c, a);
 
-            // ---- 先把目标关节移到 θ_c（慢速闭环斜坡，读实际位置推进）----
+            // ---- 先把目标关节移到 θ_c：独立爬行目标斜坡（目标自走，不锚定反馈）----
             {
+                float tgt = mm.GetStatus(cp, mi).position;   // 起点；之后独立步进，不锚定反馈
+                printf("  [移到θ_c] 从 %+.3f 斜坡到 %+.3f (%.2f rad/s)...\n",
+                       tgt, c, MOVE_RATE);
                 for (int t = 0; t < 3000 && !g_rl_stop; t++) {   // 最多 6s
                     keep_others(cp, mi);
-                    float actual = mm.GetStatus(cp, mi).position;
-                    float e = c - actual;
-                    if (fabsf(e) < 0.005f) break;
-                    float pos = clamp(actual + (e > 0 ? 1.0f : -1.0f) * MOVE_RATE * DT,
-                                      LIM_LO[j], LIM_HI[j]);
-                    mm.SendImpedance(cp, mi, pos, 0.0f, SWEEP_KP, SWEEP_KD, 0.0f);
+                    float e = c - tgt;
+                    if (fabsf(e) < 0.005f) break;                 // 目标已到位
+                    tgt += (e > 0 ? 1.0f : -1.0f) * MOVE_RATE * DT;   // 目标自走，PD 才能看见真实误差
+                    if (t % 250 == 0)   // 每 0.5s 报一次（目标 vs 反馈），卡住看反馈是否跟上
+                        printf("    第%4d帧 目标%+.3f 当前%+.3f err=%.3f\n",
+                               t, tgt, mm.GetStatus(cp, mi).position,
+                               c - mm.GetStatus(cp, mi).position);
+                    mm.SendImpedance(cp, mi, tgt, 0.0f, SWEEP_KP, SWEEP_KD, 0.0f);
                     usleep((useconds_t)(DT * 1e6f));
                 }
                 float after = mm.GetStatus(cp, mi).position;
@@ -2493,19 +2548,57 @@ void Example54_FrictionSysId() {
             for (int k = 0; k < GRID_PTS; k++)
                 g_theta[k] = c - a + (2.0f * a) * k / (GRID_PTS - 1);
             for (int r = 0; r < GRID_ROUNDS && !abort && !g_rl_stop; r++) {
-                for (int k = 0; k < GRID_PTS && !g_rl_stop; k++) {
+                printf("  [阶段C] 遍%d/%d：%d点×hold%.0fs 标定重力，逐点打印进度\n",
+                       r + 1, GRID_ROUNDS, GRID_PTS, GRAV_HOLD_S);
+                // 遍间交替扫描方向（0低→高, 1高→低, ...）：遍末停在高端/低端，
+                // 下一遍首点正好衔接，避免"遍末→下一遍首点"的 2a 阶跃触发误 abort。
+                int step = (r % 2 == 0) ? +1 : -1;
+                // 遍首过渡：从当前位置独立爬行到本遍首点。
+                // ⚠ amp 放大后(0.35)遍0 首点 g_theta[0]=c−a 距 θ_c 跳 0.35>0.2，直发误 abort
+                //   （实测 点1 err=0.304"被挡"实为阶跃）。其余遍首点与上遍末位置衔接，立即 break。
+                {
+                    int k0 = (step > 0) ? 0 : (GRID_PTS - 1);
+                    float stgt = g_theta[k0];
+                    float t2  = mm.GetStatus(cp, mi).position;
+                    if (fabsf(stgt - t2) > 0.01f)
+                        printf("    回本遍首点 θ=%+.3f ...\n", stgt);
+                    for (int mt = 0; mt < (int)(6.0f / DT) && !g_rl_stop; mt++) {
+                        keep_others(cp, mi);
+                        float e2 = stgt - t2;
+                        if (fabsf(e2) < 0.005f) break;
+                        t2 += (e2 > 0 ? 1.0f : -1.0f) * MOVE_RATE * DT;
+                        mm.SendImpedance(cp, mi, t2, 0.0f, SWEEP_KP, SWEEP_KD, 0.0f);
+                        usleep((useconds_t)(DT * 1e6f));
+                    }
+                }
+                for (int kk = 0; kk < GRID_PTS && !g_rl_stop; kk++) {
+                    int k = (step > 0) ? kk : (GRID_PTS - 1 - kk);
                     keep_others(cp, mi);
                     mm.SendImpedance(cp, mi, g_theta[k], 0.0f, SWEEP_KP, SWEEP_KD, 0.0f);
                     int hold = (int)(GRAV_HOLD_S / DT);
-                    float acc = 0.0f;
+                    float acc = 0.0f, perr = -1.0f;
+                    printf("    点%2d/%-2d θ=%+.3f ", k + 1, GRID_PTS, g_theta[k]);
+                    fflush(stdout);   // 立即显示当前点号：卡在该点 hold 时终端停在此行
+                    int ecnt = 0;   // err 连续超限计数（瞬时尖峰容忍，真挡持续才 abort）
                     for (int h = 0; h < hold && !g_rl_stop; h++) {
                         MotorStatus st = mm.GetStatus(cp, mi);
                         acc += st.torque;
-                        if (fabsf(st.position - g_theta[k]) > POS_ERR_LIMIT) abort = true;
+                        perr = fabsf(st.position - g_theta[k]);
+                        if (perr > POS_ERR_LIMIT) {
+                            if (++ecnt >= POS_ERR_TOL_N) { abort = true; break; }
+                        } else ecnt = 0;
                         usleep((useconds_t)(DT * 1e6f));
                     }
+                    if (g_rl_stop) break;
+                    if (abort) {
+                        printf("[ABORT] 到位 err=%.3f 持续超%.2f(>%.0fms)（被挡/顶死）\n",
+                               perr, POS_ERR_LIMIT, POS_ERR_TOL_S * 1e3f);
+                        break;
+                    }
                     g_tau[k] += acc / hold;
+                    printf("err=%.3f τ=%.2f\n", perr, acc / hold);
                 }
+                if (abort || g_rl_stop) break;
                 printf("  重力标定第 %d/%d 遍完成\n", r + 1, GRID_ROUNDS);
             }
             if (abort || g_rl_stop) {
@@ -2550,6 +2643,24 @@ void Example54_FrictionSysId() {
                     int n_scan = (int)(2.0f * a / v / DT);   // 单程步数
                     float pos = c - a;
                     float dir = +1.0f;
+                    int ecnt = 0;   // err 连续超限计数（档内累计，换向尖峰容忍）
+                    printf("  [阶段D] 回合%d/%d 档v=%.1f (%d单程, 单程%.2fs) ",
+                           rd + 1, ROUNDS, v, CYC_PER_VEL * 2, 2.0f * a / v);
+                    fflush(stdout);
+                    // 每档开始：独立爬行回扫掠起点 c−a（上一档末停在 +a 高端，直接重置
+                    // pos=c−a 会 2a 阶跃 >0.2 误 abort）；带重力前馈避免反向爬被负载拖偏。
+                    {
+                        float stgt = c - a;
+                        float t2  = mm.GetStatus(cp, mi).position;
+                        for (int mt = 0; mt < (int)(4.0f / DT) && !g_rl_stop; mt++) {
+                            keep_others(cp, mi);
+                            float e2 = stgt - t2;
+                            if (fabsf(e2) < 0.005f) break;
+                            t2 += (e2 > 0 ? 1.0f : -1.0f) * MOVE_RATE * DT;
+                            mm.SendImpedance(cp, mi, t2, 0.0f, SWEEP_KP, SWEEP_KD, g_interp(t2));
+                            usleep((useconds_t)(DT * 1e6f));
+                        }
+                    }
                     for (int cyc = 0; cyc < CYC_PER_VEL * 2 && !abort && !g_rl_stop; cyc++) {
                         for (int s = 0; s < n_scan && !g_rl_stop; s++) {
                             keep_others(cp, mi);
@@ -2557,13 +2668,23 @@ void Example54_FrictionSysId() {
                             mm.SendImpedance(cp, mi, pos, 0.0f, SWEEP_KP, SWEEP_KD,
                                              g_interp(pos));
                             MotorStatus st = mm.GetStatus(cp, mi);
-                            if (fabsf(st.position - pos) > POS_ERR_LIMIT) { abort = true; break; }
+                            float er = fabsf(st.position - pos);
+                            if (er > POS_ERR_LIMIT) {
+                                if (++ecnt >= POS_ERR_TOL_N) {
+                                    printf("\n  [阶段D][ABORT] pos=%+.3f 反馈偏离 err=%.3f 持续超%.0fms (单程%d/步%d)\n",
+                                           pos, er, POS_ERR_TOL_S * 1e3f, cyc, s);
+                                    abort = true; break;
+                                }
+                            } else ecnt = 0;
                             buf.push_back({ms(), st.position, st.velocity, st.torque, v * dir});
                             usleep((useconds_t)(DT * 1e6f));
                         }
+                        if (abort || g_rl_stop) break;
                         dir = -dir;
+                        if (cyc % 2 == 1) { printf(".%d/%d", cyc + 1, CYC_PER_VEL * 2); fflush(stdout); }
                     }
-                    printf("  回合%d 档v=%.1f 完成（%zu 样本）\n", rd + 1, v, buf.size());
+                    if (abort || g_rl_stop) break;
+                    printf(" → %zu 样本\n", buf.size());
                 }
                 char fp[128];
                 snprintf(fp, sizeof fp, "log/fric_id/C%dM%d_R%d.csv", cp, mi, rd);

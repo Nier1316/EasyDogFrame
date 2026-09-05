@@ -30,3 +30,5 @@ void Example49_StandAndWheelSpeedLoopTest();
 void Example50_LieDownAngleRecord();
 // 吊装摩擦辨识（重力标定 + 前馈恒速 + 双向配对 → 离线回归出 LEG_FF_FC/FV）
 void Example54_FrictionSysId();
+// 单腿关节真实限幅测量（选腿 0~3，hip/thigh/calf 依次低速顶到机械/固件限位，回车记录上下端）
+void Example55_SingleLegLimitMeasure();

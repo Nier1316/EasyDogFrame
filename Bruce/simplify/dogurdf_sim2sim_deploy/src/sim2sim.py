@@ -362,6 +362,15 @@ def main() -> None:
     parser.add_argument("--record", type=str, default=None,
                         help="Export per-step trajectory CSV (qrel/vel/action/pgr, "
                              "POLICY order, 50Hz) for sim2real comparison.")
+    # ---- 真机执行约束（sim2real 定位用，2026-09-05）----
+    # sim 默认腿扭矩 ±250、无动作延迟，比真机(腿 120/200、~1帧动作延迟)更理想。
+    # 开启后把执行器约束对齐真机，验证"sim 转向动作真机执行不了"是否为差异根因。
+    parser.add_argument("--real_actuator", action="store_true",
+                        help="Real-robot actuator: leg torque caps 120/120/200 (hip/thigh/"
+                             "calf), wheel 52, and 1-step action delay (override with --act_delay).")
+    parser.add_argument("--act_delay", type=int, default=0,
+                        help="Action delay in control steps applied to the PD target "
+                             "(real robot ~1; 0 = none).")
     parser.add_argument("--save_video", action="store_true")
     parser.add_argument("--video_path", type=str, default="/tmp/sim2sim.mp4")
     parser.add_argument("--width", type=int, default=1280)
@@ -434,6 +443,17 @@ def main() -> None:
     torque_limit = np.array(
         [LEG_TORQUE_LIMIT] * NUM_LEG_JOINTS + [WHEEL_TORQUE_LIMIT] * NUM_WHEELS
     )
+    # ---- 真机执行约束：扭矩限幅对齐真机（hip/thigh 120, calf 200, wheel 52）+ 动作延迟 ----
+    # 真机 PD 用 rl::LEG_KP/KD=250/4（与 sim 相同），差异在可用扭矩上限与动作延迟。
+    ACT_DELAY = args.act_delay if args.act_delay > 0 else (1 if args.real_actuator else 0)
+    if args.real_actuator:
+        torque_limit = np.array(
+            [120.0, 120.0, 200.0] * 4 + [52.0] * NUM_WHEELS  # POLICY: per-leg hip/thigh/calf
+        )
+        print(f"  real actuator: leg torque caps = 120/120/200, wheel = 52")
+    if ACT_DELAY:
+        print(f"  action delay = {ACT_DELAY} control step(s) (~{ACT_DELAY*CONTROL_DT*1000:.0f} ms)")
+    act_dq: list = []   # 动作延迟缓冲（闭包，跨 control_step 保留；真机 ~1 帧）
 
     # ---- Initial pose: torso upright at nominal height, legs at NOMINAL ----
     _reset_pose(mj_model, mj_data, indexer, default_pose)
@@ -501,15 +521,24 @@ def main() -> None:
     # ``current["params"]`` fresh each step so --watch_dir hot-reloads take
     # effect immediately.
     def control_step(command: np.ndarray, last_action: np.ndarray, step: int = 0) -> tuple[np.ndarray, np.ndarray]:
+        # 动作延迟：发给执行器的动作是 ACT_DELAY 控制步前策略的输出（真机 CAN/策略延迟）。
+        # 观测里的 last_action 仍用策略实时输出（与真机一致：obs 记录策略自己上一个输出）。
         obs = _build_observation(mj_data, indexer, default_pose, last_action, command,
                                  step=step, use_phase=use_phase)
         action = np.asarray(policy_mean(current["params"], jnp.asarray(obs[None]))[0])
         action = np.where(np.isfinite(action), action, 0.0)
+        applied = action
+        if ACT_DELAY > 0:
+            act_dq.append(action)
+            if len(act_dq) > ACT_DELAY:
+                act_dq.pop(0)
+            if len(act_dq) >= ACT_DELAY:
+                applied = act_dq[0]   # ACT_DELAY 步前产生的动作
         for _ in range(DECIMATION):
             joint_pos = indexer.joint_pos(mj_data)
             joint_vel = indexer.joint_vel(mj_data)
             torques = _compute_torques_policy(
-                action, joint_pos, joint_vel, default_pose,
+                applied, joint_pos, joint_vel, default_pose,
                 lower, upper, kp, kd, torque_limit,
             )
             mj_data.qfrc_applied[:] = 0.0
@@ -589,6 +618,11 @@ def main() -> None:
     print(f"  Ran {steps_done} steps in {elapsed:.2f}s "
           f"({steps_done / elapsed:.0f} ctrl-steps/s)")
     print(f"  Final torso pos: {mj_data.qpos[0:3]}")
+    # base freejoint quat (w,x,y,z) -> world yaw（判断是否真正转向，sim2real 定位用）
+    bq = np.asarray(mj_data.qpos[3:7])
+    sim_yaw = np.arctan2(2.0 * (bq[0] * bq[3] + bq[1] * bq[2]),
+                         1.0 - 2.0 * (bq[2] * bq[2] + bq[3] * bq[3]))
+    print(f"  Final torso yaw: {sim_yaw:.3f} rad ({sim_yaw * 180 / np.pi:.1f} deg)")
     print(f"  Result: {'FELL' if fell else 'survived to end'}")
 
     if renderer is not None and frames:

@@ -8,6 +8,7 @@
 #include "motion/robot_calibration.h"   // LIE_DOWN_*_DEG / deg2rad
 #include "strategy/rl_controller.h"
 #include "strategy/mlp.h"
+#include "common/s2r_recorder.h"   // RL 遥测自动记录（Ex37 走 rlStep，在此统一采集）
 #include <cstdio>
 #include <cmath>
 #include <unistd.h>
@@ -112,13 +113,14 @@ bool MotionController::rlStep() {
     if (!rl_active_) return true;
 
     // 1) 读 16 电机（CAN 顺序）
-    float pos_can[16], vel_can[16];
+    float pos_can[16], vel_can[16], tau_can[16];
     for (int cp = 0; cp < 4; cp++)
         for (int mi = 1; mi <= 4; mi++) {
             MotorStatus st = mm_->GetStatus(cp, mi);
             int mjx = cp * 4 + (mi - 1);
             pos_can[mjx] = st.position;
             vel_can[mjx] = st.velocity;
+            tau_can[mjx] = st.torque;   // S2R：torque 采集
         }
 
     // 2) CAN -> policy -> URDF
@@ -142,12 +144,15 @@ bool MotionController::rlStep() {
     float action[16];
     rl::mlp_forward(last_obs_, action);
 
+    float qt_p[16] = {0.0f}, qtv_p[16] = {0.0f};   // S2R：策略目标(urdf policy序) + 轮下发速度
     for (int cp = 0; cp < 4; cp++)
         for (int mi = 1; mi <= 4; mi++) {
             int mjx = cp * 4 + (mi - 1);
             int p = rl::POLICY_TO_MJX[mjx];
             if (mi <= 3) {
-                float q_target = rl::urdf_to_status(rl::leg_pos_target(action[p], p), p);
+                float q_t_urdf = rl::leg_pos_target(action[p], p);
+                qt_p[p] = q_t_urdf;                        // S2R 捕获
+                float q_target = rl::urdf_to_status(q_t_urdf, p);
                 const JointImpedanceParam& ip = GetJointImpedance(cp, mi);
                 mm_->SendImpedance(cp, mi, q_target, 0.0f, rl::LEG_KP, rl::LEG_KD, ip.tau_ff);
             } else {
@@ -165,9 +170,19 @@ bool MotionController::rlStep() {
                 if (fabsf(cmd_[0]) < rl::WHEEL_CMD_MOVE_THR && fabsf(cmd_[2]) < rl::WHEEL_CMD_MOVE_THR)
                     cmd_v = 0.0f;
                 mm_->SendSpeed(cp, mi, cmd_v, rl::WHEEL_KVP, rl::WHEEL_KVI);
+                qtv_p[p] = cmd_v;                          // S2R 捕获轮下发速度
                 tau_wheel_[w_idx] = rl::WHEEL_KD * (cmd_v - vel_policy[p]);  // 诊断：预估速度环扭矩
             }
         }
+
+    // 4.5) S2R 遥测落盘（tau→policy urdf，thigh ×CONV_A(-1)）
+    if (S2RRecorder::inst().active()) {
+        float tau_policy[16];
+        for (int i = 0; i < 16; i++)
+            tau_policy[i] = rl::CONV_A[i] * tau_can[rl::MJX_TO_POLICY[i]];
+        S2RRecorder::inst().step(step_, 0, cmd_, qt_p, qtv_p,
+                                 pos_policy, vel_policy, tau_policy, quat, gyro);
+    }
 
     // 5) last_action
     for (int i = 0; i < 16; i++) last_action_[i] = action[i];

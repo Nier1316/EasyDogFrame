@@ -38,7 +38,7 @@ constexpr float LEG_KD              = 4.0f;
 // 解除挂钩振荡；SPEED 迁移后轮子走固件速度环（kvp/ki），此量仅诊断用。
 constexpr float WHEEL_KD            = 1.0f;
 // ⚠ LEG_TORQUE_LIMIT 当前未使用（腿扭矩由固件阻抗环限制）。真机扭矩量程（编解码 + 命令上限）
-// 以 ele_motor_def.h 为准：MOTOR_LIMITS 协议量程 = TORQUE_CMD_LIMIT 命令上限 = Hip/Thigh±110、
+// 以 ele_motor_def.h 为准：MOTOR_LIMITS 协议量程 = TORQUE_CMD_LIMIT 命令上限 = Hip/Thigh±120、
 // Calf±200、Wheel±52（2026-08-30 用户改固件限幅；编码前 clamp 防越界，反馈按新量程解析）。
 constexpr float LEG_TORQUE_LIMIT    = 250.0f;   // 历史值，未参与 clamp
 constexpr float WHEEL_TORQUE_LIMIT  = 53.0f;

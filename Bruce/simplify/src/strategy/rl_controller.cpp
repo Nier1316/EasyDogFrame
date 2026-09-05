@@ -45,16 +45,18 @@ const float WHEEL_FF[4][2] = {
     { +0.500f, -0.400f },  // RR(C3)
 };
 
-// 腿摩擦前馈库仑摩擦 fc（Example47 辨识，RL_TRAINING_REFERENCE §2.1 绝对值，
-// POLICY order：FL,FR,RL,RR × hip/thigh/calf，共 12）。异常值（RR calf=4.6）置 0。
-// ⚠ 方向由 tanh(τ_pd) 决定，此处只存幅值；真机验证后按需微调。
+// 腿摩擦前馈库仑摩擦 fc（2026-09-04 Example54 吊装摩擦辨识，Ex54 直接回归，
+// POLICY order：FL,FR,RL,RR × hip/thigh/calf，共 12）。方向由 tanh(τ_pd) 决定，存幅值。
+// ⚠ 本次扫描区间偏窄（amp 0.12~0.24，STAND 基准贴限位未放大），fc 可能高估
+//   （R² 0.4~0.7，非全 OK）；b(粘性) 回归不可靠故 FV 全 0。真机低速斜坡/RL 站立
+//   验证：越动越快/振荡 → fc 折半或关 LEG_FF_ENABLE 复核。
 const float LEG_FF_FC[12] = {
-    0.55f, 0.29f, 0.07f,   // FL hip/thigh/calf
-    0.03f, 0.09f, 0.15f,   // FR
-    0.01f, 0.36f, 0.04f,   // RL
-    0.24f, 0.64f, 0.00f,   // RR（calf 辨识异常置 0）
+    2.40f, 3.36f, 4.82f,   // FL hip/thigh/calf
+    1.64f, 1.89f, 4.54f,   // FR
+    2.59f, 2.13f, 6.17f,   // RL
+    1.84f, 2.56f, 5.38f,   // RR
 };
-// 粘性阻尼 fv：Example47 辨识 B 不可靠（速度反馈延迟，多数负值），暂全 0。
+// 粘性阻尼 fv：Ex54 直接回归 b 不可靠（σ 大/符号乱，窄区间所致），暂全 0。
 const float LEG_FF_FV[12] = {
     0.0f, 0.0f, 0.0f,
     0.0f, 0.0f, 0.0f,

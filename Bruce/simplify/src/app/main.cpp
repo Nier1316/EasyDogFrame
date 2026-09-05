@@ -157,15 +157,20 @@ int main() {
     // Example43_CANOrderCalibrate();
     // printf("[INFO] Example43 completed.\n");
 
-    // 运行示例44 - Xbox 手柄控制（USB2CAN 4 路，轮阻抗前馈）
+    // 运行示例44 - Xbox 手柄控制（USB2CAN 4 路，轮阻抗前馈）——验证 calf 限位放宽后 ↑ 升高
     // printf("[INFO] Running Example44_USB2CanXboxControl...\n");
     // Example44_USB2CanXboxControl();
     // printf("[INFO] Example44 completed.\n");
 
+    // 运行示例55 - 单腿关节真实限幅测量（手动摆腿 + 回车记录，不使能电机）
+    // printf("[INFO] Running Example55_SingleLegLimitMeasure...\n");
+    // Example55_SingleLegLimitMeasure();
+    // printf("[INFO] Example55 completed.\n");
+
     // 运行示例54 - 吊装摩擦辨识（重力标定 + 前馈恒速 + 双向配对，数据落盘 log/fric_id/）
-    printf("[INFO] Running Example54_FrictionSysId...\n");
-    Example54_FrictionSysId();
-    printf("[INFO] Example54 completed.\n");
+    // printf("[INFO] Running Example54_FrictionSysId...\n");
+    // Example54_FrictionSysId();
+    // printf("[INFO] Example54 completed.\n");
 
     // 运行示例45 - 选择电机移动到物理零位（USB2CAN）
     // printf("[INFO] Running Example45_USB2CanMoveToZero...\n");
@@ -188,10 +193,6 @@ int main() {
     // printf("[INFO] Example48 completed.\n");
 
 
-    // 运行示例49 - 整狗站立 + 单轮 SPEED 模式速度环测试（软启动 + kvp 扫描）
-    // printf("[INFO] Running Example49_StandAndWheelSpeedLoopTest...\n");
-    // Example49_StandAndWheelSpeedLoopTest();
-    // printf("[INFO] Example49 completed.\n");
 
     // 运行示例50 - 趴下姿态手动标定（不使能电机，摆腿回车记录，标定 LIE_DOWN_*）
     // printf("[INFO] Running Example50_LieDownAngleRecord...\n");
@@ -212,6 +213,22 @@ int main() {
     // printf("[INFO] Running Example53_MeasureGravityFF...\n");
     // Example53_MeasureGravityFF();
     // printf("[INFO] Example53 completed.\n");
+
+    // 运行示例49 - 整狗站立 + 单轮 SPEED 模式速度环测试（软启动 + kvp 扫描）
+    // printf("[INFO] Running Example49_StandAndWheelSpeedLoopTest...\n");
+    // Example49_StandAndWheelSpeedLoopTest();
+    // printf("[INFO] Example49 completed.\n");
+
+    // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，USB2CAN 4 路）
+    // printf("[INFO] Running Example37_RLTeleopControl...\n");
+    // Example37_RLTeleopControl();
+    // printf("[INFO] Example37 completed.\n");
+
+    // 运行示例56 - 固定 yaw 转向真机遥测录制（sim2real 原地转向对比，落盘 log/s2r_fixedyaw_*.csv）
+    printf("[INFO] Running Example56_FixedYawRecord...\n");
+    Example56_FixedYawRecord();
+    printf("[INFO] Example56 completed.\n");
+
 
     return 0;
 }

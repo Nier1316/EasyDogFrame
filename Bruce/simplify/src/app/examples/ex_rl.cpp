@@ -10,12 +10,14 @@
 #include "runtime/thread_manager.h"
 #include "common/motor_logger.h"
 #include "common/log_control.h"
+#include "common/s2r_recorder.h"
 #include "motion/robot_calibration.h"
 #include <cstdio>
 #include <cmath>
 #include <cstring>
 #include <thread>
 #include <chrono>
+#include <ctime>
 
 using logctl::LogCat;
 #include "strategy/rl_controller.h"
@@ -931,6 +933,9 @@ void Example36_RLStandLoop() {
     float cmd[3] = {CMD_BIAS_VX, 0.0f, 0.0f};
     int step = 0;
 
+    // S2R 遥测自动记录（log/rlrun_<ts>/trace.csv，Ctrl+C 退出后打印绘图命令）
+    S2RRecorder::inst().begin("Example36 RL 站立循环（cmd bias -0.05）");
+
     // 接收链路心跳检测（诊断"接收线程卡死 / SDK 回调停"）：
     //   ReceiveOnce 心跳停滞 → 报警一次并区分两类（见 MotorManager 头注释）
     int64_t last_rx_hb = -1;
@@ -966,13 +971,14 @@ void Example36_RLStandLoop() {
         }
 
         // 1) 读 16 电机（CAN order，标定后）
-        float pos_can[16], vel_can[16];
+        float pos_can[16], vel_can[16], tau_can[16];
         for (int cp = 0; cp < 4; cp++) {
             for (int mi = 1; mi <= 4; mi++) {
                 MotorStatus st = motor_mgr.GetStatus(cp, mi);
                 int mjx = cp * 4 + (mi - 1);
                 pos_can[mjx] = st.position;
                 vel_can[mjx] = st.velocity;
+                tau_can[mjx] = st.torque;
             }
         }
 
@@ -999,15 +1005,17 @@ void Example36_RLStandLoop() {
         rl::mlp_forward(obs, action);
 
         float tau_wheel[4] = {0.0f, 0.0f, 0.0f, 0.0f};   // 诊断：记录各轮下发扭矩
+        float qt_p[16] = {0.0f}, qtv_p[16] = {0.0f};    // S2R：策略目标(POLICY序 urdf) + 轮下发速度
         for (int cp = 0; cp < 4; cp++) {
             for (int mi = 1; mi <= 4; mi++) {
                 int mjx = cp * 4 + (mi - 1);
                 int p = rl::POLICY_TO_MJX[mjx];
                 if (mi <= 3) {
-                    float q_target = rl::urdf_to_status(rl::leg_pos_target(action[p], p), p);
+                    float q_t_urdf = rl::leg_pos_target(action[p], p);
+                    qt_p[p] = q_t_urdf;                       // S2R 捕获
+                    float q_target = rl::urdf_to_status(q_t_urdf, p);
                     // 扭矩前馈：JOINT_IMPEDANCE.tau_ff（重力）+ 腿摩擦前馈（库仑）
                     const JointImpedanceParam& ip = GetJointImpedance(cp, mi);
-                    float q_t_urdf = rl::leg_pos_target(action[p], p);
                     float tau_pd = rl::LEG_KP * (q_t_urdf - pos_policy[p])
                                  - rl::LEG_KD * vel_policy[p];
                     float tau_ff = ip.tau_ff + rl::leg_friction_ff(tau_pd, vel_policy[p], p);
@@ -1026,6 +1034,7 @@ void Example36_RLStandLoop() {
                     if (fabsf(cmd[0]) < rl::WHEEL_CMD_MOVE_THR && fabsf(cmd[2]) < rl::WHEEL_CMD_MOVE_THR)
                         cmd_v = 0.0f;
                     motor_mgr.SendSpeed(cp, mi, cmd_v, rl::WHEEL_KVP, rl::WHEEL_KVI);
+                    qtv_p[p] = cmd_v;                         // S2R 捕获轮下发速度
                     tau_wheel[w_idx] = rl::WHEEL_KD * (cmd_v - vel_policy[p]);  // 诊断：预估速度环扭矩
                 }
             }
@@ -1056,6 +1065,15 @@ void Example36_RLStandLoop() {
 
         // 4.6) RL 诊断写入 CSV（每控制步，log/rl_*.csv，供离线分析）
         MotorLogger::GetInstance().LogRL(step, cmd, obs, action, tau_wheel);
+
+        // 4.7) tau → policy 序 URDF（×CONV_A，thigh=-1）+ S2R 落盘
+        {
+            float tau_policy[16];
+            for (int i = 0; i < 16; i++)
+                tau_policy[i] = rl::CONV_A[i] * tau_can[rl::MJX_TO_POLICY[i]];
+            S2RRecorder::inst().step(step, 0, cmd, qt_p, qtv_p,
+                                     pos_policy, vel_policy, tau_policy, quat, gyro);
+        }
 
         // 5) 更新 last_action
         for (int i = 0; i < 16; i++)
@@ -1098,6 +1116,9 @@ void Example36_RLStandLoop() {
     }
 
     signal(SIGINT, SIG_DFL);
+
+    // ---- S2R 收尾：关文件 + 打印绘图命令 ----
+    S2RRecorder::inst().finish();
 
     // ---- 清理 ----
     printf("[INFO] 正在失能...\n");
@@ -1197,6 +1218,9 @@ void Example37_RLTeleopControl() {
     float cmd[3] = {0.0f, 0.0f, 0.0f};
     motion.beginRL(cmd);
 
+    // S2R 遥测自动记录（log/rlrun_<ts>/trace.csv，退出后打印绘图命令）
+    S2RRecorder::inst().begin("Example37 RL 遥操作（手柄）");
+
     printf("[INFO] RL 循环启动：左摇杆前进/后退，B 急停，q 优雅退出\n");
 
     RawTerminal term;         // q 键优雅退出
@@ -1272,6 +1296,9 @@ void Example37_RLTeleopControl() {
     }
 
     signal(SIGINT, SIG_DFL);
+
+    // ---- S2R 收尾：关文件 + 打印绘图命令 ----
+    S2RRecorder::inst().finish();
 
     // ---- 清理 ----
     printf("[INFO] 正在失能...\n");
@@ -1914,6 +1941,240 @@ void Example52_FixedCmdYaw() {
     thread_mgr.stop_thread("motor_send");
     motor_mgr.Stop();
     printf("[INFO] 示例52 完成\n");
+}
+
+// ================= 示例 56：固定 yaw 转向真机遥测录制（sim2real 对比） =================
+// 目的：按 RL 侧 sim2real_recording_spec.md 采集"恒定 yaw 原地转向"真机遥测，供与
+//       sim2sim 的 telemetry.npz 逐点对齐，定位原地转向 sim/真机不一致的根源。
+// 流程：起立 STAND → 过渡 DEFAULT_POSE → RL 分段：静置(phase0,3s) → 转向 cmd{0,0,+0.5}
+//       (phase1,5s) → 停(phase2,1s) → 趴下。全程每步(50Hz)落盘 CSV。
+// 坐标系/字段（对齐 sim telemetry，见落盘 meta）：
+//   q/qd/q_target = POLICY 序 URDF 约定（16：12 腿 + 4 轮）；tau 经 CONV_A 翻转(thigh=-1)
+//   wheel_vel = vel_policy[12..15]（标定+低通轮速）；base_ang_vel = gyro(体坐标，Z_DOWN_X)
+//   yaw/roll/pitch = 世界系 ZYX 欧拉（自 quat）；yaw_rate = gyro[2]
+// 用法：狗落地、空间足够；跑完自动趴下。Ctrl+C 硬急停(失能)。
+// ⚠ wheel tau（SPEED 固件速度环回读）可信度未核，若为 0/乱值按 N/A 处理。
+void Example56_FixedYawRecord() {
+    printf("\n========== Example 56: 固定 yaw 转向真机遥测录制 ==========\n");
+    printf("[INFO] 50Hz RL。时序: 静置3s → yaw=+0.5 转5s → 停1s → 趴下。每步落盘 log/s2r_fixedyaw_*.csv\n");
+    printf("[WARN] 狗落地原地转向，需空间足够、地面一致；跑完自动趴下，Ctrl+C 硬急停。\n\n");
+
+    const int HZ = 50;
+    const int PRE_STEPS  = 150;   // 静置 3s (cmd 0)
+    const int TURN_STEPS = 250;   // 转向 5s (cmd yaw=+0.5)
+    const int POST_STEPS = 50;    // 停 1s
+    const int TOTAL = PRE_STEPS + TURN_STEPS + POST_STEPS;
+    const float TURN_CMD[3] = {0.0f, 0.0f, 0.5f};  // vx=0, vy=0, yaw=+0.5（对齐 sim2sim）
+    const float STILL_CMD[3] = {0.0f, 0.0f, 0.0f};
+
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    if (!motor_mgr.Initialize(thread_mgr)) { printf("[ERROR] 初始化失败\n"); return; }
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    // 使能：腿 IMPEDANCE + 轮 SPEED 0 速弱增益（软启动）
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            motor_mgr.SetControlMode(cp, mi, IMPEDANCE);
+    for (int cp = 0; cp < 4; cp++)
+        motor_mgr.SetControlMode(cp, 4, SPEED);
+    usleep(100000);
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            motor_mgr.PreEnableZeroTorque(cp, mi);
+    for (int cp = 0; cp < 4; cp++)
+        motor_mgr.SendSpeed(cp, 4, 0.0f, rl::WHEEL_SOFT_KVP, 0.0f);
+    usleep(100000);
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 4; mi++)
+            motor_mgr.EnableMotor(cp, mi);
+    usleep(200000);
+
+    ImuDevice imu;
+    imu.SetMount(ImuMount::Z_DOWN_X);
+    bool imu_ok = imu.Initialize("/dev/ttyUSB0", 115200);
+    if (!imu_ok) printf("[WARN] IMU 打开失败，gyro/quat 用默认值（数据缺 IMU，务必手动观察）\n");
+
+    // ---- 起立到 STAND（10s）----
+    float stand_q[12];
+    for (int leg = 0; leg < 4; leg++) {
+        stand_q[leg * 3 + 0] = deg2rad(STAND_HIP_DEG);
+        stand_q[leg * 3 + 1] = deg2rad(STAND_THIGH_DEG);
+        stand_q[leg * 3 + 2] = deg2rad(STAND_CALF_DEG);
+    }
+    float start_pos[12];
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            start_pos[cp * 3 + mi - 1] = motor_mgr.GetStatus(cp, mi).position;
+    printf("[INFO] 起立中（10s 到 STAND {0,-60,60}°）...\n");
+    for (int f = 0; f <= 500; f++) {
+        if (g_rl_stop) break;
+        float t = (float)f / 500;
+        for (int cp = 0; cp < 4; cp++)
+            for (int mi = 1; mi <= 3; mi++) {
+                float pos = start_pos[cp * 3 + mi - 1]
+                          + (stand_q[cp * 3 + mi - 1] - start_pos[cp * 3 + mi - 1]) * t;
+                motor_mgr.SendImpedance(cp, mi, pos, 0.0f, 200.0f, 20.0f, 0.0f);
+            }
+        if (f % 100 == 0) printf("  起立 %4.0f%%\n", t * 100.0f);
+        usleep(1000000 / HZ);
+    }
+    // 过渡 DEFAULT_POSE（1s）
+    float dp_q[12];
+    for (int leg = 0; leg < 4; leg++)
+        for (int j = 0; j < 3; j++)
+            dp_q[leg * 3 + j] = rl::urdf_to_status(rl::DEFAULT_POSE[leg * 3 + j], leg * 3 + j);
+    printf("[INFO] 过渡到 DEFAULT_POSE（1s）...\n");
+    for (int f = 0; f <= 50; f++) {
+        if (g_rl_stop) break;
+        float t = (float)f / 50;
+        for (int cp = 0; cp < 4; cp++)
+            for (int mi = 1; mi <= 3; mi++) {
+                float pos = stand_q[cp * 3 + mi - 1]
+                          + (dp_q[cp * 3 + mi - 1] - stand_q[cp * 3 + mi - 1]) * t;
+                motor_mgr.SendImpedance(cp, mi, pos, 0.0f, 200.0f, 20.0f, 0.0f);
+            }
+        usleep(1000000 / HZ);
+    }
+    printf("[INFO] 已站立，进入 RL 录制（静置→yaw=0.5→停）...\n");
+
+    // ---- S2R 遥测记录：log/rlrun_<ts>/trace.csv（recorder.begin 建目录 + 表头 + meta）----
+    S2RRecorder::inst().begin(
+        "Example56 fixed-yaw: vx=0 yaw=+0.5 5s (phase0 静置3s / 1 转向5s / 2 停1s)");
+
+    // ---- RL 录制循环 ----
+    g_rl_stop = 0;
+    signal(SIGINT, rl_signal_handler);
+    float last_action[16] = {0.0f};
+    float wheel_v_lp[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float cmd[3] = {STILL_CMD[0], STILL_CMD[1], STILL_CMD[2]};
+    int step = 0;
+    bool fell = false;
+
+    for (step = 0; step < TOTAL && !g_rl_stop; step++) {
+        int phase = (step < PRE_STEPS) ? 0 : (step < PRE_STEPS + TURN_STEPS ? 1 : 2);
+        const float* cbase = (phase == 1) ? TURN_CMD : STILL_CMD;
+        cmd[0] = cbase[0]; cmd[1] = cbase[1]; cmd[2] = cbase[2];
+        if (step == PRE_STEPS) printf("[INFO] 进入转向段 yaw=+0.5（5s）...\n");
+        if (step == PRE_STEPS + TURN_STEPS) printf("[INFO] 转向结束，停 1s...\n");
+
+        float pos_can[16], vel_can[16], tau_can[16];
+        for (int cp = 0; cp < 4; cp++)
+            for (int mi = 1; mi <= 4; mi++) {
+                MotorStatus st = motor_mgr.GetStatus(cp, mi);
+                int mjx = cp * 4 + (mi - 1);
+                pos_can[mjx] = st.position;
+                vel_can[mjx] = st.velocity;
+                tau_can[mjx] = st.torque;
+            }
+        float pos_policy[16], vel_policy[16];
+        for (int i = 0; i < 16; i++) {
+            pos_policy[i] = rl::status_to_urdf(pos_can[rl::MJX_TO_POLICY[i]], i);
+            vel_policy[i] = rl::status_vel_to_urdf(vel_can[rl::MJX_TO_POLICY[i]], i);
+        }
+        float gyro[3] = {0, 0, 0}, quat[4] = {1, 0, 0, 0};
+        if (imu_ok) {
+            imu.GetGyro(gyro[0], gyro[1], gyro[2]);
+            imu.GetQuat(quat[0], quat[1], quat[2], quat[3]);
+        }
+        float obs[64];
+        rl::build_observation(gyro, quat, pos_policy, vel_policy, last_action, cmd, step, obs);
+        float action[16];
+        rl::mlp_forward(obs, action);
+
+        // 记录每步目标/下发
+        float qt[16] = {0.0f}, qtv[16] = {0.0f};   // q_target/qd_target（轮 q_target=0，qtv 承载轮下发速度）
+        for (int cp = 0; cp < 4; cp++)
+            for (int mi = 1; mi <= 4; mi++) {
+                int mjx = cp * 4 + (mi - 1);
+                int p = rl::POLICY_TO_MJX[mjx];
+                if (mi <= 3) {
+                    float q_t_urdf = rl::leg_pos_target(action[p], p);
+                    qt[mjx] = q_t_urdf;
+                    qtv[mjx] = 0.0f;
+                    float q = rl::urdf_to_status(q_t_urdf, p);
+                    const JointImpedanceParam& ip = GetJointImpedance(cp, mi);
+                    motor_mgr.SendImpedance(cp, mi, q, 0.0f, rl::LEG_KP, rl::LEG_KD, ip.tau_ff);
+                } else {
+                    int w = p - rl::NUM_LEG_JOINTS;
+                    float tv = rl::WHEEL_VEL_SCALE * action[p];
+                    wheel_v_lp[w] += rl::WHEEL_CMD_ALPHA * (tv - wheel_v_lp[w]);
+                    float cv = wheel_v_lp[w];
+                    if (fabsf(cmd[0]) < rl::WHEEL_CMD_MOVE_THR && fabsf(cmd[2]) < rl::WHEEL_CMD_MOVE_THR)
+                        cv = 0.0f;
+                    motor_mgr.SendSpeed(cp, mi, cv, rl::WHEEL_KVP, rl::WHEEL_KVI);
+                    qtv[mjx] = cv;   // 轮目标速度（记录真实下发值）
+                }
+            }
+        for (int i = 0; i < 16; i++) last_action[i] = action[i];
+
+        // tau → policy 序 URDF（CONV_A；thigh=-1）；wheel 用 GetStatus 扭矩
+        float tau_policy[16];
+        for (int i = 0; i < 16; i++)
+            tau_policy[i] = rl::CONV_A[i] * tau_can[rl::MJX_TO_POLICY[i]];
+
+        // S2R 落盘一行（qt/qtv 从 mjx 序转 policy 序；欧拉在 recorder 内算）
+        float qt_p[16], qtv_p[16];
+        for (int i = 0; i < 16; i++) {
+            qt_p[i]  = qt[rl::MJX_TO_POLICY[i]];
+            qtv_p[i] = qtv[rl::MJX_TO_POLICY[i]];
+        }
+        S2RRecorder::inst().step(step, phase, cmd, qt_p, qtv_p,
+                                 pos_policy, vel_policy, tau_policy, quat, gyro);
+
+        // 诊断：每 25 步打印（步内命令/轮0速/pgr 供人工对照）
+        if (step % 25 == 0) {
+            MotorStatus w0 = motor_mgr.GetStatus(0, 4);
+            printf("  [%4d p%d] cmd(%.1f,%.1f,%.1f) vW0=%.2f pgr_z=%.2f\n",
+                   step, phase, cmd[0], cmd[1], cmd[2], w0.velocity, obs[8]);
+            fflush(stdout);
+        }
+        if (obs[8] > -0.34f) { printf("[WARN] 跌倒检测触发 (pgr_z=%.2f)，急停\n", obs[8]); fell = true; break; }
+        usleep((useconds_t)(1e6f / HZ));
+    }
+    S2RRecorder::inst().finish();
+    signal(SIGINT, SIG_DFL);
+    printf("[INFO] 录制结束：%d/%d 步%s，趴下...\n",
+           step, TOTAL, fell ? "，中途跌倒" : "");
+
+    // ---- 趴下（12s 缓降到 LIE_DOWN）----
+    float lie_q[12];
+    for (int leg = 0; leg < 4; leg++) {
+        lie_q[leg * 3 + 0] = deg2rad(LIE_DOWN_HIP_DEG);
+        lie_q[leg * 3 + 1] = deg2rad(LIE_DOWN_THIGH_DEG);
+        lie_q[leg * 3 + 2] = deg2rad(LIE_DOWN_CALF_DEG);
+    }
+    float cur_pos[12];
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++)
+            cur_pos[cp * 3 + mi - 1] = motor_mgr.GetStatus(cp, mi).position;
+    for (int f = 0; f <= 600; f++) {
+        if (g_rl_stop) break;
+        float t = (float)f / 600;
+        for (int cp = 0; cp < 4; cp++)
+            for (int mi = 1; mi <= 3; mi++) {
+                float pos = cur_pos[cp * 3 + mi - 1]
+                          + (lie_q[cp * 3 + mi - 1] - cur_pos[cp * 3 + mi - 1]) * t;
+                motor_mgr.SendImpedance(cp, mi, pos, 0.0f, 200.0f, 20.0f, 0.0f);
+            }
+        if (f % 100 == 0) printf("  趴下 %4.0f%%\n", t * 100.0f);
+        usleep(1000000 / HZ);
+    }
+    printf("[INFO] 已趴下，保持 2s...\n");
+    sleep(2);
+
+    // ---- 清理 ----
+    printf("[INFO] 失能...\n");
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 4; mi++)
+            motor_mgr.DisableMotor(cp, mi);
+    imu.Shutdown();
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+    printf("[INFO] 示例56 完成。\n");
 }
 
 // ================= 示例 53：RL 站立下重力前馈测量 =================
