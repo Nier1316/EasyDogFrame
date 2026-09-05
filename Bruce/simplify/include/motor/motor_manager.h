@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <mutex>
 #include <atomic>
+#include <functional>
 #include <chrono>
 #include "motor/ele_motor.h"
 #include "motor/motor_calibration.h"
@@ -81,6 +82,18 @@ public:
 
     MotorStatus GetStatus(uint8_t can_port, uint8_t motor_id) const;
 
+    // ============ 腿阻抗前馈覆盖（500Hz 高频摩擦前馈，2026-09-05） ============
+    // RL 摩擦前馈高频化：策略 50Hz 算一次摩擦前馈跟不上反馈，改为 SendOnce
+    //   （500Hz，每 2ms）用最新 q/q̇ 重算并叠加到 target_torque 上发给固件。
+    // 回调返回 status/目标坐标的扭矩增量（随 target 一起逆标定翻转，与策略侧给
+    //   target_torque 的路径一致）。空回调 = 关闭（行为同旧，target_torque 原样）。
+    // 由 examples_common 的 EnableRlFrictionFF/DisableRlFrictionFF 统一开关。
+    // 分层：motor 层只提供钩子不依赖 strategy；回调实现（rl::leg_friction_ff）在上层。
+    using LegTauFFOverrideFn = std::function<float(uint8_t can_port, uint8_t motor_id,
+            float pos_status, float vel_status, float qdes_status, float kp, float kd)>;
+    void SetLegTauFFOverride(LegTauFFOverrideFn fn);
+    void ClearLegTauFFOverride();
+
     // ============ 轮子急停（安全，2026-08-29） ============
 
     /**
@@ -131,6 +144,9 @@ private:
     uint8_t     m_usb_baud = 0;                // USB2CAN 波特率索引（0=1000k, 3=500k）
     bool m_initialized = false;   // Initialize() 全部成功后才置真，Stop() 据此避免关未打开的设备
     std::atomic<bool> m_wheel_estop{false};    // 轮子急停标志（手动 WheelEmergencyStop / 超速自动置位）
+
+    std::mutex m_ff_mtx;                        // 腿前馈覆盖回调锁（Set/Clear/SendOnce 读）
+    LegTauFFOverrideFn m_leg_ff;                // 500Hz 摩擦前馈覆盖（空=关闭）
 };
 
 #endif // MOTOR_MANAGER_H_

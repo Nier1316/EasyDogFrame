@@ -433,6 +433,15 @@ void MotorManager::SendOnce() {
             float send_pos = tgt_pos;
             float send_vel = tgt_vel;
             float send_torque = motor.target_torque;
+            // 腿阻抗摩擦前馈高频覆盖（2026-09-05）：策略 50Hz 算一次跟不上反馈，
+            // 这里每 2ms 用最新 q/q̇ 重算并叠加（仅腿 IMPEDANCE；回调见 SetLegTauFFOverride）。
+            if (motor.motor_id <= 3 && motor.control_mode == IMPEDANCE) {
+                std::lock_guard<std::mutex> lg(m_ff_mtx);
+                if (m_leg_ff)
+                    send_torque += m_leg_ff(can_port, motor_id,
+                                            motor.current_position, motor.current_speed,
+                                            motor.target_position, motor.kp, motor.kd);
+            }
             ApplyMotorCalibrationInverse(can_port, motor_id, send_pos, send_vel, &send_torque);
 
             // 日志: 用户目标值 → 逆标定后实际发送值
@@ -473,4 +482,14 @@ void MotorManager::SendOnce() {
             }
         }
     }
+}
+
+void MotorManager::SetLegTauFFOverride(LegTauFFOverrideFn fn) {
+    std::lock_guard<std::mutex> lg(m_ff_mtx);
+    m_leg_ff = std::move(fn);
+}
+
+void MotorManager::ClearLegTauFFOverride() {
+    std::lock_guard<std::mutex> lg(m_ff_mtx);
+    m_leg_ff = nullptr;
 }

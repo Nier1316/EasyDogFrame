@@ -119,6 +119,7 @@ void Example25_RLPolicyControl() {
     // ---- RL 主循环（50 Hz）----
     g_rl_stop = 0;
     signal(SIGINT, rl_signal_handler);
+    EnableRlFrictionFF(motor_mgr);   // 500Hz 摩擦前馈（override，见 examples_common）
 
     float last_action[16] = {0.0f};
     float wheel_v_lp[4] = {0.0f, 0.0f, 0.0f, 0.0f};   // 轮速目标低通状态（SPEED 下发前平滑）
@@ -190,10 +191,9 @@ void Example25_RLPolicyControl() {
                     float q_target = rl::urdf_to_status(rl::leg_pos_target(action[p], p), p);
                     // 扭矩前馈：JOINT_IMPEDANCE.tau_ff（重力）+ 腿摩擦前馈（库仑）
                     const JointImpedanceParam& ip = GetJointImpedance(cp, mi);
-                    float q_t_urdf = rl::leg_pos_target(action[p], p);
-                    float tau_pd = rl::LEG_KP * (q_t_urdf - pos_policy[p])
-                                 - rl::LEG_KD * vel_policy[p];
-                    float tau_ff = ip.tau_ff + rl::leg_friction_ff(tau_pd, vel_policy[p], p);
+                    // 摩擦前馈已由 500Hz SendOnce override 实时叠加（EnableRlFrictionFF），
+                    // 此处只发常量重力前馈，避免 20ms 旧值双份。
+                    float tau_ff = ip.tau_ff;
                     motor_mgr.SendImpedance(cp, mi, q_target, 0.0f,
                                             rl::LEG_KP, rl::LEG_KD, tau_ff);
                 } else {
@@ -229,6 +229,7 @@ void Example25_RLPolicyControl() {
     }
 
     signal(SIGINT, SIG_DFL);
+    DisableRlFrictionFF(motor_mgr);
 
     // ---- 清理：失能 + 停线程 ----
     printf("[INFO] 正在失能...\n");
@@ -795,6 +796,7 @@ void Example35_WheelFFCalibrate() {
         for (int mi = 1; mi <= 4; mi++)
             motor_mgr.DisableMotor(cp, mi);
     signal(SIGINT, SIG_DFL);
+    DisableRlFrictionFF(motor_mgr);
 
     thread_mgr.stop_thread("motor_send");
     thread_mgr.stop_thread("motor_receive");
@@ -923,6 +925,7 @@ void Example36_RLStandLoop() {
     // ---- RL 主循环（50 Hz，cmd 固定原地站立）----
     g_rl_stop = 0;
     signal(SIGINT, rl_signal_handler);
+    EnableRlFrictionFF(motor_mgr);   // 500Hz 摩擦前馈（override，见 examples_common）
 
     float last_action[16] = {0.0f};
     float wheel_v_lp[4] = {0.0f, 0.0f, 0.0f, 0.0f};   // 轮速目标低通状态（SPEED 下发前平滑）
@@ -1116,6 +1119,7 @@ void Example36_RLStandLoop() {
     }
 
     signal(SIGINT, SIG_DFL);
+    DisableRlFrictionFF(motor_mgr);
 
     // ---- S2R 收尾：关文件 + 打印绘图命令 ----
     S2RRecorder::inst().finish();
@@ -1200,6 +1204,7 @@ void Example37_RLTeleopControl() {
     if (!motion.standTo(rl::DEFAULT_POSE, 10.0f, []() { return g_rl_stop != 0; })) {
         printf("[WARN] 起立被中止，直接失能退出\n");
         signal(SIGINT, SIG_DFL);
+        DisableRlFrictionFF(motor_mgr);
         motion.emergencyStop();
         imu.Shutdown();
         controller.Shutdown();
@@ -1214,6 +1219,7 @@ void Example37_RLTeleopControl() {
     // ---- RL 主循环（50 Hz，手柄遥操作）----
     g_rl_stop = 0;
     signal(SIGINT, rl_signal_handler);
+    EnableRlFrictionFF(motor_mgr);   // 500Hz 摩擦前馈（override，见 examples_common）
 
     float cmd[3] = {0.0f, 0.0f, 0.0f};
     motion.beginRL(cmd);
@@ -1296,6 +1302,7 @@ void Example37_RLTeleopControl() {
     }
 
     signal(SIGINT, SIG_DFL);
+    DisableRlFrictionFF(motor_mgr);
 
     // ---- S2R 收尾：关文件 + 打印绘图命令 ----
     S2RRecorder::inst().finish();
@@ -1645,6 +1652,7 @@ void Example51_StandRLThenLieDown() {
     // ---- RL 站立循环（50Hz），回车触发退出 → 趴下 ----
     g_rl_stop = 0;
     signal(SIGINT, rl_signal_handler);
+    EnableRlFrictionFF(motor_mgr);   // 500Hz 摩擦前馈（override，见 examples_common）
     float last_action[16] = {0.0f};
     float wheel_v_lp[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     const float CMD_BIAS_VX = -0.05f;   // 抵消策略前冲（同 Example36）
@@ -1714,6 +1722,7 @@ void Example51_StandRLThenLieDown() {
         usleep(1000000 / HZ);
     }
     signal(SIGINT, SIG_DFL);
+    DisableRlFrictionFF(motor_mgr);
 
     // ---- 趴下（12s 缓降到 LIE_DOWN，轮 0 速弱增益保持）----
     float lie_q[12];
@@ -1843,6 +1852,7 @@ void Example52_FixedCmdYaw() {
     // ---- RL 循环：cmd 固定 {0,0,0.5}，跑 RUN_STEPS 步 ----
     g_rl_stop = 0;
     signal(SIGINT, rl_signal_handler);
+    EnableRlFrictionFF(motor_mgr);   // 500Hz 摩擦前馈（override，见 examples_common）
     float last_action[16] = {0.0f};
     float wheel_v_lp[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     float cmd[3] = {CMD[0], CMD[1], CMD[2]};
@@ -1903,6 +1913,7 @@ void Example52_FixedCmdYaw() {
         usleep(1000000 / HZ);
     }
     signal(SIGINT, SIG_DFL);
+    DisableRlFrictionFF(motor_mgr);
     printf("[INFO] 转向结束（%d 步%s），趴下...\n", step, fell ? "，中途跌倒" : "");
 
     // ---- 趴下（12s 缓降到 LIE_DOWN）----
@@ -2047,6 +2058,7 @@ void Example56_FixedYawRecord() {
     // ---- RL 录制循环 ----
     g_rl_stop = 0;
     signal(SIGINT, rl_signal_handler);
+    EnableRlFrictionFF(motor_mgr);   // 500Hz 摩擦前馈（override，见 examples_common）
     float last_action[16] = {0.0f};
     float wheel_v_lp[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     float cmd[3] = {STILL_CMD[0], STILL_CMD[1], STILL_CMD[2]};
@@ -2136,6 +2148,7 @@ void Example56_FixedYawRecord() {
     }
     S2RRecorder::inst().finish();
     signal(SIGINT, SIG_DFL);
+    DisableRlFrictionFF(motor_mgr);
     printf("[INFO] 录制结束：%d/%d 步%s，趴下...\n",
            step, TOTAL, fell ? "，中途跌倒" : "");
 
@@ -2267,6 +2280,7 @@ void Example53_MeasureGravityFF() {
     // ---- RL 站立循环：热身 + 记录 cal_torque ----
     g_rl_stop = 0;
     signal(SIGINT, rl_signal_handler);
+    EnableRlFrictionFF(motor_mgr);   // 500Hz 摩擦前馈（override，见 examples_common）
     float last_action[16] = {0.0f};
     float wheel_v_lp[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     const float CMD_BIAS_VX = -0.05f;
@@ -2326,6 +2340,7 @@ void Example53_MeasureGravityFF() {
         usleep(1000000 / HZ);
     }
     signal(SIGINT, SIG_DFL);
+    DisableRlFrictionFF(motor_mgr);
 
     // ---- 打印建议 tau_ff ----
     if (rec_cnt > 0) {
