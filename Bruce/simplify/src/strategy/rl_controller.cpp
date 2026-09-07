@@ -122,14 +122,21 @@ void build_observation(const float* gyro, const float* quat,
     obs[54] = cmd[1];
     obs[55] = cmd[2];
 
-    // 8) gait_phase[8] = [sin(2πφ), cos(2πφ)] × 4
+    // 8) gait_phase[8] = [sin(2πφ)×4脚, cos(2πφ)×4脚] —— 分组布局！
+    // ⚠ 训练侧 observations.py: phase_feat = concat([sin(2πφ), cos(2πφ)])，
+    //   φ 为 4 脚数组 → 布局 [sinFL,sinFR,sinRL,sinRR, cosFL,cosFR,cosRL,cosRR]。
+    //   曾误用交错 [sinFL,cosFL,sinFR,cosFR,...] 导致 obs[56..63] 从 57 起错位
+    //   （轮足低速行进腿摆动小，gait_phase 权重低故能走；动态大步态才受影响）。
     const float two_pi = 2.0f * 3.14159265358979323846f;
+    float sin_ph[4], cos_ph[4];
     for (int foot = 0; foot < 4; ++foot) {
         float phi = std::fmod(step * CONTROL_DT / GAIT_CYCLE + GAIT_OFFSET[foot], 1.0f);
         if (phi < 0.0f) phi += 1.0f;
-        obs[56 + foot * 2 + 0] = std::sin(two_pi * phi);
-        obs[56 + foot * 2 + 1] = std::cos(two_pi * phi);
+        sin_ph[foot] = std::sin(two_pi * phi);
+        cos_ph[foot] = std::cos(two_pi * phi);
     }
+    for (int foot = 0; foot < 4; ++foot) obs[56 + foot] = sin_ph[foot];   // sin × 4
+    for (int foot = 0; foot < 4; ++foot) obs[60 + foot] = cos_ph[foot];   // cos × 4
 
     // clip 到 [-100, 100]（与 sim2sim.py 一致）
     for (int i = 0; i < OBS_DIM; ++i) {
