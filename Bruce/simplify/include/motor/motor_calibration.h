@@ -119,27 +119,27 @@ static const JointImpedanceParam JOINT_IMPEDANCE[CAN_PORTS][3] = {
     //                kp      kd   tau_ff
     // CAN0 端口 (左前腿)
     {
-        {300.0f, 10.0f, -20.0f}, // Motor 1 (Hip)  tau_ff=-10
+        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-10
         {250.0f, 10.0f, -5.0f},  // Motor 2 (Thigh)  tau_ff=-5
-        {250.0f, 10.0f, 0.0f},  // Motor 3 (Calf)   tau_ff=12
+        {250.0f, 10.0f, 12.0f},  // Motor 3 (Calf)   tau_ff=12
     },
     // CAN1 端口 (右前腿)
     {
-        {300.0f, 10.0f, -20.0f}, // Motor 1 (Hip)  tau_ff=-10
+        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-10
         {250.0f, 10.0f, -5.0f},  // Motor 2 (Thigh)  tau_ff=-5
-        {250.0f, 10.0f, 0.0f},  // Motor 3 (Calf)   tau_ff=12
+        {250.0f, 10.0f, 12.0f},  // Motor 3 (Calf)   tau_ff=12
     },
     // CAN2 端口 (左后腿)
     {
-        {300.0f, 10.0f, -20.0f}, // Motor 1 (Hip)  tau_ff=-10
-        {250.0f, 10.0f, -5.0f},  // Motor 2 (Thigh)  tau_ff=-5
-        {250.0f, 10.0f, 0.0f},  // Motor 3 (Calf)   tau_ff=20
+        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-10
+        {250.0f, 10.0f, 0.0f},  // Motor 2 (Thigh)  tau_ff=-5
+        {250.0f, 10.0f, 12.0f},  // Motor 3 (Calf)   tau_ff=20
     },
     // CAN3 端口 (右后腿)
     {
-        {300.0f, 10.0f, -20.0f}, // Motor 1 (Hip)  tau_ff=-10
-        {250.0f, 10.0f, -5.0f},  // Motor 2 (Thigh)  tau_ff=-5
-        {250.0f, 10.0f, 0.0f},  // Motor 3 (Calf)   tau_ff=20
+        {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-10
+        {250.0f, 10.0f, 0.0f},  // Motor 2 (Thigh)  tau_ff=-5
+        {250.0f, 10.0f, 12.0f},  // Motor 3 (Calf)   tau_ff=20
     },
 };
 

@@ -1194,7 +1194,7 @@ void Example37_RLTeleopControl() {
     MotionController motion;
     MotionController::Config mcfg;
     mcfg.hz          = HZ;
-    mcfg.max_vx      = 0.5f;   // 移动量程（用户 2026-08-30：vx 保持 0.5 保守）
+    mcfg.max_vx      = 1.0f;   // 移动量程（用户 2026-08-30：vx 保持 0.5 保守）
     mcfg.max_wz      = 1.0f;   // 转向量程（用户 2026-08-30 满推改回 1.0 = 训练上限）
     mcfg.cmd_bias_vx = -0.05f;  // 抵消策略 wheel action 正向偏置（与 Example36 的 CMD_BIAS_VX 对齐）
     motion.setConfig(mcfg);

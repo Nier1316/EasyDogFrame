@@ -220,14 +220,14 @@ int main() {
     // printf("[INFO] Example49 completed.\n");
 
     // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，USB2CAN 4 路）
-    // printf("[INFO] Running Example37_RLTeleopControl...\n");
-    // Example37_RLTeleopControl();
-    // printf("[INFO] Example37 completed.\n");
+    printf("[INFO] Running Example37_RLTeleopControl...\n");
+    Example37_RLTeleopControl();
+    printf("[INFO] Example37 completed.\n");
 
     // 运行示例56 - 固定 yaw 转向真机遥测录制（sim2real 原地转向对比，落盘 log/s2r_fixedyaw_*.csv）
-    printf("[INFO] Running Example56_FixedYawRecord...\n");
-    Example56_FixedYawRecord();
-    printf("[INFO] Example56 completed.\n");
+    // printf("[INFO] Running Example56_FixedYawRecord...\n");
+    // Example56_FixedYawRecord();
+    // printf("[INFO] Example56 completed.\n");
 
 
     return 0;

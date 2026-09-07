@@ -192,7 +192,7 @@ bool Usb2CanTransport::close(uint8_t idx) {
 void Usb2CanTransport::shutdown() {
     std::lock_guard<std::mutex> lock(m_mutex);
     for (auto& p : m_devices)
-        if (p.second) dmcan_device_close(p.second);   // 有 "libusb_transfer_cancelled" 噪音，不崩
+         if (p.second) dmcan_device_close(p.second);   // 有 "libusb_transfer_cancelled" 噪音，不崩
     m_devices.clear();
     m_handle_to_devidx.clear();
     m_channels.clear();
