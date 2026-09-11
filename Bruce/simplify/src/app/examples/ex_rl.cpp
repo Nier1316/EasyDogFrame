@@ -1,5 +1,11 @@
 // ===== RL/前馈/延迟辨识示例 25,30-32,35-38 =====
 // 由原单文件 example.cpp 示例拆包而来（现拆到 src/app/examples/），公共 helper 见 app/examples_common.h
+//
+// ---- RL 示例（25 策略控制 / 30 链路验证 / 36 站立 / 37 遥操作 / 51-53 流程）的权重来源 ----
+// 策略权重编译进 include/strategy/policy_weights.h，由 tool/export_policy.py 从
+// 入库 checkpoint weights/iteration_3500.pkl 导出（当前部署版，2026-09-11）。
+// 换权重流程：export_policy.py（默认读 weights/iteration_3500.pkl，--ckpt 覆盖）
+//   → 重新编译 → 跑 Example30 做 MLP 数值回归门（REF_OBS/REF_ACTION 核对）。
 #include "app/examples/ex_rl.h"
 #include "app/examples_common.h"
 #include "motion/motion_controller.h"

@@ -48,7 +48,7 @@ HWT606 IMU ─(115200 串口, Z朝下绕X翻)─► imu_device
 
 ---
 
-## 3. 策略规格（traj_v28 / iteration_3000）
+## 3. 策略规格（iteration_3500，`weights/iteration_3500.pkl`）
 
 | 项 | 值 |
 |---|---|

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Export the dogurdf policy actor weights into a C++ header.
 
-Reads the dogurdf RL training checkpoint
-``/home/sysu/Desktop/Project/Bruce/RL_Train/code/checkpoints/.../traj_v28/iteration_3000.pkl``
-(flax ``ActorCriticMLP`` state dict), extracts the 4 actor layers, and writes:
+Reads the dogurdf RL training checkpoint (flax ``ActorCriticMLP`` state dict) — default
+``weights/iteration_3500.pkl`` (入库副本，随 git 同步；--ckpt 可覆盖任意 .pkl) — extracts
+the 4 actor layers, and writes:
 
   * ``include/strategy/policy_weights.h``  — const float arrays for the C++ MLP.
   * ``include/strategy/policy_test_ref.h`` — a fixed reference obs/action pair so
@@ -24,14 +24,12 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(HERE)  # simplify/
-# 训练框架（权威规格来源）
+# 训练框架（flax 交叉验证需其 src/networks.py；缺失则自动跳过验证）
 TRAIN = "/home/sysu/Desktop/Project/Bruce/RL_Train/code"
-# 默认指向最新训练结果（v28_v3_resume，2026-09-03），可用 --ckpt 覆盖
-CKPT = os.path.join(
-    TRAIN,
-    "checkpoints/dogurdf_velocity/checkpoints_20260903_001143_v28_v3_resume/"
-    "iteration_2100.pkl",
-)
+# 默认指向【入库的最新部署权重】weights/iteration_3500.pkl（2026-09-11）。
+# 用 weights/ 副本而非 RL_Train 绝对路径：工程自包含，换电脑 git pull 即可导出。
+# 需要导出其它版本时用 --ckpt <path> 覆盖。
+CKPT = os.path.join(PROJECT, "weights", "iteration_3500.pkl")
 # 实际编译用的权重在 include/strategy/（include/rl/ 已废弃）
 OUT_WEIGHTS = os.path.join(PROJECT, "include/strategy/policy_weights.h")
 OUT_REF = os.path.join(PROJECT, "include/strategy/policy_test_ref.h")
