@@ -48,7 +48,7 @@ HWT606 IMU ─(115200 串口, Z朝下绕X翻)─► imu_device
 
 ---
 
-## 3. 策略规格（iteration_3500，`weights/iteration_3500.pkl`）
+## 3. 策略规格（iteration_4350，`weights/iteration_4350.pkl`，med_posefree_s4_v3.3）
 
 | 项 | 值 |
 |---|---|
