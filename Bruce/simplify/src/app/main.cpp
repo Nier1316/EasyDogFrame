@@ -229,6 +229,11 @@ int main() {
     // Example56_FixedYawRecord();
     // printf("[INFO] Example56 completed.\n");
 
+    // 运行示例57 - 单腿三关节移到 motor_calib 零位 → 读 RL(URDF) 对照（验证 CONV_A/B 零位标定）
+    // printf("[INFO] Running Example57_SingleLegZeroAlign...\n");
+    // Example57_SingleLegZeroAlign();
+    // printf("[INFO] Example57 completed.\n");
+
 
     return 0;
 }

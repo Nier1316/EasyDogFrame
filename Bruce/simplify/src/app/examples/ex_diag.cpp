@@ -2733,3 +2733,130 @@ void Example54_FrictionSysId() {
     printf("\n[INFO] Example54 完成：%d 关节完成，%d 失败。\n", done - failed, failed);
     printf("[INFO] 数据 → log/fric_id/，离线回归：python tool/friction_id_offline.py\n");
 }
+
+// ===== 示例 57：单腿三关节移到"物理零位姿态" → 读 RL(URDF) 对照 =====
+// 目的：验证 RL 层零位标定（sim2real_conv 的 CONV_A/CONV_B）与物理零位是否一致。
+// 做法：仿 Example45。选一条腿，把 hip/thigh/calf 都移到物理零位姿态
+//      （hip 连杆水平 / thigh 竖直 / calf ⊥ 大腿），稳态后读 GetStatus（标定后指令角 status）
+//      与 rl::status_to_urdf（RL/URDF 角），对照 MuJoCo(MJCF) 反推的"物理零位应有 URDF 值"：
+//          hip 0.000 | thigh -1.020 | calf +0.168   (rad)
+//      urdf 读数 ≈ 理论值 → 该路 CONV 准；差 >0.1 rad(5.7°) → CONV_B 该路不准。
+// ⚠⚠ 物理零位姿态对应的 status 指令角**不是 (0,0,0)**：hip/thigh = 0，**calf = π/2**。
+//   根因：θ₃ 限位（robot_calibration §4）是 [60°,180°]，0 在限位之外 → 命令 calf status=0
+//   会一路顶到机械挡（现象："calf 被收到最小限位、顶死"）。
+//   Ex45 实机验证：calf 命令 π/2 = 小腿⊥大腿（该示例 calf 目标就是 M_PI_2，不是 0）。
+// 可选：再输入一个 calf status 目标移一次 → 验证 A 斜率/符号（urdf = B + A·status）。
+// ✅ 2026-09-12 实测（单腿）：到位后 urdf 与理论差 hip -1.9° / thigh +3.7° / calf +4.9°，
+//   全部 <5°（量级 = CONV_B 固有残差 0.03/0.06 + calf 目标 π/2 的 ~7° 近似 + KP=150 的
+//   PD 稳态误差）→ **CONV_A/B 与物理零位一致，「RL 零位与实际 0 位不符」假说排除**。
+// 安全：只使能选中一条腿；2s 插值；腿会真的被驱动 → 请吊起/腿悬空、留足空间。
+void Example57_SingleLegZeroAlign() {
+    printf("\n========== 示例 57：单腿移到物理零位姿态 → 读 RL(URDF) 对照 ==========\n");
+    printf("[INFO] 物理零位姿态定义：hip 连杆水平 / thigh 竖直 / calf ⊥ 大腿。\n");
+    printf("[INFO] 到位后读 status 与 RL(URDF) 角，对照 MuJoCo 反推应有值：\n");
+    printf("[INFO]   hip 0.000 | thigh -1.020 | calf +0.168 (rad) —— 差大即该路 CONV_B 不准。\n");
+    printf("[INFO] 目标 status：hip 0 / thigh 0 / calf +%.4f rad(π/2) ← calf 不能填 0（超 θ₃ 下限 60°）。\n",
+           M_PI_2);
+    printf("[WARN] 腿会被驱动到零位：确保狗吊起/腿悬空、空间足够。\n\n");
+
+    int leg = -1;
+    printf("选择腿 0=FL 1=FR 2=RL 3=RR: "); fflush(stdout);
+    if (scanf("%d", &leg) != 1 || leg < 0 || leg > 3) { printf("[ERROR] 需 0~3\n"); return; }
+    { int c; while ((c = getchar()) != '\n' && c != EOF) {} }   // 清残留换行，供后面 fgets
+
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    motor_mgr.SetTransport(&Usb2CanTransport::GetInstance());
+    if (!motor_mgr.Initialize(thread_mgr)) { printf("[ERROR] 初始化失败\n"); return; }
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+
+    printf("[INFO] 使能 CAN%d 的 hip/thigh/calf...\n", leg);
+    for (int mi = 1; mi <= 3; mi++) motor_mgr.SetControlMode(leg, mi, IMPEDANCE);
+    usleep(100000);
+    for (int mi = 1; mi <= 3; mi++) motor_mgr.PreEnableZeroTorque(leg, mi);
+    usleep(100000);
+    for (int mi = 1; mi <= 3; mi++) motor_mgr.EnableMotor(leg, mi);
+    usleep(300000);
+
+    const float KP = 150.0f, KD = 10.0f;      // 温和增益（悬空摆位）
+    const char* jn[3] = {"hip", "thigh", "calf"};
+    // MuJoCo(MJCF) 反推：物理零位姿态对应的 URDF 角（理论真值）。calf 是 **+0.168**（正号）：
+    //   竖直大腿(q2=-1.020) 下，小腿(膝→轮轴向量)与大腿夹角=90° 时 q3=+0.16817。
+    const float TH_URDF[3] = {0.000f, -1.020f, +0.168f};
+
+    // θ 限位（status/指令角坐标，robot_calibration §4）：越界 = 顶机械挡（大扭矩、危险）。
+    const float LIM_LO[3] = {LOWER_LIMIT_THETA1_DEG, LOWER_LIMIT_THETA2_DEG, LOWER_LIMIT_THETA3_DEG};
+    const float LIM_HI[3] = {UPPER_LIMIT_THETA1_DEG, UPPER_LIMIT_THETA2_DEG, UPPER_LIMIT_THETA3_DEG};
+    auto check_limit = [&](const float tgt[3], const char* tag) {
+        for (int i = 0; i < 3; i++) {
+            float d = rad2deg(tgt[i]);
+            if (d < LIM_LO[i] || d > LIM_HI[i]) {
+                printf("[WARN] %s：%s 目标 %.1f° 超出限位 [%.0f, %.0f]° —— 会顶机械挡/大扭矩!\n",
+                       tag, jn[i], d, LIM_LO[i], LIM_HI[i]);
+            }
+        }
+    };
+
+    auto move_to = [&](const float tgt[3], float secs) {
+        float from[3];
+        for (int mi = 1; mi <= 3; mi++) from[mi - 1] = motor_mgr.GetStatus(leg, mi).position;
+        int frames = (int)(secs * 100);
+        for (int f = 0; f <= frames; f++) {
+            float t = (float)f / frames;
+            for (int mi = 1; mi <= 3; mi++) {
+                float pos = from[mi - 1] + (tgt[mi - 1] - from[mi - 1]) * t;
+                motor_mgr.SendImpedance(leg, mi, pos, 0.0f, KP, KD, 0.0f);
+            }
+            usleep(10000);
+        }
+        usleep(300000);   // 稳定
+    };
+    auto report = [&](const char* tag) {
+        printf("\n---- %s：status(实测) vs RL(URDF) 对照 ----\n", tag);
+        printf("  %-6s %12s %12s %12s %9s   %s\n", "关节", "实测status", "RL urdf读", "理论urdf", "差(°)", "CONV_A/B");
+        for (int mi = 1; mi <= 3; mi++) {
+            int p = leg * 3 + (mi - 1);              // 腿 policy 序 == CAN 腿序
+            float s = motor_mgr.GetStatus(leg, mi).position;
+            float u = rl::status_to_urdf(s, p);
+            printf("  %-6s %+12.4f %+12.4f %+12.4f %+9.1f   A%+.0f/B%+.3f\n",
+                   jn[mi - 1], s, u, TH_URDF[mi - 1], rad2deg(u - TH_URDF[mi - 1]),
+                   rl::CONV_A[p], rl::CONV_B[p]);
+        }
+        printf("[判读] hip/thigh 差应 <6°（CONV_B 0.0297/-0.9624 vs 理论 0/-1.020 的固有残差）；\n");
+        printf("       calf 目标 π/2 比精确膝 90°(status≈1.451) 大 ~7°，故 calf 差在 ±10° 内属正常；\n");
+        printf("       任一关节偏差远超上述量级 → 该路 CONV_B 不准（不是物理零位定义问题）。\n");
+    };
+
+    printf("[INFO] 移到物理零位姿态（calf 用 π/2，2s）...\n");
+    // ⚠ calf 目标 = π/2 而非 0：Ex45 实机验证 π/2 → 小腿⊥大腿；0 低于 θ₃ 下限 60° 会顶死。
+    float zero[3] = {0.0f, 0.0f, (float)M_PI_2};
+    check_limit(zero, "零位");
+    move_to(zero, 2.0f);
+    report("零位对照");
+
+    // ---- 可选第二点：输入另一 calf status 目标，验证 A 斜率/符号 ----
+    printf("\n[可选] 输入另一 calf status 目标做第二点（θ₃ 限位 1.05~3.14 rad，如 1.9 更弯），直接回车结束: ");
+    fflush(stdout);
+    char line[64];
+    if (fgets(line, sizeof line, stdin) && line[0] != '\n') {
+        float t2 = 0.0f;
+        if (sscanf(line, "%f", &t2) == 1) {
+            float tgt[3] = {0.0f, 0.0f, t2};
+            check_limit(tgt, "第二点");
+            printf("[INFO] 再次移动：calf status → %+.3f（2s）...\n", t2);
+            move_to(tgt, 2.0f);
+            report("第二点（验证 A 斜率/符号）");
+            printf("[判读] urdf 变化量应 ≈ A·Δstatus：Δstatus=%+.3f → 理论 Δurdf≈%+.3f\n",
+                   t2, t2 * rl::CONV_A[leg * 3 + 2]);
+        }
+    }
+
+    printf("\n[INFO] 失能退出...\n");
+    for (int mi = 1; mi <= 3; mi++) motor_mgr.DisableMotor(leg, mi);
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+    printf("[INFO] Example57 完成。\n");
+}

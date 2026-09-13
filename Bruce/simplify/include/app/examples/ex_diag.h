@@ -32,3 +32,5 @@ void Example50_LieDownAngleRecord();
 void Example54_FrictionSysId();
 // 单腿关节真实限幅测量（选腿 0~3，hip/thigh/calf 依次低速顶到机械/固件限位，回车记录上下端）
 void Example55_SingleLegLimitMeasure();
+// 单腿三关节移到 motor_calib 零位 → 读 RL(URDF) 角对照（验证 sim2real_conv CONV_A/B 是否准）
+void Example57_SingleLegZeroAlign();
