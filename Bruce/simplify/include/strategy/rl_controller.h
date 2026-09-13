@@ -158,7 +158,7 @@ inline float leg_friction_ff(float tau_pd, float dq, int policy_idx) {
 //   即满摇杆/满 action 行驶时会触发保护（限加速方向，仍保留自然制动）。若需高速行驶再放宽。
 constexpr bool   WHEEL_SOFT_LIMIT_ENABLE = true;   // 软限位开关
 constexpr float  WHEEL_VEL_SOFT_LIMIT    = 5.0f;  // 异常速度阈值 (rad/s)
-constexpr float  WHEEL_SOFT_LIMIT_TORQUE = 10.0f;   // 超限时扭矩限幅 (Nm)
+constexpr float  WHEEL_SOFT_LIMIT_TORQUE = 30.0f;   // 超限时扭矩限幅 (Nm)
 
 /**
  * @brief 轮关节前馈扭矩：kd * (wheel_vel_scale * action - vel) [+ 摩擦前馈]，clip 到限幅
