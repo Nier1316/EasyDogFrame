@@ -371,6 +371,9 @@ def main() -> None:
     parser.add_argument("--act_delay", type=int, default=0,
                         help="Action delay in control steps applied to the PD target "
                              "(real robot ~1; 0 = none).")
+    parser.add_argument("--wheel_gate", action="store_true",
+                        help="复现真机站立门控：|cmd_vx|<0.1 且 |cmd_wz|<0.1 时轮目标置 0"
+                             "（真机为防溜车锁轮；用于验证新策略失稳是否因门控掐掉轮驱动）")
     parser.add_argument("--save_video", action="store_true")
     parser.add_argument("--video_path", type=str, default="/tmp/sim2sim.mp4")
     parser.add_argument("--width", type=int, default=1280)
@@ -453,6 +456,9 @@ def main() -> None:
         print(f"  real actuator: leg torque caps = 120/120/200, wheel = 52")
     if ACT_DELAY:
         print(f"  action delay = {ACT_DELAY} control step(s) (~{ACT_DELAY*CONTROL_DT*1000:.0f} ms)")
+    WHEEL_GATE = bool(args.wheel_gate)      # 复现真机站立门控（锁轮阈值同 rl::WHEEL_CMD_MOVE_THR=0.1）
+    if WHEEL_GATE:
+        print(f"  wheel gate ON: |cmd_vx|<0.1 && |cmd_wz|<0.1 → 轮目标=0（真机同款）")
     act_dq: list = []   # 动作延迟缓冲（闭包，跨 control_step 保留；真机 ~1 帧）
 
     # ---- Initial pose: torso upright at nominal height, legs at NOMINAL ----
@@ -534,6 +540,12 @@ def main() -> None:
                 act_dq.pop(0)
             if len(act_dq) >= ACT_DELAY:
                 applied = act_dq[0]   # ACT_DELAY 步前产生的动作
+        if WHEEL_GATE:
+            # 真机站立门控：无移动指令时轮子强制静止（防后轮正 action 溜车）。
+            # ⚠ last_action 仍用策略原始 action（obs 与真机一致），只改执行量。
+            if abs(command[0]) < 0.1 and abs(command[2]) < 0.1:
+                applied = applied.copy()
+                applied[NUM_LEG_JOINTS:] = 0.0
         for _ in range(DECIMATION):
             joint_pos = indexer.joint_pos(mj_data)
             joint_vel = indexer.joint_vel(mj_data)

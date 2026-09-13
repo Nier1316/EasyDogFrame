@@ -4,3 +4,6 @@ build_debug/
 .vscode/
 log/
 CANET.log
+
+# sim 对照调试产物（数据大，不入库）
+tmp_s2r/
