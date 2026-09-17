@@ -44,11 +44,11 @@ HWT606 IMU ─(115200 串口, Z朝下绕X翻)─► imu_device
 - `main.cpp`：当前激活 **Example44_USB2CanXboxControl**（USB2CAN 手柄控制）
 
 ### 权重导出
-- `tool/export_policy.py`：读取 `RL_Train/code/checkpoints/.../traj_v28/iteration_3000.pkl` → 写 `include/strategy/policy_weights.h` + `policy_test_ref.h`（含 numpy/flax 交叉校验）。
+- `tool/export_policy.py`：默认读取入库副本 `weights/iteration_5350.pkl`（`--ckpt` 可覆盖任意 .pkl，如 `RL_Train/code/checkpoints/dogurdf_velocity/checkpoints_20260917_193400_h52_s45_v4/iteration_5350.pkl`）→ 写 `include/strategy/policy_weights.h` + `policy_test_ref.h`（含 numpy/flax 交叉校验）。
 
 ---
 
-## 3. 策略规格（iteration_4350，`weights/iteration_4350.pkl`，med_posefree_s4_v3.3）
+## 3. 策略规格（iteration_5350，`weights/iteration_5350.pkl`，h52_s45_v4）
 
 | 项 | 值 |
 |---|---|
