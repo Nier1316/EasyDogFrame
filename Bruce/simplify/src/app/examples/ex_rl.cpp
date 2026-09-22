@@ -3,9 +3,9 @@
 //
 // ---- RL 示例（25 策略控制 / 30 链路验证 / 36 站立 / 37 遥操作 / 51-53 流程）的权重来源 ----
 // 策略权重编译进 include/strategy/policy_weights.h，由 tool/export_policy.py 从
-// 入库 checkpoint weights/iteration_5350.pkl 导出（当前部署版，2026-09-17，
-// h52_s45_v4，来自 checkpoints_20260917_193400_h52_s45_v4）。换权重流程：
-// export_policy.py（默认读 weights/iteration_5350.pkl，--ckpt 覆盖）→ 重新编译 →
+// 入库 checkpoint weights/iteration_9754.pkl 导出（当前部署版，2026-09-19，
+// smalllift_s45 stage4.5，来自 checkpoints_20260919_115617_smalllift_s45）。换权重流程：
+// export_policy.py（默认读 weights/iteration_9754.pkl，--ckpt 覆盖）→ 重新编译 →
 // 跑 Example30 做 MLP 数值回归门（REF_OBS/REF_ACTION 核对）。
 #include "app/examples/ex_rl.h"
 #include "app/examples_common.h"
