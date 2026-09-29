@@ -8,6 +8,13 @@
 > ✅ **2026-09-29 更新**：权重 `weights/iteration_9754.pkl`（sim2sim 同步同一份）；`main.cpp` 激活 **Example37_RLTeleopControl**；
 > 示例总数 40（编号 17~57，`Example55` 从未实现已移除）；`gait_phase` 观测为**分组**布局；真机扭矩命令限幅 120/120/200/52；
 > 轮速软限位已失效，现由 `MotorManager` 的 `WHEEL_ESTOP_*` 承担。
+>
+> 📌 **相关专题**：`docs/CONTACT_PHASE_SIM2REAL.md` —— 触地/接触检测、相位检测、sim2real gap 补偿的开源框架调研
+> 与本项目落地路线（含"本项目当前没有任何接触检测代码""无质量模型 ⇒ 绝对 GRF 不可用"等前提的说明）。
+>
+> 🔧 **2026-09-29 触地检测前提件已落地**：`leg_kinematics.h` 新增**解析雅可比**（`leg_jacobian`/`leg_jacobian_body`/
+> `leg_cond_proxy`/`leg_foot_force_body`/`leg_foot_force_to_torque`，已与 `leg_fk` 有限差分逐元素校验）；
+> 新增示例 **Example58 力矩通道校验**、**Example59 重力矩系数与质量-质心辨识**（见 `src/app/examples/ex_sysid.cpp`）。
 
 ---
 
@@ -191,9 +198,18 @@ void leg_fk(const float q_cmd[3], L1,L2,L3, off1,off2,off3, float p[3]); // 单�
 void leg_ik(const float p[3], L1,L2,L3, off1,off2,off3, float q_cmd[3]);  // 单腿逆解
 void hip_rotation_matrix(LegIndex leg, float R[3][3]);
 void leg_fk_all(const float q_all[12], float foot_body[4][3]);             // 12 关节→4 足端
+// —— 2026-09-29 新增：解析雅可比与接触力映射（触地检测/GRF 估计的基础）——
+void leg_jacobian(q_cmd[3], L1,L2,L3, off1,off2,off3, float J[3][3]);      // 髋系：q̇ → 轮心速度
+void leg_jacobian_body(LegIndex leg, q_cmd[3], float Jb[3][3]);            // 体系：= R·J_hip
+float leg_cond_proxy(const float J[3][3]);                                 // 条件数代理（1=好，∞=奇异）
+bool leg_foot_force_body(LegIndex leg, q_cmd[3], tau[3], f[3], float* cond=nullptr); // f=(Jᵀ)⁻¹τ
+void leg_foot_force_to_torque(LegIndex leg, q_cmd[3], f[3], tau[3]);       // τ=Jᵀf
 ```
 
 - `q_all[12]` 顺序 `[FLθ1,FLθ2,FLθ3, FR…, RL…, RR…]`（rad）。
+- **角度坐标**：`leg_fk`/`leg_jacobian` 的输入 = `GetStatus().position` = `SendImpedance` 的位置参数，**同一坐标**（Ex18 把 `leg_ik` 输出直接下发给 `SendImpedance`）。无需再减 `THETA*_OFFSET`——那是 `leg_fk` 内部的几何约定。
+- **雅可比末端点**是"轮心"（L3 末端），不是轮底接触点；要轮底点沿轮半径平移即可。
+- ⚠️ `leg_foot_force_body` 要求传入的 `tau` **已扣掉重力项与摩擦项**；且腿接近伸直时条件数爆炸会被拒绝（`cond > 50`）。实测条件数：膝伸直 1.8e7、距伸直 0.02 rad → 103、DEFAULT_POSE → 15、STAND → 1.8。**力误差 ≈ 力矩误差 × cond**。
 
 ---
 
@@ -226,12 +242,14 @@ void leg_fk_all(const float q_all[12], float foot_body[4][3]);             // 12
 
 ---
 
-## 9. 示例索引（`src/app/examples/`，示例 17~57，共 40 个）
+## 9. 示例索引（`src/app/examples/`，示例 17~59，共 42 个）
 
 > 分发机制：改 `src/app/main.cpp` 里各示例调用的注释 + 重新编译，**无命令行参数、无注册表**。
 > ⚠️ `Example55_SingleLegLimitMeasure` 在本仓库**从未实现**（声明与被注释调用已在本次清理中删除），不要再当作可用示例。
-> ⚠️ 安全现状（2026-09-29 脚本复核）：40 个示例中 **27 个会使能电机**，其中只有 **11 个装了 `SIGINT` 急停**（Ex25/34/**35**/36/37/38/51/52/53/54/56）；
+> ⚠️ 安全现状（2026-09-29 脚本复核）：42 个示例中 **29 个会使能电机**（脚本按"函数体内直接调 `EnableMotor`/`PreEnableZeroTorque`"统计为 27 个；Ex58/59 经公共 helper `init_zero_torque()` 使能，故实际 29 个），
+> 其中 **13 个装了 `SIGINT` 急停**（Ex25/34/**35**/36/37/38/51/52/53/54/56/**58/59**）；
 > 其余 **16 个会发使能帧但无 `SIGINT` 保护**（Ex18/19/20/21/22/23/29/32/41/44/45/46/47/48/49/57）——跑这些示例务必人在现场、可随时断电。
+> 🆕 **系统辨识/通道校验（2026-09-29 新增，触地检测前提件）**：见 §9.4 与 `docs/CONTACT_PHASE_SIM2REAL.md` §7.0。
 
 ### ex_basic.cpp（17~23）
 | 示例 | 功能 |
@@ -250,5 +268,17 @@ void leg_fk_all(const float q_all[12], float foot_body[4][3]);             // 12
 
 ### ex_rl.cpp（25/30-32/35-38/51-53/56）
 `Example25` 完整 RL 循环 + 手柄；`Example30` 离线链路回归（**不碰 CAN**）；`Example31` 零位对齐；`Example32` 默认姿态验证；`Example35` 轮摩擦前馈标定；`Example36` RL 站立循环；`Example37` RL 遥操作（手柄前进/后退/转向）；`Example38` 动作延迟辨识；`Example51` 站立后趴下；`Example52` 固定 yaw；`Example53` 重力前馈测量；`Example56` 固定 yaw 遥测落盘。
+
+### 9.4 ex_sysid.cpp（58~59）—— 触地检测的前提件，2026-09-29 新增
+
+| 示例 | 功能 | 前提/落盘 |
+|---|---|---|
+| **Example58** `TorqueChannelCheck` | 16 路**力矩通道校验**：阻抗模式 `kp=kd=0 ⇒ τ=τ_ff`，逐电机施加 `0→+T1→+T2→0→−T1→−T2→0`，检查零偏（<0.5 N·m）/增益（误差 ≤ max(0.5, 25%)）/符号/线性度。轮子默认跳过（会转起来） | 狗必须**吊起**；人工轻扶被测肢体；→ `log/sysid/torque_check_*.csv` |
+| **Example59** `GravityMassIdentify` | **重力矩系数 `G_j = m·g·d`** 与质量-质心：单关节在参考姿态附近双向慢扫 7 点（共 14 点），准静态采样 (θ, τ)，对 `[sinθ, cosθ, 1]` 做 3 参数最小二乘 → `G_j = √(a²+b²)`（**不需要扫到力臂最大处**）；配合台秤称重反推 `d`，配合 Ex47 的 `J` 得 `I_c = J − m·d²`；打印可直接填入 `LINK_DYNAMICS`/`BODY_MASS` 的建议值 | 狗必须**吊起 + 机身水平**（可选 IMU 检查倾角）；→ `log/sysid/gravity_summary_*.csv` |
+
+> **为什么需要它们**：`f = (Jᵀ)⁻¹·τ` 的力误差 ≈ 力矩误差 × 条件数。实测腿的条件数在 DEFAULT_POSE ≈ 15、
+> 膝伸直 → 1.8e7；而本项目腿摩擦 1.6~6.2 N·m、重力矩 8~20 N·m 与信号同量级。
+> **不先校验 τ 通道、不先标定重力项，接触力估计就是噪声。**
+> 分工：`J/B/f_c` 由 Example47 辨识、腿摩擦由 Example54 辨识，`58/59` 不重复。
 
 > 当前 `main.cpp` 激活：**Example37_RLTeleopControl**。

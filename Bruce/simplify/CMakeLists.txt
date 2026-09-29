@@ -55,6 +55,7 @@ set(SOURCES
     src/app/examples/ex_basic.cpp
     src/app/examples/ex_diag.cpp
     src/app/examples/ex_rl.cpp
+    src/app/examples/ex_sysid.cpp
 
     # L6 运行时（线程/顶层应用/电机IO线程）
     src/runtime/thread_manager.cpp

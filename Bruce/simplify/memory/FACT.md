@@ -84,11 +84,28 @@
 - `--real_actuator` 把仿真扭矩上限对齐真机（hip/thigh 120、calf 200、wheel 52）并默认 1 步动作延迟；`--wheel_gate` 复现真机站立锁轮门控（阈值 0.1）；不带 `--real_actuator` 时仿真仍用 `LEG_TORQUE_LIMIT=250 / WHEEL_TORQUE_LIMIT=53`。
 - ⚠️ 仍存在的建模差异：sim2sim 轮子走 `kd·(w_target − qd)`（`WHEEL_KD=2.0`），真机轮子走固件 SPEED 环（`kvp=3.0, ki=0.05`）。
 - 时延：真机纯传输延迟实测 ≈24ms（可信区间 18~30ms），建议 `action_delay_steps=1`（见 `docs/ACTION_DELAY_MEASURE.md`）；**训练是否含 action delay 的旧文档说法互斥，以 `RL_Train/code` 训练配置为唯一真源**。
+- 固件速度环：驱动器手册（`Doc/集成驱动器使用说明-V1.pdf`）明确 `τ_des = Kvp(ω_des−ω_act) + Kvi·Dt·Σ(ω_des−ω_act)`，**`Dt = 50 µs`**（固件内 20 kHz）——远快于上位机 500 Hz 指令率，故 sim2sim 的差异主要在**指令路径/饱和/死区**而非内环带宽。
+
+## 触地检测 / 相位 / sim2real（专题）
+- 📌 **专题文档：`docs/CONTACT_PHASE_SIM2REAL.md`**（2026-09-29）—— 开源框架（legged_gym / Isaac Lab / unitree_rl_{gym,mjlab} / walk-these-ways / HIM / DreamWaQ / RMA / Cheetah-Software / OCS2 / Quad-SDK / ANYmal-W / Go2-W / CTBC / Wheel-Legged-Gym）在**触地接触检测、相位检测、sim2real gap 补偿**上的代码级做法，以及本项目分阶段落地建议。
+- 现状：**本项目没有任何触地/接触检测代码**（全仓 grep 仅命中"腿悬空不触地"之类注释）。相位为**开环** `gait_phase`（8 维分组 sin/cos）。
+- 可用的接触信号条件：**16 路关节力矩反馈（含 4 轮，500 Hz）** + 腿 FK + 轮子连续接地。**缺**：足端/轮端力传感器、质量与惯量模型（`LINK_DYNAMICS` 全 0、`BODY_MASS=0`）、`leg_kinematics.h` 的**雅可比**（需新增）。
+- 落地顺序（详见专题文档 §7）：**v0 质量/惯量辨识 + 解析雅可比 + 力矩通道校验** → v1 纯本体指示器（打滑 `δ>0.1 m/s`、轮驱动扭矩残差 2~5 N·m、3 帧滑窗连续接触置信度）→ v2 支撑腿筛选 + 接触锚定里程计 → v3 才考虑接触概率进策略（需重训）。
+- ⚠️ 不要做**接触触发的相位重置**：轮足无清晰 GRF 上升沿，有噪时可能永不重置（ANYmal 的 `GaitAdaptation` 也只做"提前触地"一种）。
 
 ## 示例（demo）与运行方式
-- 示例总数 **40**，编号 **17~57**（编号不连续；1~16 已清理，**Example55 从未实现，2026-09-29 删除其声明与注释调用**）。
+- 示例总数 **42**，编号 **17~59**（编号不连续；1~16 已清理，**Example55 从未实现，2026-09-29 删除其声明与注释调用**；**58/59 为 2026-09-29 新增**）。
 - 分发机制：改 `src/app/main.cpp` 的注释 + 重新编译，**无命令行参数、无注册表**。
 - **当前激活 = `Example37_RLTeleopControl`**（`main.cpp` 结尾唯一未注释的调用）。
+
+### 触地检测前提件（2026-09-29 新增，见 `docs/CONTACT_PHASE_SIM2REAL.md` §7.0）
+- **解析雅可比**（`include/motion/leg_kinematics.h`）：`leg_jacobian`（髋系）/ `leg_jacobian_body`（体系，= R·J_hip）/ `leg_cond_proxy`（无量纲条件数代理）/ `leg_foot_force_body`（`f = (Jᵀ)⁻¹τ`，`cond > 50` 拒绝）/ `leg_foot_force_to_torque`（`τ = Jᵀf`）。已与 `leg_fk`/`leg_fk_all` 中心差分逐元素比对（<5e-4）+ τ→f→τ 往返自检（9.5e-7）。
+- **条件数实测**（FL，体系）：膝伸直（`q3 ≈ −0.211`，即 `t3_int=0`）→ **1.8e7**；距伸直 0.02 rad → 103；0.05 rad → 41；DEFAULT_POSE → **15**；STAND → **1.8**。⇒ **力误差 ≈ 力矩误差 × cond**：本项目腿摩擦 1.6~6.2 N·m、重力矩 8~20 N·m，不扣掉就是几十牛的力误差。
+- **角度坐标**：`leg_fk`/`leg_jacobian` 的输入 = `GetStatus().position` = `SendImpedance` 的位置参数（**同一坐标**，Ex18 把 `leg_ik` 输出直接下发）；不要再减 `THETA*_OFFSET`。
+- **新增示例**（`src/app/examples/ex_sysid.cpp` / `include/app/examples/ex_sysid.h`）：
+  - **Example58 `TorqueChannelCheck`**：力矩通道校验（零偏/增益/符号/线性度）。`kp=kd=0 ⇒ τ=τ_ff`，逐电机 `0→+T1→+T2→0→−T1→−T2→0`；轮子默认跳过（会转起来）。落盘 `log/sysid/torque_check_*.csv`。
+  - **Example59 `GravityMassIdentify`**：重力矩系数 `G_j = m·g·d` 与质量-质心。单关节小幅慢扫 14 点 → 对 `[sinθ, cosθ, 1]` 最小二乘 ⇒ `G_j = √(a²+b²)`（与角度零点约定无关）；配合称重反推 `d`、配合 Ex47 的 `J` 得 `I_c = J − m·d²`；打印建议的 `LINK_DYNAMICS`/`BODY_MASS`。落盘 `log/sysid/gravity_summary_*.csv`。
+- ⚠️ 分工：`J/B/f_c/K_g` 由 **Example47** 辨识、腿摩擦由 **Example54** 辨识 —— 58/59 **不重复**，只补 Ex47 给不出的"大范围重力矩幅值"与"质量/质心"。
 - 文件分工：`ex_basic.cpp`（17~23，7 个）、`ex_diag.cpp`（24, 26~29, 33, 34, 39~50, 54, 57，21 个）、`ex_rl.cpp`（25, 30~32, 35~38, 51~53, 56，12 个）。
 - 关键示例：Ex25 完整 RL + 手柄；Ex30 离线链路回归（不碰 CAN）；Ex34 轮子方向核对；Ex35 轮摩擦前馈标定（历史）；Ex36 RL 站立循环；**Ex37 RL 遥操作（当前激活）**；Ex38 动作延迟辨识；Ex47 整狗 chirp 辨识；Ex49 轮 SPEED 环 kvp 扫描；Ex51 站立→趴下；Ex54 吊装摩擦辨识；Ex56 固定 yaw 遥测落盘；Ex57 单腿零位对照（验证 CONV_A/B）。
 - `examples_common` 只有 4 个 helper：`RawTerminal`、`poll_key`、`g_rl_stop`+`rl_signal_handler`、`EnableRlFrictionFF/DisableRlFrictionFF`。

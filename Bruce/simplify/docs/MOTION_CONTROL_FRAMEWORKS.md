@@ -177,3 +177,17 @@
 3. **部署侧（已被推翻）**：旧建议"导出 ONNX + ONNX Runtime + 100Hz 线程"**未采用**。现状：`tool/export_policy.py` 把手写网络权重导出为 C 头文件，`mlp_forward()` 直接内联推理，挂进 50Hz RL 循环。clamp 仍与仿真保持一致（动作/限位/扭矩）。
 4. **非 RL 备选**：若先做可解释的运控，用 `legged_control`（qiayuanl）+ `OCS2` 做 NMPC/WBC，或 `CHAMP` 快速搭步态。
 5. **sim-real 一致**：本工程 `leg_kinematics.h` 与仿真 `leg_kinematics.m` 已对齐；连杆/限位/站立姿态由 `robot_calibration.h` 定义，**RL 的 `kp/kd` 由 `include/strategy/rl_controller.h` 定义**（250/4），仿真侧参数要与之一致；sim2sim 侧另见 `dogurdf_sim2sim_deploy/src/sim2sim.py`（`SIM_DT=0.005 / DECIMATION=4`，默认与真机同权重 `weights/iteration_9754.pkl`）。
+
+---
+
+## 7. 专题深潜：触地检测 · 相位检测 · sim2real gap 补偿
+
+本文件（§1~§6）解决"**用哪个框架**"；专题文档解决"**这些框架具体怎么做触地/接触检测、相位检测，以及怎么补 sim2real gap**"：
+
+> 📌 **`docs/CONTACT_PHASE_SIM2REAL.md`**（2026-09-29）
+>
+> - **§2 框架地图**：本文件之外的补充对象 —— `unitree_rl_mjlab`、`extreme-parkour`、`HIM`、`DreamWaQ`、`RMA`、`Barkour`、`Cheetah-Software`、`OCS2`、`Quad-SDK`、`unitree_guide`、HyQ/Camurri、`mcx-lab/legged_state_estimator`、`invariant-ekf`，以及轮足专用的 ANYmal-on-Wheels / Go2-W / CTBC / Wheel-Legged-Gym / Ascento / `Ros2Go2Estimator`。
+> - **§3 触地/接触检测**：六类方法对照（相位调度 / JFD / GMO / 力传感器 / 逻辑回归 / 学习式）+ 各框架**代码级**做法与阈值（legged_gym 的 `>1 N`、`mcx-lab` 的 `β0=−20,β1=0.7` ⇒ `F_n≈28.6 N`、CTBC 的 3 帧滑窗、walk-these-ways 的 `contact_estimate>200`）。
+> - **§4 相位检测**：开环时钟 / 概率化相位奖励 / 接触触发重置 / AFO-CPG / 学习式相位，五种做法的代码位置与超参；**轮足为什么倾向抛弃相位**（Lee 2024 显式删 CPG、WB-MPC 用"运动学腿效用"替代）。
+> - **§5 sim2real gap**：按 5 类 gap（执行器动力学 / 时序延迟 / 接触摩擦地形 / 感知状态估计 / 域随机化工程）组织的"症状 → 手段 → 量化效果 → 代价"，含大量可直接抄的参数（DR 区间、延迟区间、`DCMotor` 公式、辨识方法）。
+> - **§6 轮足专章** + **§7 本项目分阶段落地建议**（v0 前提 → v1 纯本体指示器 → v2 支撑腿筛选/接触锚定里程计 → v3 进策略）+ **§8 存疑清单**。

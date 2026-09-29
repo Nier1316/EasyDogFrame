@@ -219,13 +219,18 @@ struct LinkDynamics {
 
 // 索引: [JointIndex]  —— 三个连杆共用一套（四腿对称）
 // TODO: 实测填入。称重 + 悬挂法测质心 + 摆动法测惯量。
+//   👉 现成工具：**Example59_GravityMassIdentify**（2026-09-29 新增）
+//      用"单关节小幅慢速扫描 + 重力矩正弦拟合"直接测出绕该关节轴刚性转动组件的
+//      G = m·g·d（不需要把关节扫到力臂最大处），配合台秤称重反推 com，并用
+//      Example47 的 J 经平行轴定理得绕质心惯量 I_c = J − m·d²。
+//      ⚠ 先跑 Example58_TorqueChannelCheck 确认力矩通道可信，否则本表填了也不准。
 constexpr LinkDynamics LINK_DYNAMICS[3] = {
     /* HIP   */ { 0.0f, 0.0f, 0.0f },
     /* THIGH */ { 0.0f, 0.0f, 0.0f },
     /* CALF  */ { 0.0f, 0.0f, 0.0f },
 };
 
-constexpr float BODY_MASS = 0.0f;          // 机身质量（不含腿）(kg)，TODO: 实测
+constexpr float BODY_MASS = 0.0f;          // 机身质量（不含腿）(kg)，TODO: 实测（台秤称重，含电池）
 
 /**
  * @brief 电机驱动参数

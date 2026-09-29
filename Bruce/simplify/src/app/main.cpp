@@ -4,7 +4,7 @@
 // =====================================================================
 //  示例切换说明
 //  = 只运行一个示例：目标示例的 3 行取消注释、其余保持注释即可。
-//  = Example1-16 已清理（早期实验），现存 17~57（共 40 个；55 从未实现，已删除）。
+//  = Example1-16 已清理（早期实验），现存 17~59（共 42 个；55 从未实现，已删除）。
 //  = 当前启用：Example37（RL 遥操作，手柄前进/后退 + 转向）。
 //
 //  ⚠ 2026-09-29：原先此处用 `signal(SIGINT, signal_handler)` 装了一个只把
@@ -177,6 +177,16 @@ int main() {
     // printf("[INFO] Running Example47_ChirpSysId...\n");
     // Example47_ChirpSysId();
     // printf("[INFO] Example47 completed.\n");
+
+    // 运行示例58 - 力矩通道校验（零偏/增益/符号/线性度；触地检测的前提件）
+    // printf("[INFO] Running Example58_TorqueChannelCheck...\n");
+    // Example58_TorqueChannelCheck();
+    // printf("[INFO] Example58 completed.\n");
+
+    // 运行示例59 - 重力矩系数 G=m·g·d 与质量-质心辨识（填 LINK_DYNAMICS/BODY_MASS）
+    // printf("[INFO] Running Example59_GravityMassIdentify...\n");
+    // Example59_GravityMassIdentify();
+    // printf("[INFO] Example59 completed.\n");
 
     // 运行示例48 - 轮子扭矩方向安全验证（单轮开环测向，无 RL 失控风险）
     // printf("[INFO] Running Example48_WheelDirectionVerify...\n");
