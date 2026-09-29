@@ -170,7 +170,7 @@ bool CanDevice::ConfigureDevice(const CanDeviceConfig& config) {
         if (VCI_SetReference(VCI_CANETE, m_device_idx, 0, CMD_SRCPORT, &port) != STATUS_OK) {
             return false;
         }
-        printf("[INFO] CAN device %d configured as TCP server on port %d\n", m_device_idx, port);
+        printf("[INFO] CAN device %d configured as TCP server on port %lu\n", m_device_idx, port);
     } else {
         // 客户端模式：需要远端 IP 和端口
         if (VCI_SetReference(VCI_CANETE, m_device_idx, 0, CMD_DESIP, (void*)config.server_ip) != STATUS_OK) {
@@ -180,7 +180,7 @@ bool CanDevice::ConfigureDevice(const CanDeviceConfig& config) {
         if (VCI_SetReference(VCI_CANETE, m_device_idx, 0, CMD_DESPORT, &port) != STATUS_OK) {
             return false;
         }
-        printf("[INFO] CAN device %d configured as TCP client to %s:%d\n",
+        printf("[INFO] CAN device %d configured as TCP client to %s:%lu\n",
                m_device_idx, config.server_ip, port);
     }
 

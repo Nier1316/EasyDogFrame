@@ -1,7 +1,20 @@
 # 电机驱动模块设计文档
 
-> ⚠️ **本文档为早期设计（v1.0，2026-05-21），与实际实现已有较大出入。**
-> 实际的电机层实现为：`EleMotor`（数据结构 + 编解码）+ `MotorManager`（16 电机批量管理，收发线程由外部 `ThreadManager` 驱动），并非本文描述的"每电机独立 sync_thread"。解包函数现为 `unpack_frame()`（接收线程逐帧解析）。实际 API 以 `FRAMEWORK_GUIDE.md` 与 `MOTOR_MANAGER_GUIDE.md` 为准。
+> 🗄️ **历史存档（早期设计 v1.0，2026-05-21；横幅更新于 2026-09-29）。正文保留原样作历史记录，勿据此实现。**
+>
+> **现行实现与本文的差异（以代码为准）：**
+> - 现行电机层 = `EleMotor`（数据结构 + MIT 协议编解码，`include/motor/ele_motor.h`）
+>   + `MotorManager`（16 电机批量管理，`include/motor/motor_manager.h`）。
+>   **没有 per-motor 线程**：收发统一由 `motor_receive` / `motor_send` 两个 **2ms（500Hz）** 线程驱动
+>   （`src/runtime/motor_io.cpp` 注册，分别调用 `MotorManager::ReceiveOnce()` / `SendOnce()`），
+>   本文描述的"每电机独立 `sync_thread`"从未按此落地。
+> - 解包/打包函数现为 `unpack_frame()` / `set_motor_para_bt()`；无 `sync_state()` / `has_state_changed()`。
+> - `EleMotor::state_mutex` 成员**已删除**（全仓无任何使用处，2026-09-29 清理）；
+>   实际并发保护是 `MotorManager::m_motor_mutex[CAN_PORTS][MOTORS_PER_CAN]`（4×4 把锁，
+>   在读写电机字段前后持有）。**本文旧代码示例里的 `state_mutex` 在现行代码中已不存在。**
+> - 传输层已由 `BspCan` 演进为 `CanTransport` 抽象（现默认达妙 `Usb2CanTransport`），
+>   见 `include/transport/CAN_TRANSPORT_GUIDE.md`。
+> - 现行 API 以 `include/motor/MOTOR_MANAGER_GUIDE.md` 与 `FRAMEWORK_GUIDE.md` 为准。
 
 ## 📋 目录
 1. [概述](#概述)
@@ -97,6 +110,9 @@
 ---
 
 ## 关键设计要素
+
+> ⚠️ 以下代码块（含 `state_mutex`、`sync_thread`、`state_version`、`set_target_*` 等）均为**历史设计示例**，
+> 现行代码中没有这些成员/方法；`state_mutex` 已删除，加锁由 `MotorManager::m_motor_mutex` 负责。
 
 ### 1. 状态变化检测
 
@@ -504,10 +520,11 @@ motor.start_sync();
 ## 参考资源
 
 - C++ 线程库：`<thread>`, `<mutex>`, `<atomic>`
-- CAN 通信：`BspCan` 硬件抽象层
+- CAN 通信：`CanTransport` 传输层抽象（当前默认达妙 `Usb2CanTransport`；原 `BspCan` 已删除，见 `include/transport/CAN_TRANSPORT_GUIDE.md`）
 - 电机控制：`float2bag()`, `set_motor_para_bt()`, `unpack_frame()`
 
 ---
 
-**文档版本：1.0**  
-**最后更新：2026-05-21**
+**文档版本：1.0（历史存档）**  
+**历史设计日期：2026-05-21**  
+**横幅更新：2026-09-29**

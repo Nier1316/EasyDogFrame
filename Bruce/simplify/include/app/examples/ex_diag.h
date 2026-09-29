@@ -1,5 +1,8 @@
 #pragma once
-// 诊断/只读示例 24, 26~29, 33, 34（固件参数 / 键盘 / CANET 探针 / 频率 / IMU / 轮方向）
+// 诊断/标定/系统辨识示例：24, 26~29, 33, 34（只读参数 / 键盘 / CANET 探针 / 频率 / IMU / 轮方向）
+//                        39~50（USB2CAN 链路·频率·顺序·阶跃·chirp 辨识·轮向·速度环·趴下标定）
+//                        54（吊装摩擦辨识）、57（单腿零位对照）
+// 注：Example55_SingleLegLimitMeasure 只有声明从未实现（取消注释会链接失败），2026-09-29 已删除。
 void Example24_ReadMotorParams();
 void Example26_KeyboardInputTest();
 void Example27_CANetFrequencyProbe();
@@ -30,7 +33,5 @@ void Example49_StandAndWheelSpeedLoopTest();
 void Example50_LieDownAngleRecord();
 // 吊装摩擦辨识（重力标定 + 前馈恒速 + 双向配对 → 离线回归出 LEG_FF_FC/FV）
 void Example54_FrictionSysId();
-// 单腿关节真实限幅测量（选腿 0~3，hip/thigh/calf 依次低速顶到机械/固件限位，回车记录上下端）
-void Example55_SingleLegLimitMeasure();
 // 单腿三关节移到 motor_calib 零位 → 读 RL(URDF) 角对照（验证 sim2real_conv CONV_A/B 是否准）
 void Example57_SingleLegZeroAlign();

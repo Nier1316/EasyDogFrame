@@ -4,7 +4,11 @@
 
 本包是训练好的 dogurdf 轮足策略（16 DoF，MJX 训练）在**原生 MuJoCo** 环境中的离线部署验证工具。策略已通过仿真验收（对角步态 + yaw 跟踪达标），可直接用于**真实机器人移植前**的行为验证、手感确认和参数标定。
 
-> ⚠️ 当前包内是**纯仿真**（sim2sim）。真实部署需要在 `simplify/` 的 C++ 嵌入式框架（CANET 驱动）中实现控制律、观测对齐和通讯。本文档最后一节是给部署环节的关键约束清单。
+> ⚠️ 当前包内是**纯仿真**（sim2sim）。真实部署需要在 `simplify/` 的 C++ 嵌入式框架（**达妙 USB2CAN** 传输后端；CANET 已弃用）中实现控制律、观测对齐和通讯。本文档最后一节是给部署环节的关键约束清单。
+>
+> ✅ **2026-09-29 核对**：默认 checkpoint 已改为与真机**同一份** `../weights/iteration_9754.pkl`（可用 `SIM2SIM_CKPT=<path>` 覆盖）；
+> `checkpoints/dogurdf_velocity/` 里的 `iteration_450.pkl` / `iteration_3000.pkl` 是 **🗄️ 历史存档，已不与真机同步**。
+> 腿 `kp/kd` 统一为 **250/4**（与 `include/strategy/rl_controller.h` 和 `src/sim2sim.py` 一致）。
 
 ---
 
@@ -14,10 +18,12 @@
 |---|---|
 | 机器人 | dogurdf 轮足四足，16 DoF（4×[hip, thigh, calf, wheel]） |
 | 训练框架 | MJX/JAX PPO（自研管线），8192 envs |
-| **checkpoint** | `checkpoints/dogurdf_velocity/iteration_3000.pkl`（traj_v28） |
+| **checkpoint** | **`../weights/iteration_9754.pkl`（与真机 C++ `policy_weights.h` 同一份；可用 `SIM2SIM_CKPT=<path>` 覆盖）** |
 | 观测维度 | **64**（含 gait-phase 时钟） |
 | 动作维度 | 16（12 腿位置目标 + 4 轮速目标） |
 | **控制频率** | **50 Hz**（控制步 0.02 s；仿真步 0.005 s，decimation=4） |
+| 腿控制律 | `tau = LEG_KP*(q_target-q) + LEG_KD*(0-qd)`，**`LEG_KP=250 / LEG_KD=4`**（与真机 `rl::LEG_KP/KD` 一致） |
+| 轮控制律（sim） | `tau = WHEEL_KD*(w_target-qd)`，`WHEEL_KD=2.0`、`WHEEL_KP=0.0` ⚠ **这是与真机仅存的建模差异之一**：真机轮子走固件 SPEED 环（`kvp=3.0, ki=0.05`） |
 | 站立高度 | torso 中心 **0.45 m**（default pose: hip=0, thigh=0.20, calf=−0.35） |
 | 轮半径 | 0.113 m |
 | 关键步态 | 纯 yaw 命令下**对角交替迈步**（左转抬 FL+RR，右转抬 FR+RL），非蹭轮 |
@@ -40,8 +46,10 @@ dogurdf_sim2sim_deploy/
 │   ├── dogurdf.xml                   # MJCF 模型（meshes/ 引用，sim2sim 加载这个）
 │   ├── meshes/*.STL                  # 视觉/碰撞网格
 │   └── urdf/                         # 原始 URDF（参考，不直接使用）
-└── checkpoints/dogurdf_velocity/
-    └── iteration_3000.pkl           # 训练好的策略权重（traj_v28，~5MB）
+├── checkpoints/dogurdf_velocity/     # 🗄️ 历史存档（已不与真机同步）
+│   ├── iteration_450.pkl
+│   └── iteration_3000.pkl
+└── (默认权重在上级目录) ../weights/iteration_9754.pkl  # ✅ 与真机同一份
 ```
 
 ---
@@ -78,11 +86,39 @@ cd dogurdf_sim2sim_deploy
 # 4) 录制视频
 ./run_sim2sim.sh --save_video --video_path /tmp/turn.mp4 \
                  --cmd_vel_x 0.0 --cmd_vel_yaw 1.0 --episode_length 300
+
+# 5) 落盘轨迹 CSV，供 tool/compare_sim2real.py 与真机 log/rl_*.csv 对比
+./run_sim2sim.sh --record /tmp/sim_traj.csv --episode_length 300
+
+# 6) 真机执行约束复现（扭矩上限 120/120/200/52 + 1 步动作延迟）
+./run_sim2sim.sh --real_actuator --episode_length 300
+#    等价于 --act_delay 1 + 真机扭矩上限；单独控延迟用 --act_delay N
+
+# 7) 复现真机站立锁轮门控（|cmd_vx|<0.1 且 |cmd_wz|<0.1 时轮目标=0）
+./run_sim2sim.sh --wheel_gate --cmd_vel_x 0.0 --cmd_vel_yaw 0.0 --episode_length 300
+
+# 8) 热重载训练中最新的 checkpoint（指向训练侧 checkpoints_<ts>/ 目录）
+./run_sim2sim.sh --watch_dir /path/to/RL_Train/code/checkpoints/.../checkpoints_<ts>
+#    用别的权重：SIM2SIM_CKPT=/path/to/iteration_XXXX.pkl ./run_sim2sim.sh
 ```
 
-**参数说明**（全部可选）：
-`--episode_length` 步数、`--cmd_vel_x/y/yaw` 固定命令、`--viewer` 实时窗口、
-`--gamepad` 手柄（隐含 viewer）、`--save_video`、`--watch_dir` 热重载训练中最新 checkpoint。
+**参数说明**（全部可选，直接透传给 `src/sim2sim.py`）：
+
+| 参数 | 说明 |
+|---|---|
+| `--episode_length` | 仿真步数（默认 1000） |
+| `--cmd_vel_x / --cmd_vel_y / --cmd_vel_yaw` | 固定命令（默认 `1.0 / 0.0 / 0.0`） |
+| `--checkpoint` | 权重路径；`run_sim2sim.sh` 默认注入 `../weights/iteration_9754.pkl` |
+| `--record <csv>` | **落盘逐步轨迹 CSV**（qrel/vel/action/pgr，POLICY 序，50Hz），供 `tool/compare_sim2real.py` 与真机对比 |
+| `--real_actuator` | **对齐真机执行器**：腿扭矩上限 120/120/200（hip/thigh/calf）、轮 52，并默认 1 步动作延迟 |
+| `--act_delay N` | 动作延迟 N 个控制步（真机 ≈1；0 = 无）。`--real_actuator` 时默认 1，可被本参数覆盖 |
+| `--wheel_gate` | **复现真机站立锁轮门控**：`\|cmd_vx\|<0.1 且 \|cmd_wz\|<0.1` → 轮目标置 0（阈值同 `rl::WHEEL_CMD_MOVE_THR`） |
+| `--watch_dir <dir>` | 轮询该目录最新的 `iteration_*.pkl` 并**热重载**（隐含 `--viewer`）；配套 `--watch_interval`（默认 5s） |
+| `--viewer` | 打开 mujoco.viewer 实时窗口 |
+| `--gamepad` | 手柄驱动 cmd_vel（隐含 `--viewer`）；配套 `--gamepad_debug`、`--axis_x/--axis_yaw`、`--deadzone`、`--max_vx/--max_vyaw` |
+| `--save_video / --video_path / --width / --height` | 离屏录制 mp4 |
+| `--no_follow / --follow_dist / --cam_elevation / --cam_azimuth` | 跟随相机参数 |
+| `--seed` | 随机种子 |
 
 ---
 
@@ -99,11 +135,15 @@ cd dogurdf_sim2sim_deploy
 
 | 参数 | 腿 (hip/thigh/calf) | 轮 |
 |---|---|---|
-| kp | **150.0** | 0.0 |
+| kp | **250.0** | 0.0 |
 | kd | **4.0** | **2.0** |
-| 扭矩上限 | 250 N·m | 53 N·m |
+| 扭矩上限 | 250 N·m（`--real_actuator` 时 **120 / 120 / 200**，按 hip/thigh/calf） | 53 N·m（`--real_actuator` 时 **52**） |
 | 速度上限 | 14.0 rad/s | 12.5 rad/s（→ 线速度 1.41 m/s） |
 | 动作缩放 | action_scale = 0.25 | wheel_vel_scale = 12.5 |
+
+> ⚠️ 旧版本此处表格写 `kp=150.0`，与正文/代码的 **250** 自相矛盾——已统一为 **250/4**，与 `include/strategy/rl_controller.h`（`LEG_KP=250, LEG_KD=4`）和 `src/sim2sim.py` 一致。
+> ⚠️ **sim2sim 与真机仅存的建模差异**：sim 的轮子走 `tau = WHEEL_KD*(w_target - qd)`（`WHEEL_KD=2.0`，上位机每 50Hz 控制步给一次），真机轮子走**固件 SPEED 速度环**（`kvp=3.0, ki=0.05`，固件内部 1kHz）。
+> 另有：sim 的 `SIM_DT=0.005 / DECIMATION=4`；扭矩上限只有开 `--real_actuator` 才对齐真机 120/120/200/52。
 
 **关节限位**：hip ±0.6 rad；thigh −0.7 ~ 1.75 rad；calf −1.0 ~ 0.35 rad。
 
@@ -124,9 +164,11 @@ cd dogurdf_sim2sim_deploy
 | 5 | joint_vel | 16 | 全部关节速度（含 4 轮） |
 | 6 | last_action | 16 | 上一控制步的 action |
 | 7 | command | 3 | [vx, vy, wz] 指令 |
-| 8 | **gait_phase** | 8 | 步态相位时钟 sin/cos（每脚 2 维） |
+| 8 | **gait_phase** | 8 | 步态相位时钟，**分组** `[sin×4脚, cos×4脚]` |
 
-**gait_phase 关键**：`phi = (step * 0.02 / 0.6 + offset) mod 1`，offset = [0, 0.5, 0.5, 0]（FL, FR, RL, RR）。每脚输出 `[sin(2πφ), cos(2πφ)]`，共 8 维。
+**gait_phase 关键（布局是分组，不是交错！）**：`phi = (step * 0.02 / 0.6 + offset) mod 1`，offset = [0, 0.5, 0.5, 0]（FL, FR, RL, RR）。
+输出为 `concatenate([sin(2πφ), cos(2πφ)])`，即 **`obs[56..59] = sin(2πφ)`×4脚，`obs[60..63] = cos(2πφ)`×4脚**；顺序 FL,FR,RL,RR。
+真机 C++ 侧（`src/strategy/rl_controller.cpp` 的 `build_observation`）已按同一分组布局实现（2026-09-19 提交 `0ee431f` 修正，早前的 `[sin,cos]` 交错会让 `obs[56..63]` 从 index 57 起错位）。
 **step 是 episode 内控制步计数，reset 时归 0**——真机每次启停必须从 0 重新计数，否则相位错位会导致步态混乱。
 
 观测值 clip 到 [−100, 100]。**无 running normalization**（训练端也未做 obs 归一化，直接喂原始值）。
@@ -145,28 +187,35 @@ cd dogurdf_sim2sim_deploy
 | yaw rate 跟踪 | ±1.03 rad/s（指令 ±1.0，跟随良好） |
 | 平面漂移 | ~0.10 m/s（原地转弯，非平移） |
 
-> ⚠️ **已知风险（务必阅读）**：训练在 iter ~4000+ 可能复现 reward hacking（四轮高频乱摆腿刷抬腿奖励）。**本包现用 traj_v28 的 iteration_3000**（2026-08-30 对齐；训练权威 RL_Train/code）。部署时不要对更高 iteration 的 checkpoint 抱期望；若需重新训练，参考 `src/cfg/` 的奖励配置并注意早期停止。
+> ⚠️ **已知风险（务必阅读）**：traj_v28 时期观察到训练在 iter ~4000+ 可能复现 reward hacking（四轮高频乱摆腿刷抬腿奖励）。
+> **本包现用与真机同款的 `../weights/iteration_9754.pkl`**（即真机 `tool/export_policy.py` 的默认输入；2026-09-29 对齐）。
+> 上表验收数据来自 traj_v28 的 iter_1000 诊断，**不是当前 9754 权重的复测结果**，仅作行为参照；换 checkpoint 后应重跑 `diagnose_turn` 复核。
+> 若需重新训练，参考 `src/cfg/` 的奖励配置并注意早期停止；训练权威在 `RL_Train/code`。
 
 ---
 
 ## 8. 真机部署注意事项（安全优先）
 
-1. **安全保护**：任何情况下保证 `torque_limit` 生效（腿 150 / 轮 53 N·m）；建议软件限位 + 看门狗，异常立即断电。
+1. **安全保护**：任何情况下保证 `torque_limit` 生效。真机命令限幅为 **Hip 120 / Thigh 120 / Calf 200 / Wheel 52 N·m**（`TORQUE_CMD_LIMIT`，`include/motor/ele_motor_def.h`）；sim 默认 250/53，需 `--real_actuator` 才对齐真机。建议软件限位 + 看门狗，异常立即断电。
 2. **站姿验证**：先不开策略，用 PD 保持 default pose（站高 0.45 m），确认电机能托住重量、无低频抖动、无过热。再逐步引入策略。
 3. **起步要慢**：从 `--cmd_vel_yaw 0.2` 小指令开始，确认对角步态稳定后逐步加大到 1.0。
-4. **相位时钟**：真机每次上电/复位，`step` 计数器从 0 开始；轮速单位 rad/s。
-5. **时延**：训练未含时延随机化（`randomize_action_latency=False`）。若通讯引入明显时延，需先补偿再上线。
+4. **相位时钟**：真机每次上电/复位，`step` 计数器从 0 开始；轮速单位 rad/s。观测里 `gait_phase` 是分组 `[sin×4, cos×4]`。
+5. **时延**：**训练是否含时延随机化以 `RL_Train/code` 的训练配置为唯一真源**（`action_delay` / `randomize_action_latency`），本文档不代为断言。
+   本仓库实测结论：真机纯传输延迟 ≈ **24 ms（18~30 ms）**，对应 50Hz 下建议 `action_delay_steps = 1`（详见 `docs/ACTION_DELAY_MEASURE.md`）。
+   sim2sim 侧可直接用 `--act_delay 1`（或 `--real_actuator`）复现该延迟。
 6. **base_lin_vel 置零**：真机若可提供里程计速度，也应保持该段为 0（与训练/sim2sim 一致），除非重新训练。
 7. **轮滑/摩擦**：sim 摩擦系数 0.8。真机地面摩擦低于此值时步态可能退化，可考虑摩擦垫。
+8. **轮子建模差异**：sim 的轮子是 `tau = WHEEL_KD*(w_target - qd)`（`WHEEL_KD=2.0`），真机是**固件 SPEED 速度环**（`kvp=3.0, ki=0.05`）——同权重下轮速响应仍会有差异，对比时需注意。
 
 ---
 
 ## 9. 训练溯源
 
 - 训练框架：`/home/sysu/Desktop/Project/Bruce/RL_Train/code`（MJX/JAX PPO）
-- 本策略：`run_name=traj_v28`，`checkpoints_20260827_044715_traj_v28/iteration_3000.pkl`
+- 本仓库默认权重：`../weights/iteration_9754.pkl`（与真机 `include/strategy/policy_weights.h` 同源 = `tool/export_policy.py` 默认输入）
+  - 🗄️ 历史存档：`checkpoints/dogurdf_velocity/iteration_450.pkl`、`iteration_3000.pkl`（traj_v28 时期，**已不与真机同步**；如需复现旧数据用 `SIM2SIM_CKPT=` 显式指定）
 - 站高 0.45 m（default pose thigh=0.20, calf=−0.35，FK 实测 0.449 m，抬腿能力 0.10 m）
-- 真机标定：质量 56.71 kg（实测校准），kp=250，扭矩限 250 N·m，轮地摩擦 1.36
+- 真机标定：质量 56.71 kg（实测校准），腿 `kp=250 / kd=4`，命令扭矩限幅 **Hip 120 / Thigh 120 / Calf 200 / Wheel 52 N·m**，轮地摩擦 1.36
 - 奖励要点：`feet_air_time_turn=50` + `feet_lift_turn=3` + `rotation_gait_symmetry=15`（242a371 成功配方），`phase_gait=0`
 - 达标判定：diagnose_turn 对角同空比例 > 0.6、yaw 跟踪、漂移小
 

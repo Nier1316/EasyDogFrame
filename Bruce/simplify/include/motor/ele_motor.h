@@ -1,19 +1,19 @@
 #ifndef ELE_MOTOR_H
 #define ELE_MOTOR_H
 
-#include <mutex>
 #include <cstdint>
 #include "motor/ele_motor_def.h"
 
 class CanTransport;   // 传输后端（由 MotorManager 按 channel 注入，CANET/USB2CAN 通用）
 
 class EleMotor {
-private:
-    std::mutex state_mutex;  // 保护状态字段的并发读写
-
 public:
     EleMotor() = default;
     ~EleMotor() = default;
+
+    // 并发保护说明：本类**不再自带互斥锁**（原 state_mutex 成员全仓无任何使用处，
+    // 2026-09-29 清理）。实际加锁由 MotorManager::m_motor_mutex[CAN_PORTS][MOTORS_PER_CAN]
+    // 在读写电机字段前后统一持有。
 
     // 传输后端（MotorManager::Initialize 创建电机时注入 m_transport[device_idx]）。
     // 发送走它 → 换硬件（CANET/USB2CAN）不动电机编解码层。nullptr 时发送静默丢弃。

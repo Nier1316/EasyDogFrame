@@ -25,23 +25,26 @@ constexpr int NUM_LEG_JOINTS  = 12;
 constexpr int NUM_WHEELS      = 4;
 constexpr int OBS_DIM         = 64;
 
-// ---- 控制参数（对齐 RL_Train/code/src/sim2sim.py 默认值，traj_v28 权威）----
+// ---- 控制参数（与 RL_Train/code 训练侧、dogurdf_sim2sim_deploy/src/sim2sim.py 保持一致）----
+// 当前部署权重 = weights/iteration_9754.pkl（经 tool/export_policy.py 导出到 policy_weights.h）；
+// sim2sim 也指向同一份（dogurdf_sim2sim_deploy/run_sim2sim.sh），保证对比是同策略。
 constexpr float ACTION_SCALE        = 0.25f;
 constexpr float WHEEL_VEL_SCALE     = 12.5f;
-// LEG_KP/LEG_KD = 250/4：sim2sim.py 默认（traj_v28 训练 stiffness=250, damping=4）。
+// LEG_KP/LEG_KD = 250/4：对齐 sim2sim.py 默认（训练 stiffness=250, damping=4）。
 // ⚠ 2026-08-29 曾评估 LEG_KD 提至 10（hip 外翻漂移 180601 日志 +0.06→+0.15，阻尼 4 偏弱、
-//   真机延迟吃掉部分阻尼），但未落地——当前仍 4.0，对齐 v28 训练。若真机 hip 仍漂移，
+//   真机延迟吃掉部分阻尼），但未落地——当前仍 4.0，对齐训练。若真机 hip 仍漂移，
 //   可现场试提 6~10（历史 250/40 也验证更稳）再定。
 constexpr float LEG_KP              = 250.0f;
 constexpr float LEG_KD              = 4.0f;
 // WHEEL_KD = 1.0：轮速阻尼（RL 阻抗诊断路径用）。⚠ 历史 2.0（sim2sim 默认）→ 1.0 抑制
 // 解除挂钩振荡；SPEED 迁移后轮子走固件速度环（kvp/ki），此量仅诊断用。
 constexpr float WHEEL_KD            = 1.0f;
-// ⚠ LEG_TORQUE_LIMIT 当前未使用（腿扭矩由固件阻抗环限制）。真机扭矩量程（编解码 + 命令上限）
-// 以 ele_motor_def.h 为准：MOTOR_LIMITS 协议量程 = TORQUE_CMD_LIMIT 命令上限 = Hip/Thigh±120、
-// Calf±200、Wheel±52（2026-08-30 用户改固件限幅；编码前 clamp 防越界，反馈按新量程解析）。
-constexpr float LEG_TORQUE_LIMIT    = 250.0f;   // 历史值，未参与 clamp
-constexpr float WHEEL_TORQUE_LIMIT  = 53.0f;
+// ⚠ 扭矩限幅不在本文件设——真机由固件阻抗环 + ele_motor_def.h 的 TORQUE_CMD_LIMIT 决定：
+//   MOTOR_LIMITS 协议量程 = TORQUE_CMD_LIMIT 命令上限 = Hip/Thigh±120、Calf±200、Wheel±52
+//   （2026-08-30 用户改固件限幅，2026-09-04 Hip/Thigh 110→120；编码前 clamp 防越界，反馈按量程解析）。
+//   sim2sim 侧默认 LEG_TORQUE_LIMIT=250 / WHEEL_TORQUE_LIMIT=53；加 --real_actuator 才对齐真机的
+//   120/120/200/52。即真机 Calf 封顶 ±200 < sim 的 250 → calf 大扭矩动作在真机被削顶，
+//   做 sim2real 对比时应带 --real_actuator 以消除该饱和域差异。
 constexpr float CONTROL_DT          = 0.02f;   // 50 Hz
 constexpr float GAIT_CYCLE          = 0.6f;
 
@@ -123,22 +126,21 @@ inline float leg_pos_target(float action, int policy_idx) {
     return q < lo ? lo : (q > hi ? hi : q);
 }
 
-// 轮子摩擦前馈（Nm）：[wheel_idx][0]=正向静摩擦, [1]=负向静摩擦。
-// wheel_idx 0..3 = FL,FR,RL,RR（POLICY 轮顺序 == CAN 顺序）。
-// 由 Example35_WheelFFCalibrate 实测（2026-08-21）：CAN2 阻力明显较大。
-extern const float WHEEL_FF[4][2];
-
-// 摩擦前馈总开关。⚠ 2026-08-21 定位轮电机乱转：策略站立时 wheel action 接近 0 但带噪声，
-// 符号在 0 附近抖动会让前馈在 ±静摩擦间跳变 → 轮子被反复推正推负。先关掉验证。
-constexpr bool WHEEL_FF_ENABLE = false;
+// ---- 轮子摩擦前馈 / 轮子扭矩软限位：已删除（2026-09-29）----
+// 历史实现 rl::wheel_torque()（kd·(WHEEL_VEL_SCALE·action − vel) + WHEEL_FF 摩擦前馈 + 速度软限位）
+// 在 2026-08-29 轮控迁移到固件 SPEED 速度环之后**再无任何调用者**，本次连同
+// WHEEL_FF[4][2] / WHEEL_FF_ENABLE / WHEEL_SOFT_LIMIT_ENABLE / WHEEL_VEL_SOFT_LIMIT /
+// WHEEL_SOFT_LIMIT_TORQUE / WHEEL_TORQUE_LIMIT 一并删除（历史数值见 memory/FACT.md、UPDATE.md）。
+// 轮速保护现由 MotorManager 的 WHEEL_ESTOP_*（15 rad/s 超速自动急停 + 固件速度环制动）承担。
 
 // ---- 腿摩擦前馈（Coulomb + Viscous，参考 project_5_Matrix_deploy/friction_model.py）----
 // 模型：τ_ff = fc·tanh(τ_pd / 2) + fv·dq
 //   - 方向用 PD 扭矩方向 tanh(τ_pd/2)：始终帮 PD、绝不抵抗，避免速度方向在站立/静止时
-//     符号抖动（WHEEL_FF 乱转教训）。τ_pd 为当前 PD 输出（kp·(q_t−q) − kd·q̇，URDF 约定）。
-//   - fv·dq：粘性阻尼前馈。Example47 辨识 B（粘性）不可靠（速度反馈延迟），暂置 0。
-//   - fc：每关节库仑摩擦（RL_TRAINING_REFERENCE §2.1，多数 0.05~0.6 Nm 可靠，异常置 0）。
-// ⚠ 值小（<0.65 Nm），风险低；若真机表现异常（越动越快/振荡），关闭 LEG_FF_ENABLE 复核。
+//     符号抖动（当年轮子摩擦前馈乱转的教训）。τ_pd 为当前 PD 输出（kp·(q_t−q) − kd·q̇，URDF 约定）。
+//   - fv·dq：粘性阻尼前馈。Example54/47 辨识 b（粘性）不可靠（速度反馈延迟），暂置 0。
+//   - fc：每关节库仑摩擦，来自 Example54 吊装摩擦辨识（2026-09-04）。
+// ⚠ 实测值并不小（1.64~6.17 Nm，见 rl_controller.cpp 的 LEG_FF_FC），已接近部分关节的
+//   PD 输出量级；若真机出现"越动越快/振荡"，先关闭 LEG_FF_ENABLE 复核再折半。
 constexpr bool   LEG_FF_ENABLE  = true;
 constexpr float  LEG_FF_TANH_K  = 0.5f;   // tanh(τ_pd/K) 方向光滑参数
 extern const float LEG_FF_FC[12];          // 每关节库仑摩擦 (Nm)，POLICY order（12 腿）
@@ -149,45 +151,6 @@ inline float leg_friction_ff(float tau_pd, float dq, int policy_idx) {
     if (!LEG_FF_ENABLE) return 0.0f;
     return LEG_FF_FC[policy_idx] * std::tanh(tau_pd * LEG_FF_TANH_K)
          + LEG_FF_FV[policy_idx] * dq;
-}
-
-// ---- 轮子速度软限位（安全兜底，2026-08-21）----
-// 背景：RL 轮子曾被带到 48 rad/s 饱和（≈10.8 m/s，危险）。软限位 = 限幅式（非硬制动）：
-//   轮速超阈值 → 把扭矩夹在 ±WHEEL_SOFT_LIMIT_TORQUE 内。
-// ⚠ 阈值 5.0 rad/s ≈ 0.565 m/s 线速（v = ω·r，r=0.113）。满 action 目标轮速 12.5 rad/s 会超限，
-//   即满摇杆/满 action 行驶时会触发保护（限加速方向，仍保留自然制动）。若需高速行驶再放宽。
-constexpr bool   WHEEL_SOFT_LIMIT_ENABLE = true;   // 软限位开关
-constexpr float  WHEEL_VEL_SOFT_LIMIT    = 5.0f;  // 异常速度阈值 (rad/s)
-constexpr float  WHEEL_SOFT_LIMIT_TORQUE = 30.0f;   // 超限时扭矩限幅 (Nm)
-
-/**
- * @brief 轮关节前馈扭矩：kd * (wheel_vel_scale * action - vel) [+ 摩擦前馈]，clip 到限幅
- * @param action      策略输出的轮动作（POLICY 轮索引 12..15 对应 idx=0..3）
- * @param vel         轮速反馈（URDF 约定）
- * @param wheel_idx   0..3 = FL,FR,RL,RR（== CAN0..3）
- *
- * 摩擦前馈（WHEEL_FF_ENABLE 时）：按期望运动方向（action 目标速度符号）叠加对应静摩擦，
- * 消除低速死区。开启后需加阈值/滞后避免 action 噪声导致前馈符号抖动。
- */
-inline float wheel_torque(float action, float vel, int wheel_idx) {
-    float tau = WHEEL_KD * (WHEEL_VEL_SCALE * action - vel);
-    if (WHEEL_FF_ENABLE) {
-        float tau_ff = 0.0f;
-        if      (WHEEL_VEL_SCALE * action > 0.0f) tau_ff =  WHEEL_FF[wheel_idx][0];
-        else if (WHEEL_VEL_SCALE * action < 0.0f) tau_ff =  WHEEL_FF[wheel_idx][1];
-        tau += tau_ff;
-    }
-
-    // 速度软限位：轮速超阈值 → 扭矩限幅到 ±WHEEL_SOFT_LIMIT_TORQUE 内。
-    // 限幅式（非硬制动）：PD 自然制动力（与超速方向相反）照常通过，只夹住加速方向的扭矩，
-    // 避免超速瞬间强制反向制动的冲击。正超速禁正扭矩、负超速禁负扭矩。
-    if (WHEEL_SOFT_LIMIT_ENABLE) {
-        if      (vel >  WHEEL_VEL_SOFT_LIMIT) tau = (tau >  WHEEL_SOFT_LIMIT_TORQUE) ?  WHEEL_SOFT_LIMIT_TORQUE : tau;
-        else if (vel < -WHEEL_VEL_SOFT_LIMIT) tau = (tau < -WHEEL_SOFT_LIMIT_TORQUE) ? -WHEEL_SOFT_LIMIT_TORQUE : tau;
-    }
-
-    float lim = WHEEL_TORQUE_LIMIT;
-    return tau < -lim ? -lim : (tau > lim ? lim : tau);
 }
 
 } // namespace rl

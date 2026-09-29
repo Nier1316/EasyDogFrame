@@ -4,6 +4,12 @@
 > 目的：为 dogurdf 轮足策略重新训练（sim2sim.py / Isaac Gym / MuJoCo）提供**真机实测**的
 > 物理参数、控制架构、反馈特性与已知坑，使仿真模型与奖励设计对齐真实硬件，缩小 sim2real gap。
 > 数据来源：Example46/47（单关节阶跃 + 整狗站立 chirp 扫描辨识）、Example36（RL 站立）日志分析。
+>
+> ⚠ **2026-09-29 更新（部分结论已过时）**：
+> - 真机**轮子不再走上位机闭环**，已改为**固件 SPEED 速度环**（`SendSpeed(vel, kvp, ki)`，`WHEEL_KVP=3.0/WHEEL_KVI=0.05`，固件内部 1kHz）。§1/§4.1/§5 中"上位机 500Hz 闭环/阻抗扭矩控轮"的写法见各节订正。
+> - 轮速**软限位已失效**（`WHEEL_SOFT_LIMIT_*` / `rl::wheel_torque()` 无调用者）；现由 `MotorManager` 的 `WHEEL_ESTOP_*`（15 rad/s 自动急停）承担。
+> - 真机扭矩命令限幅现为 **Hip 120 / Thigh 120 / Calf 200 / Wheel 52 N·m**（`TORQUE_CMD_LIMIT`），§6.3 的"±150"已作废。
+> - 当前部署权重 `weights/iteration_9754.pkl`，`main.cpp` 激活 **Example37_RLTeleopControl**（示例编号 17~57，共 40 个；`Example55` 从未实现已移除）。
 
 ---
 
@@ -15,12 +21,13 @@
 | 传输 | 达妙 USB2CAN 双路模块 ×2（CAN0-3） | 逻辑路 idx→(设备=idx/2, 通道=idx%2) |
 | 控制频率 | **CONTROL_HZ = 500**（`robot_calibration.h`） | motor_receive 2ms / motor_send 2ms |
 | 策略决策 | **50Hz**（`CONTROL_DT=0.02`，与训练一致） | RL 循环 HZ=50 |
-| **轮子闭环** | **500Hz**（`SendOnce` 内速度环） | ⚠ 关键：轮子 PD 必须在 500Hz 执行，不能 50Hz |
+| **轮子闭环** | **固件 SPEED 速度环**（`SendSpeed`，固件内部 1kHz） | ⚠ **2026-08-29 后已改**：旧文写的"上位机 500Hz 闭环"已过时；轮子现走固件速度环 |
 | 腿关节 PD | 下发固件（kp/kd），固件内部高频执行 | 策略只输出位置/速度目标 |
 
 **架构要点**（对齐 legged_gym 的做法）：
-- 50Hz 策略决策 + 500Hz PD 执行是标准架构。leg 的 PD 下发给固件，**轮子没有可靠固件 PD**，必须上位机 500Hz 闭环。
-- 轮子控制模型：`τ = kd·(目标轮速 − 反馈轮速) + 前馈`，kd=0 时退化为纯扭矩。
+- 50Hz 策略决策 + 高频 PD 执行是标准架构。leg 的 PD 下发给固件（kp/kd=250/4）；**轮子改走固件 SPEED 速度环**（`rl::WHEEL_KVP=3.0` / `rl::WHEEL_KVI=0.05`）。
+  ⚠️ 订正：旧文"轮子没有可靠固件 PD，必须上位机 500Hz 闭环"已被推翻——2026-08-29 起轮控迁移到固件 SPEED 模式，`rl::WHEEL_KD=1.0` 仅用于不再被调用的阻抗诊断路径。
+- 轮子控制模型（历史/诊断）：`τ = kd·(目标轮速 − 反馈轮速) + 前馈`，kd=0 时退化为纯扭矩；**实际真机不经过该路径**。
 
 ---
 
@@ -84,9 +91,10 @@ tau_ff（前馈）= 抵消重力/摩擦（消稳态误差）
 | thigh | 200 | 8 | **-3 Nm** |
 | calf | 300 | 10 | 待重测（C0 +6 参考） |
 
-- 当前值：hip 300/10、thigh/calf 250/10（`JOINT_IMPEDANCE`），tau_ff 已填（hip -10/thigh -5/calf +12/+20 Nm）。
-- ⚠ 符号验证：填 tau_ff 后起立，若 hip 反而塌/过冲，把 -10 翻成 +10。
-- ⚠ **RL 循环的 `LEG_KP/KD = 250/4`（对齐 v28 训练）**；起立的 `JOINT_IMPEDANCE` 可调。
+- 当前值：`JOINT_IMPEDANCE` kp/kd = hip 300/10、thigh/calf 250/10，tau_ff 已填 —— 代码实际为 **hip −10 / thigh +5 / calf +12（CAN0/1）、+20（CAN2/3）Nm**。
+  ⚠ **thigh 是未解冲突**：`include/motor/motor_calibration.h` 代码值是 `+5.0f`，但同行注释与提交 `6546688` 的信息写 `-5`。以**代码 +5** 为准，现场起立验证后再定。
+- ⚠ 符号验证：填 tau_ff 后起立，若 hip 反而塌/过冲，把 −10 翻成 +10（thigh 若表现反向，优先怀疑上述 +5/−5 冲突）。
+- ⚠ **RL 循环的 `LEG_KP/KD = 250/4`（对齐 v28 训练）**；起立的 `JOINT_IMPEDANCE`（300/250）可调，两套参数勿混。
 
 ### 3.3 稳态误差的根源与对策
 
@@ -110,14 +118,16 @@ tau_ff（前馈）= 抵消重力/摩擦（消稳态误差）
 |---|---|---|
 | WHEEL_KD | 1.0 | 轮速阻尼（RL 诊断路径用；SPEED 迁移后轮走固件速度环 kvp/ki） |
 | WHEEL_VEL_SCALE | 12.5 | action→目标轮速 |
-| 软限位 | \|vel\|>5.0 rad/s → 扭矩夹 ±10.0 Nm | 限幅式（非硬制动），防疯转 |
-| 闭环频率 | **500Hz**（SendOnce） | ⚠ 50Hz 上位机闭环会疯转（跟不上物理动态） |
+| 软限位 | **🔴 已失效** | `WHEEL_SOFT_LIMIT_*`（旧值 `\|vel\|>5.0 rad/s → 扭矩夹 ±30.0 Nm`）与 `rl::wheel_torque()` 均**无调用者**（SPEED 迁移后不经过），本次代码清理已移除。旧文写的"±10.0 Nm"更是早已被 30.0 取代 |
+| 轮速保护（现行） | `MotorManager` 的 `WHEEL_ESTOP_*` | `WHEEL_ESTOP_VEL=15.0 rad/s` 自动触发急停（瞬态制动）；手动 `WheelEmergencyStop()` 才保持；`WHEEL_ESTOP_GRACE_TICKS=1000`（2s 静默窗口） |
+| 轮速环频率 | **固件内部 1kHz**（`SendSpeed`，`WHEEL_KVP=3.0/WHEEL_KVI=0.05`） | 上位机 50Hz 只刷新目标；⚠ 旧文"必须上位机 500Hz 闭环"已过时 |
+| 轮速滤波 | 一阶低通 alpha=0.2（仅轮，`ele_motor.cpp`） | 抑制 USB2CAN 跳变 |
 
 ---
 
 ## 5. 已知坑与对策（训练/部署必读）
 
-1. **轮子 50Hz 上位机闭环 → 疯转**：轮子 PD 必须 500Hz（`SendOnce`），策略只设目标轮速。
+1. **轮子 50Hz 上位机闭环 → 疯转**：⚠ **已由 SPEED 迁移解决**——轮子现走固件速度环，上位机只按 50Hz 刷新目标轮速。旧文"轮子 PD 必须 500Hz（`SendOnce`）"是迁移前的结论。
 2. **USB2CAN 接收挂**：电机大电流（满扭矩）+ 高发送负载（500Hz×16）会打挂接收方向。
    对策：发送 500Hz 对齐、关高开销日志、接收心跳检测。
 3. **recv 只取 1 帧 → 观测积压滞后**：`recv` 必须一次性取空队列（对齐 CANET 批量语义）。
@@ -142,18 +152,19 @@ tau_ff（前馈）= 抵消重力/摩擦（消稳态误差）
 
 - **观测**：关节角（标定后）+ 速度（**加延迟/低通仿真**）+ 扭矩 + 轮速。
   IMU 姿态（HWT606 100Hz）已验证可用。
-- **动作**：腿关节位置残差（PD 下发固件），轮子速度目标（500Hz 上位机速度环）。
+- **动作**：腿关节位置残差（PD 下发固件，kp/kd=250/4），轮子速度目标（固件 SPEED 速度环，kvp=3.0/ki=0.05）。
 - **动作尺度下限**：需大于静摩擦死区（hip/thigh ~1.5 Nm），否则策略输出被摩擦吃掉。
 
 ### 6.3 奖励设计建议（结合真机特性）
 
 - 能耗惩罚 `Στ²`（真机扭矩 ~±10 Nm 站立保持，过大惩罚会抑制动作）。
 - 摩擦相关：避免策略在死区边缘抖振（可用动作平滑惩罚）。
-- 限位/扭矩 clamp：真机 kp_max=500 / kd_max=100 / 扭矩 ±150（腿）/ ±52（轮）。
+- 限位/扭矩 clamp：真机 kp_max=500 / kd_max=100 / 协议量程与命令限幅 **Hip 120、Thigh 120、Calf 200、Wheel 52 N·m**（`TORQUE_CMD_LIMIT`；⚠ 旧文"±150"已作废）。
 
 ### 6.4 部署频率
 
-- **训练决策 50Hz 不变**，但**部署必须 500Hz PD 执行**（leg 固件 PD + wheel 上位机 500Hz）。
+- **训练决策 50Hz 不变**；真机执行由固件承担（leg 固件 PD 于 500Hz 收发帧刷新，wheel 固件 SPEED 环内部 1kHz）。
+  ⚠ 旧文"部署必须 500Hz 上位机 PD（含 wheel）"已过时——SPEED 迁移后轮子不再由上位机闭环。
 - 若训练 sim dt 用 0.002×decimation 保证 PD 更新频率 ≥ 部署频率，仿真更贴近。
 
 ---
@@ -164,13 +175,15 @@ tau_ff（前馈）= 抵消重力/摩擦（消稳态误差）
 |---|---|
 | `include/motion/robot_calibration.h` | CONTROL_HZ=500, STAND_*_DEG |
 | `include/motor/motor_calibration.h` | MOTOR_CALIBRATION, JOINT_IMPEDANCE, MOTOR_LIMITS |
-| `include/strategy/rl_controller.h` | LEG_KP/KD, WHEEL_KD, WHEEL_VEL_SCALE, 软限位 |
+| `include/strategy/rl_controller.h` | LEG_KP/KD=250/4, WHEEL_KD=1.0（仅诊断）, WHEEL_VEL_SCALE, WHEEL_KVP/KVI, LEG_FF_FC/FV |
 | `include/strategy/sim2real_conv.h/.cpp` | CONV_A/B, DEFAULT_POSE, urdf_to_status |
-| `src/motor/motor_manager.cpp` | SendOnce 轮子 500Hz 速度环 |
-| `src/motor/ele_motor.cpp` | FilterWheelVel 轮速低通滤波 |
-| `src/runtime/motor_io.cpp` | motor_receive/send 线程（2ms） |
-| `src/app/examples/ex_diag.cpp` | Example47 扫描辨识 |
-| `docs/ACTION_DELAY_MEASURE.md` | 执行器延迟辨识（action_delay_steps=1） |
+| `include/motor/ele_motor_def.h` | MOTOR_LIMITS 量程 + TORQUE_CMD_LIMIT（120/120/200/52） |
+| `src/motor/motor_manager.cpp` | WHEEL_ESTOP_* 轮控保护 + SendOnce（2ms 收发） |
+| `src/motor/ele_motor.cpp` | 轮速一阶低通滤波（alpha=0.2） |
+| `src/runtime/motor_io.cpp` | motor_receive/send 线程（2ms，优先级 80） |
+| `src/app/examples/ex_diag.cpp` | Example47 整狗 chirp 辨识、Example54 吊装摩擦辨识 |
+| `docs/ACTION_DELAY_MEASURE.md` | 真机传输延迟实测（建议 action_delay_steps=1） |
+| `weights/iteration_9754.pkl` | 当前部署权重（`tool/export_policy.py` 默认输入） |
 
 ---
 
@@ -179,5 +192,5 @@ tau_ff（前馈）= 抵消重力/摩擦（消稳态误差）
 - [ ] C0-1 FL hip / C1-3 FR calf / C3-3 RR calf 数据异常，需重测（可能机械摩擦或辨识被带动）。
 - [ ] calf 的 tau_ff 需重测确认（当前分散 +6/-8/-11）。
 - [ ] J/B 需用 CAD 或阶跃法补测（开环 chirp 受反馈延迟限制）。
-- [ ] hip/thigh tau_ff 符号需真机起立验证。
-- [ ] 若重训，用本文 §6 对齐仿真参数后跑基线，再真机回归（Example36 起立 + Example46 阶跃）。
+- [ ] hip/thigh tau_ff 符号需真机起立验证。**thigh 存在未解冲突**：`JOINT_IMPEDANCE` 代码值 `+5.0f`，注释/提交 `6546688` 写 `−5`，以代码为准，现场确认后只改注释不改安全值。
+- [ ] 若重训，用本文 §6 对齐仿真参数后跑基线，再真机回归（Example36 起立 + Example46 单电机阶跃）。

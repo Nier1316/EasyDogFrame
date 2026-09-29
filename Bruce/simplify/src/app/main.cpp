@@ -1,26 +1,22 @@
 #include <stdio.h>
-#include <unistd.h>
-#include <signal.h>
-#include "runtime/robot_app.h"
 #include "app/examples.h"
-
-static RobotApp g_app;
-static volatile bool g_running = true;
-
-static void signal_handler(int) {
-    g_running = false;
-}
 
 // =====================================================================
 //  示例切换说明
 //  = 只运行一个示例：目标示例的 3 行取消注释、其余保持注释即可。
-//  = Example1-16 已清理（早期实验），现存 17~54。
-//  = 当前启用：Example54（吊装摩擦辨识）。
+//  = Example1-16 已清理（早期实验），现存 17~57（共 40 个；55 从未实现，已删除）。
+//  = 当前启用：Example37（RL 遥操作，手柄前进/后退 + 转向）。
+//
+//  ⚠ 2026-09-29：原先此处用 `signal(SIGINT, signal_handler)` 装了一个只把
+//    `static volatile bool g_running` 置 false 的处理器，而该变量**从未被读取**：
+//    对没有自己装 SIGINT 处理的示例，Ctrl+C 会被这个空处理器吞掉、程序不退出，
+//    电机一直使能——比默认行为更危险。现已移除：未自行处理的示例回归默认终止语义。
+//    实测（2026-09-29 grep 统计）：40 个示例中 27 个会调用 EnableMotor/PreEnableZeroTorque，
+//    其中 11 个自己装了 SIGINT 处理 —— Ex25/34/35/36/37/38/51/52/53/54/56；
+//    另有 16 个会发使能帧但没有 SIGINT 保护 —— Ex18/19/20/21/22/23/29/32/41/44/45/46/47/48/49/57，
+//    这些示例中断只能靠固件 CAN_Timeout 兜底，使用前务必确认急停手段（电源开关）。
 //  =====================================================================
 int main() {
-    signal(SIGINT,  signal_handler);
-    signal(SIGTERM, signal_handler);
-
     // 运行示例17 - SimSync 仿真集成
     // printf("[INFO] Running Example17_SimSyncIntegration...\n");
     // Example17_SimSyncIntegration();
@@ -157,15 +153,10 @@ int main() {
     // Example43_CANOrderCalibrate();
     // printf("[INFO] Example43 completed.\n");
 
-    // 运行示例44 - Xbox 手柄控制（USB2CAN 4 路，轮阻抗前馈）——验证 calf 限位放宽后 ↑ 升高
+    // 运行示例44 - Xbox 手柄控制（USB2CAN 4 路；轮子走固件 SPEED 速度环）
     // printf("[INFO] Running Example44_USB2CanXboxControl...\n");
     // Example44_USB2CanXboxControl();
     // printf("[INFO] Example44 completed.\n");
-
-    // 运行示例55 - 单腿关节真实限幅测量（手动摆腿 + 回车记录，不使能电机）
-    // printf("[INFO] Running Example55_SingleLegLimitMeasure...\n");
-    // Example55_SingleLegLimitMeasure();
-    // printf("[INFO] Example55 completed.\n");
 
     // 运行示例54 - 吊装摩擦辨识（重力标定 + 前馈恒速 + 双向配对，数据落盘 log/fric_id/）
     // printf("[INFO] Running Example54_FrictionSysId...\n");

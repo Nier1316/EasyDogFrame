@@ -3,7 +3,12 @@
 > 日期：2026-08-25
 > 对象：dogurdf 轮足策略 sim2real 部署
 > 方法：真机正弦扫频 + 基波相位拟合（Example38）
-> 结论速览：**真机纯传输延迟 ≈ 18~30ms（均值 24ms）→ 训练侧 `action_delay_steps = 1`（20ms），建议叠加 0~2 步随机化**
+> 结论速览：**真机纯传输延迟 ≈ 18~30ms（均值 24ms）→ 建议训练侧 `action_delay_steps = 1`（20ms），建议叠加 0~2 步随机化**
+> （"训练侧实际配了什么"见下条：以 `RL_Train/code` 为唯一真源，本文只给建议。）
+>
+> ✅ **2026-09-29 核对**：本仓库只记录**实测结论**（真机延迟 ≈24ms）。
+> **训练是否含 action latency，一律以 repo 外的训练工程 `RL_Train/code` 的配置为唯一真源**（`env cfg` 的 `action_delay` / `randomize_action_latency`），本文与其它文档都不再自行断言。
+> `main.cpp` 当前激活 **Example37_RLTeleopControl**（跑本流程需切换到 Example38）。
 
 ---
 
@@ -64,7 +69,7 @@ RL 策略在真机部署时，动作从「策略输出」到「执行器响应�
 
 **可信段（4~6Hz）：18.1 / 21.8 / 26.9 / 29.7 ms，均值 ≈ 24 ms。**
 
-轮2 全无效：其摩擦最大（`WHEEL_FF` 实测 CAN2 阻力 0.8 Nm 为四轮之最），1.0 Nm 幅度过不去死区，波形严重失真。
+轮2 全无效：其摩擦最大（`WHEEL_FF` 历史实测 CAN2 阻力 0.8 Nm 为四轮之最；该常量现已无调用者，见 `docs/SIM2REAL_DEPLOY.md` §10），1.0 Nm 幅度过不去死区，波形严重失真。
 
 ### 3.2 阶段A 腿通道（上界参考）
 
@@ -87,6 +92,10 @@ action_delay_steps = round(24 / 20) = 1
 ```
 
 **建议训练配置：`action_delay_steps = 1 ± 随机(0~2步)`**，每 episode 从 0~3 步采样，让策略对延迟鲁棒、不赌单点。取 2 步（40ms）会白白牺牲 16ms 响应性，不必要。
+
+> ⚠️ 上句是**本仓库基于实测延迟给出的建议**，不代表训练配置的现状。
+> 训练侧到底配了什么，**以 `RL_Train/code` 的 env 配置为唯一真源**（`action_delay` / `randomize_action_latency` / `action_delay_*_mean/std` 等字段），本仓库不复制该结论。
+> 本仓库可自行验证的是 sim2sim 侧：`dogurdf_sim2sim_deploy/src/sim2sim.py` 现支持 `--act_delay <步数>` 与 `--real_actuator`（后者默认 1 步延迟 + 真机扭矩上限）。
 
 ---
 
@@ -116,8 +125,8 @@ PD 峰值扭矩 = 250 × 0.03 = 7.5 Nm，接近每腿承重保持力矩（4~7.5 
 
 | 层面 | 动作 |
 |---|---|
-| **训练环境** | 配置 `action_delay_steps=1`，实现为动作延迟缓冲（当前步应用 N 步前的 action，`last_action` 跟随延迟后的动作） |
-| **sim2sim.py 评估** | `control_step` 加同样的延迟缓冲，保证评估与训练一致（本仓库可改） |
+| **训练环境** | 训练是否/如何注入时延 **以 repo 外的 `RL_Train/code` 配置为唯一真源**；若需注入，建议值 `action_delay_steps=1`，实现为动作延迟缓冲（当前步应用 N 步前的 action，`last_action` 跟随延迟后的动作） |
+| **sim2sim.py 评估** | 本仓库 `dogurdf_sim2sim_deploy/src/sim2sim.py` 已内置同款延迟缓冲：`--act_delay N`（默认 0）、`--real_actuator`（隐含 1 步 + 真机扭矩上限 120/120/200/52） |
 | **真机侧** | 保持链路低延迟（发送队列不阻塞、GetStatus 数据龄小）；**不要**人为加延迟 |
 | **后续优化** | 若想提升腿跟随带宽，可评估提高 `LEG_KP`（需重新 sim2real 验证，当前 250 已实测稳定） |
 
@@ -125,7 +134,7 @@ PD 峰值扭矩 = 250 × 0.03 = 7.5 Nm，接近每腿承重保持力矩（4~7.5 
 
 ## 7. 复现指引
 
-运行 `Example38_ActionDelayMeasure`（需在 main.cpp 中切换启用，当前激活 Example44）：
+运行 `Example38_ActionDelayMeasure`（需在 `src/app/main.cpp` 中切换启用；当前激活的是 **Example37_RLTeleopControl**）：
 
 ```
 前置条件：狗架起，四腿支撑承重、轮子悬空（同 Example35 条件）
@@ -133,7 +142,7 @@ PD 峰值扭矩 = 250 × 0.03 = 7.5 Nm，接近每腿承重保持力矩（4~7.5 
 安全：全程 Ctrl+C 急停；轮速超 8 rad/s 自动跳过保护
 ```
 
-**参数可调**（`src/example.cpp` Example38）：
+**参数可调**（`src/app/examples/ex_rl.cpp` 的 Example38；旧路径 `src/example.cpp` 已不存在）：
 - 轮幅 `W_AMP`：摩擦大的轮子(如 CAN2)无效时可降到 0.8；若仍无效可升到 1.5（但 2Hz 会超速跳过）。
 - 频率序列：轮 4~6Hz 段最可信，2Hz 数据剔除。
 

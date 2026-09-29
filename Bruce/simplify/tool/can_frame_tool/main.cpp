@@ -26,6 +26,7 @@ static const char* PARAM_LABELS[3][5] = {
     {"期望角度 (rad)", "位置环 kvp", "速度环 kp", "位置环 kd", "速度环 kvi"},
 };
 static const char* MODE_NAMES[3] = {"阻抗 IMPEDANCE", "速度 SPEED", "位置 POSITION"};
+static const char* TYPE_NAMES[4] = {"髋 Hip", "大腿 Thigh", "小腿 Calf", "轮 Wheel"};
 
 class MainWindow : public QWidget {
     Q_OBJECT
@@ -43,11 +44,13 @@ public:
 
 private:
     QComboBox* encMode_ = nullptr;
+    QComboBox* typeEnc_ = nullptr;
     QLabel* paramLbl_[5] = {};
     QLineEdit* paramEdit_[5] = {};
     QPlainTextEdit* encOut_ = nullptr;
     QLineEdit* decInput_ = nullptr;
     QComboBox* decMode_ = nullptr;
+    QComboBox* typeDec_ = nullptr;
     QPlainTextEdit* decOut_ = nullptr;
 
     QWidget* buildEncodeTab();
@@ -67,6 +70,9 @@ QWidget* MainWindow::buildEncodeTab() {
     encMode_ = new QComboBox;
     for (auto* n : MODE_NAMES) encMode_->addItem(n);
     form->addRow("控制模式", encMode_);
+    typeEnc_ = new QComboBox;
+    for (auto* n : TYPE_NAMES) typeEnc_->addItem(n);
+    form->addRow("电机类型", typeEnc_);
     for (int i = 0; i < 5; i++) {
         paramLbl_[i] = new QLabel;
         paramEdit_[i] = new QLineEdit("0");
@@ -104,10 +110,11 @@ void MainWindow::doEncode() {
     for (int i = 0; i < 5; i++) p[i] = paramEdit_[i]->text().toFloat();
 
     bool clamped = false;
-    Frame f = encode((Mode)m, p[0], p[1], p[2], p[3], p[4], &clamped);
+    MotorType ty = (MotorType)typeEnc_->currentIndex();
+    Frame f = encode((Mode)m, p[0], p[1], p[2], p[3], p[4], ty, &clamped);
 
     QString out;
-    out += QString("模式: %1\n\n").arg(MODE_NAMES[m]);
+    out += QString("模式: %1  电机类型: %2\n\n").arg(MODE_NAMES[m]).arg(TYPE_NAMES[ty]);
     out += "CAN 数据 (8 字节):\n";
     QStringList hex, dec;
     for (int i = 0; i < 8; i++) {
@@ -142,6 +149,10 @@ QWidget* MainWindow::buildDecodeTab() {
     decMode_->addItem(MODE_NAMES[1], 1);
     decMode_->addItem(MODE_NAMES[2], 2);
     row->addWidget(decMode_, 1);
+    typeDec_ = new QComboBox;
+    for (auto* n : TYPE_NAMES) typeDec_->addItem(n);
+    row->addWidget(new QLabel("类型:"));
+    row->addWidget(typeDec_);
     auto* btn = new QPushButton("解析");
     row->addWidget(btn);
     lay->addLayout(row);
@@ -187,7 +198,9 @@ void MainWindow::doDecode() {
     QStringList hex;
     for (int i = 0; i < 8; i++) hex << QString::asprintf("0x%02X", bytes[i]);
     QString out = note + "输入帧: " + hex.join(" ") + "\n\n";
-    out += QString::fromStdString(decode(bytes.data(), decMode_->currentData().toInt()));
+    MotorType ty = (MotorType)typeDec_->currentIndex();
+    out += QString("按类型 %1 解读:\n\n").arg(TYPE_NAMES[ty]);
+    out += QString::fromStdString(decode(bytes.data(), decMode_->currentData().toInt(), ty));
     decOut_->setPlainText(out);
 }
 

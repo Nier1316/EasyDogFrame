@@ -36,6 +36,9 @@ void MotionController::sendInterpFrame(const float* from, const float* to, float
 
 bool MotionController::standTo(const float target_urdf[12], float duration_s,
                                const std::function<bool()>& is_stopped) {
+    // 未 init/依赖缺失时直接失败，避免解引用空指针崩溃（原先只在 emergencyStop 里判空）
+    if (!mm_ || !target_urdf) return false;
+
     // 记录起始腿位（真机指令角），供 returnToStart 回位
     for (int leg = 0; leg < 4; leg++)
         for (int j = 0; j < 3; j++)
@@ -44,17 +47,21 @@ bool MotionController::standTo(const float target_urdf[12], float duration_s,
     for (int i = 0; i < 12; i++)
         target_urdf_[i] = rl::urdf_to_status(target_urdf[i], i);
 
-    const int total = (int)(duration_s * cfg_.hz);
+    const int hz = cfg_.hz > 0 ? cfg_.hz : 50;   // 防 0 导致除零
+    // 至少 1 帧：duration_s*hz 截断为 0 时 (float)f/total 会变成 0/0=NaN 直接下发
+    int total = (int)(duration_s * hz);
+    if (total < 1) total = 1;
     for (int f = 0; f <= total; f++) {
         if (is_stopped && is_stopped()) return false;
         sendInterpFrame(start_pos_, target_urdf_, (float)f / total);
-        usleep(1000000 / cfg_.hz);
+        usleep(1000000 / hz);
     }
     return true;
 }
 
 bool MotionController::returnToStart(float duration_s,
                                      const std::function<bool()>& is_stopped) {
+    if (!mm_) return false;
     disableWheels();   // 失能轮，防回位过程被带转
 
     float cur_pos[12];
@@ -62,17 +69,20 @@ bool MotionController::returnToStart(float duration_s,
         for (int j = 0; j < 3; j++)
             cur_pos[leg * 3 + j] = mm_->GetStatus(leg, j + 1).position;
 
-    const int total = (int)(duration_s * cfg_.hz);
+    const int hz = cfg_.hz > 0 ? cfg_.hz : 50;
+    int total = (int)(duration_s * hz);
+    if (total < 1) total = 1;   // 防 0/0 → NaN 目标
     for (int f = 0; f <= total; f++) {
         if (is_stopped && is_stopped()) return false;
         sendInterpFrame(cur_pos, start_pos_, (float)f / total);
-        usleep(1000000 / cfg_.hz);
+        usleep(1000000 / hz);
     }
     return true;
 }
 
 bool MotionController::lieDown(float duration_s,
                                const std::function<bool()>& is_stopped) {
+    if (!mm_) return false;
     // 记录当前腿位（真机指令角），作为插值起点
     float cur_pos[12];
     for (int leg = 0; leg < 4; leg++)
@@ -88,11 +98,13 @@ bool MotionController::lieDown(float duration_s,
     }
 
     // 慢速插值：身体缓降，全程 PD 保持 + 轮子 0 速弱增益（sendInterpFrame 已处理）
-    const int total = (int)(duration_s * cfg_.hz);
+    const int hz = cfg_.hz > 0 ? cfg_.hz : 50;
+    int total = (int)(duration_s * hz);
+    if (total < 1) total = 1;   // 防 0/0 → NaN 目标
     for (int f = 0; f <= total; f++) {
         if (is_stopped && is_stopped()) return false;
         sendInterpFrame(cur_pos, down_pos, (float)f / total);
-        usleep(1000000 / cfg_.hz);
+        usleep(1000000 / hz);
     }
     return true;
 }
@@ -111,6 +123,7 @@ void MotionController::setCmd(const float cmd[3]) {
 
 bool MotionController::rlStep() {
     if (!rl_active_) return true;
+    if (!mm_) return false;   // 未 init 依赖，按"不可继续"处理（调用方会走急停收尾）
 
     // 1) 读 16 电机（CAN 顺序）
     float pos_can[16], vel_can[16], tau_can[16];

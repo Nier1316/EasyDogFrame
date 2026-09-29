@@ -1,39 +1,131 @@
 # 项目事实
 
+> 时效性标注：✅ 最新 / ⚠️ 过时（值或结论已变） / 🔴 失效（对象已删除） / 🗄️ 历史存档。
+> 本文件为工程事实总表，最后逐项对照代码：**2026-09-29**（HEAD `98ef8ea` + 本次审查修复）。
+
 ## 工程位置与构建
 - 主工程：`/home/sysu/Desktop/Project/Bruce/EasyDogFrame/Bruce/simplify`（四足机器狗电机控制框架，CMake + C++17，分层重组后）。
-- 构建：`cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j$(nproc)`，产物 `bin/can_motor_app`。
-- 分层结构（2026-08-26 重构）：`src/app/`（main + examples）、`src/runtime/`（线程/robot_app/motor_io）、`src/strategy/`（rl_controller/sim2real_conv/imu_device）、`src/motion/`（motion_controller）、`src/motor/`（motor_manager/ele_motor）、`src/transport/`（canet_transport/can_device/usb2can_transport）。
-- 传输层：CANET TCP（`lib/CANET.h`、`lib/linux_x64/{Debug,Release}/libCANET_TCP.{a,so}`）+ **达妙 USB2CAN**（`lib/damiao_sdk/linux/x86_64/libdm_device.so`）。达妙链接需新版 libstdc++(GLIBCXX_3.4.32) + libusb(≥1.0.26)；CMakeLists **自动探测** conda lib 路径（bruce 机 `/home/bruce/miniforge3/lib`、sysu 机 `/home/sysu/miniconda3/lib`，可用 `-DCONDA_LIB_DIR` 覆盖），libusb 用绝对路径避免解析到系统老版本。
+- 构建：`cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j$(nproc)`，产物 `bin/can_motor_app`；2026-09-29 全量编译通过。
+- 分层（代码注释里的 L0~L7）：`include/` 与 `src/` 同名分层 —— `common`（L0 公共类型 / 日志分类 / CSV 与 S2R 落盘）、`transport`（L1 `CanTransport` + 两后端）、`motor`（L2 `EleMotor`/MIT 编解码、L3 `MotorManager` 单例）、`runtime`（L4 `ThreadManager`/`RobotApp`/电机收发线程）、`motion`（L5 `MotionController`/腿运动学/整机参数）、`strategy`（L6 观测+PD+MLP / 真机↔URDF / IMU / 手柄）、`app`（L7 `main.cpp` + 示例）。
+- 🔴 已删除（勿再引用）：`bsp/`（BspCan → CanTransport）、`thread/`（thread_manager 已移入 runtime/）、`RoboTasks/`、`motor_drive/`、`src/base/`、`data_types.h`、`RobotDog`（从未实现）。
+- 传输层：`CanTransport` 纯虚接口 + `CanetTransport`(TCP) / `Usb2CanTransport`(达妙)，配置结构 `TransportConfig`。**默认后端 = 达妙 Usb2CanTransport**（`src/motor/motor_manager.cpp` 兜底）；CANET **已弃用**，仅 Example27/28 直接使用。达妙链接需新版 libstdc++(GLIBCXX_3.4.32) + libusb(≥1.0.26)，CMake 自动探测 conda lib 路径（`-DCONDA_LIB_DIR` 可覆盖）。
 
-## 硬件拓扑
-- 4 路总线，每路 4 个电机 = 共 16 电机：motor_id 1=髋、2=大腿、3=小腿、4=轮；tx_id=motor_id，rx_id=50+motor_id。
-- 原为 4 路 CANET TCP（IP 192.168.0.178，端口 4001~4004）；重构后支持达妙 USB2CAN（Example36 全 4 路走 USB2CAN）。
-- 标定矩阵 `MOTOR_CALIBRATION[4][4]` 位于 `include/motor/motor_calibration.h`（重构后路径）。⚠ FR hip pos_offset 代码为 0.611，注释与 FACT 旧值 0.78 矛盾，待核实。
-- 电机环频率：`motor_receive` = 2ms（500Hz）、`motor_send` = 2ms（500Hz，原 1ms 冗余已改），`robot_calibration.h` `CONTROL_HZ=500`。轮子速度环走**固件 SPEED**（SendSpeed 1kHz 闭环），目标值由 500Hz SendOnce 下发。
+## 硬件拓扑与节拍
+- 4 路总线 × 4 电机 = 16 电机：motor_id 1=髋 hip、2=大腿 thigh、3=小腿 calf、4=轮 wheel；tx_id=motor_id，rx_id=50+motor_id。
+- 线程：`motor_receive` / `motor_send` 各 **2ms（500Hz）**，SCHED_FIFO 优先级 80（`src/runtime/motor_io.cpp`）；`robot_calibration.h` `CONTROL_HZ=500`。
+- 电机环：轮子走**固件 SPEED 速度环**（`SendSpeed(vel, kvp, ki)`，固件内部 1kHz 闭环）；腿关节走固件**阻抗环**（kp/kd/tau_ff）。
+- 标定单一真值来源：`MOTOR_CALIBRATION[4][4]`（`include/motor/motor_calibration.h`）；`robot_calibration.h` 直接引用其 `pos_offset`，勿手抄字面量。
 
-## RL 部署（dogurdf 轮足策略，已部署 traj_v28）
-- 策略链路（重构后路径）：`include/strategy/{policy_weights.h,mlp.h,rl_controller.h,sim2real_conv.h}` + `src/strategy/{rl_controller.cpp,sim2real_conv.cpp}`，与训练 `RL_Train/code`（权威）逐参数/逐布局一致。
-- 关键常量（**对齐 v28 sim2sim.py 默认**）：64 维观测 / 16 维动作、`ACTION_SCALE=0.25`、**`LEG_KP=250`、`LEG_KD=4`、`LEG_TORQUE_LIMIT=250`**（= `RL_Train/code/src/sim2sim.py` 默认，traj_v28 训练 stiffness=250/damping=4，见 commit 07884c7；⚠ 300/10 是 V30 参数勿混淆）、**`WHEEL_KD=1.0`**（⚠ sim2sim 默认 2.0，SPEED 迁移后轮子走固件速度环 kvp/ki，此量仅诊断用）、`WHEEL_VEL_SCALE=12.5`、`WHEEL_TORQUE_LIMIT=53`、`GAIT_CYCLE=0.6`、`GAIT_OFFSET={0,0.5,0.5,0}`、`CONTROL_DT=0.02`（RL 50Hz）。⚠ 历史：曾用 LEG_KP/KD=250/40（真机标定）、LEG_TORQUE_LIMIT=150，后统一套 v28 sim2sim 默认。
-- 站立稳定（2026-08-28）：`JOINT_IMPEDANCE` = hip kp300/kd10/**tau_ff=-10**、thigh kp250/kd10/**tau_ff=-5**、calf kp250/kd10/**tau_ff=+12（前腿）/ +20（后腿）**；`CMD_BIAS_VX=-0.05`（Example36 + MotionController `cmd_bias_vx`）抵消策略 wheel action 正向偏置（整体前冲）。⚠ cmd_bias_vx 绝对值必须 < 训练 turn_lin_threshold(0.1)，否则原地转向退出纯 yaw gate 变扭腿。
-- 🔴 **轮子控制（2026-08-29 SPEED 迁移）**：轮子不再走阻抗前馈扭矩，改走**固件 SPEED 速度环**（`SendSpeed(vel, kvp, ki)`，固件内部 1kHz 闭环）。常量：`WHEEL_KVP=3.0`（比例）、`WHEEL_KVI=0.05`（积分，历史 0.3 在 RL 上积分过强）、`WHEEL_SOFT_KVP=0.1`（起立/回位 0 速弱增益软启动）、`WHEEL_CMD_ALPHA=0.2`（轮速目标低通 @50Hz）、`WHEEL_CMD_MOVE_THR=0.1`（移动/静止门控，站立锁轮，防策略后轮微调 action 溜车）、`WHEEL_CMD_DEADZONE=0.5`（已弃用，门控取代）。
-- ✅ 权重已更新（2026-08-27）：部署 **traj_v28 / iteration_3000**（`RL_Train/code/checkpoints/dogurdf_velocity/checkpoints_20260827_044715_traj_v28/iteration_3000.pkl`），`export_policy.py` 已指向它并输出到 `include/strategy/`，Example30 离线回归通过（C++ MLP err 2.4e-06）。v28 训练 stiffness=250/damping=4（与 v26 相同；⚠ 300/10 是 V30 参数，非 v28）。
-- 零位转换 `sim2real_conv.cpp`：`CONV_A` hip/thigh/calf = +1/-1/+1；`CONV_B` = hip+0.0297 / thigh **-0.9624** / calf **-1.2832** / 轮 0（代码注释已同步为新值）。
-- 真机状态：RL 站立稳定 + 手柄遥操作可用（Example37）。**traj_v28 新权重已部署（含 sim2sim 默认 PD 参数）**。
-- 轮子摩擦前馈（Example35 实测）：`rl::WHEEL_FF[4][2]` = FL{+0.6,-0.6} FR{+0.5,-0.4} RL{+0.8,-0.8} RR{+0.5,-0.4}，CAN2 阻力最大。⚠ `WHEEL_FF_ENABLE=false`（先关）。
-- 轮子速度软限位（安全兜底，rl_controller.h）：`WHEEL_SOFT_LIMIT_ENABLE=true`，|轮速|>**5.0** rad/s 时扭矩限幅到 ±**10.0** Nm（**限幅式**，不是硬制动；⚠ 代码阈值 5.0/限幅 10.0，与 a0327c8 提交信息写的「10/7」不符，以代码为准）。
-- 🔴 轮子乱转根因（2026-08-21 Example36 诊断锁定）：起立用 STAND_*(thigh-60°真机)，RL 循环目标用 DEFAULT_POSE，进入 RL 时目标跳变 → 腿猛动带轮子 → 轮速冲高 → 制动饱和 → 轮速污染策略观测 → 发散。修复：Example36 起立目标改为 `urdf_to_status(DEFAULT_POSE)`（消除跳变）。
-- 日志分类开关（控制台）：`include/common/log_control.h` 的 `logctl::LOG_SWITCH[]`（SYSTEM/MOTOR/RL/IMU/WHEEL/CAN/DIAG）。log/ CSV 开关：`include/motor/motor_logger.h` 的 `LogFileSwitch`。
-- Example25 手柄命令：左摇杆上推=+vx 前进、右摇杆左推=+wz 左转(CCW)，vy 恒 0，量程 vx±1.0 m/s、wz±1.0 rad/s；B 键急停；Ctrl+C 急停。
-- 关节角约定：策略工作在 **URDF 约定**（默认姿态 hip=0,thigh=0.20,calf=-0.35 与 dogurdf.py NOMINAL_* 一致）；真机 GetStatus 指令角由 `CONV_A/CONV_B` 转换吸收（大腿符号相反）。新 CONV_B 下默认姿态 thigh≈-66.6° 已在限位内。
-- 连杆/机身参数已按 URDF 更新：`LEG_L1=0.1308`、`LEG_L2=0.34`、`LEG_L3=0.343`、`BODY_LENGTH=0.653`、`BODY_WIDTH=0.16`（见 include/motion/robot_calibration.h）。
-- 示例分工（ex_rl.cpp + ex_diag.cpp，示例到 53）：`Example25` 完整 RL 循环（50Hz、手柄、急停）；`Example30` 离线链路回归；`Example31` 零位对齐/关节范围扫描（不使能电机）；`Example32` 默认姿态验证；`Example35` 轮摩擦前馈标定；`Example36` 4 路 USB2CAN RL 站立循环；`Example37` 手柄遥操作（走 MotionController）；`Example38` 动作延迟测量；`Example44` USB2CAN Xbox 手柄控制（**当前 main.cpp 激活**）；`Example47` 整狗站立 chirp 参数辨识（sysid_all.csv）；`Example48` 轮子扭矩方向验证；`Example51` 站立后趴下；`Example52` 固定 yaw 指令；`Example53` 站立下重力前馈测量。
-- IMU（维特 HWT606，`/dev/ttyUSB0`，安装 `Z_DOWN_X`）：`base_ang_vel`=gyro（机体系 rad/s）；`projected_gravity`=world2self(quat,[0,0,-1])，已离线验证与仿真 `rotate(v,quat_inv)` 等价。放平判读：pgr≈(0,0,-1)；右倾→pgr.y 变负。开机需机身水平（IMU 水平校准基准）。
-- ⚠ IMU 串口环境：`/dev/ttyUSB0` 曾被 Ubuntu **brltty 盲文服务抢占**（85-brltty.rules 的 `PRODUCT==1a86/7523`）。已 `systemctl stop/disable/mask brltty` 与 `brltty-udev` 修复，勿再启用。另加 udev 规则（CH340 → MODE=0666）。
-- ⚠ 代码教训：`rl::world2self`/`build_observation` 要求 quat 是**连续 float[4]**。写 IMU 读取时统一用数组 + `GetQuat(quat[0],...)`，勿用独立局部变量地址。
+## RL 部署（dogurdf 轮足策略）
+### 权重链路（✅ 2026-09-22 起 = iteration_9754）
+- 真机：`weights/iteration_9754.pkl` → `tool/export_policy.py`（默认 `CKPT`，`--ckpt` 可覆盖）→ `include/strategy/policy_weights.h` + `include/strategy/policy_test_ref.h`；三者 mtime 2026-09-22，与 HEAD `98ef8ea`（权重切换 9754，降低抬腿幅度）一致。
+- 网络：`64 → 512 → 256 → 128 → 16`，中间层 ELU 激活、输出层无激活（`include/strategy/mlp.h`）。
+- sim2sim：`dogurdf_sim2sim_deploy/run_sim2sim.sh` 默认 checkpoint = `../weights/iteration_9754.pkl`（**与真机同一份**），可用 `SIM2SIM_CKPT=<path.pkl>` 覆盖；此前硬编码 `iteration_3000`，2026-09-29 修正。
+- 🗄️ 历史存档（**不再与真机同步**）：`dogurdf_sim2sim_deploy/checkpoints/dogurdf_velocity/{iteration_450,iteration_3000}.pkl`；`weights/` 现有 `iteration_9754.pkl`（当前）+ `iteration_2100.pkl`（历史），`iteration_3500/4350/5350.pkl` 已于 2026-09-29 删除。
+- ⚠️ 9754 / 2100 / 3000 三个 checkpoint 的 actor 形状相同（64-512-256-128-16），可互换加载。
+
+### 关键常量（`include/strategy/rl_controller.h`）
+- `NUM_JOINTS=16`、`NUM_LEG_JOINTS=12`、`NUM_WHEELS=4`、`OBS_DIM=64`、`ACTION_DIM=16`
+- `ACTION_SCALE=0.25`、`WHEEL_VEL_SCALE=12.5`
+- `LEG_KP=250`、`LEG_KD=4`（对齐 `dogurdf_sim2sim_deploy/src/sim2sim.py` 的 `LEG_KP/LEG_KD` 默认值；⚠️ 300/10 是 V30 参数勿混淆，历史曾用 250/40。注：当前部署权重 `iteration_9754` 的训练侧 PD 参数本仓库未记录，如需追证请查 `RL_Train/code` 训练配置）
+- `WHEEL_KD=1.0`（**仅 RL 阻抗诊断路径用**；轮子实际走固件 SPEED 环，此量不参与真实控制）
+- `CONTROL_DT=0.02`（50Hz）、`GAIT_CYCLE=0.6`、`GAIT_OFFSET={0.0, 0.5, 0.5, 0.0}`
+- 轮子 SPEED 环：`WHEEL_KVP=3.0`、`WHEEL_KVI=0.05`（⚠️ 历史 0.3 在 RL 上积分过强致疯转）、`WHEEL_SOFT_KVP=0.1`（起立/回位软启动）、`WHEEL_CMD_ALPHA=0.2`（轮速目标低通 @50Hz）、`WHEEL_CMD_MOVE_THR=0.1`（移动/静止门控，站立锁轮）
+- ⚠️ `WHEEL_CMD_DEADZONE=0.5` **已弃用**（会削减转向差速 action，改由门控接管），仅留历史值
+- 腿摩擦前馈：`LEG_FF_ENABLE=true`、`LEG_FF_TANH_K=0.5`；`LEG_FF_FC[12]`（POLICY 序，Nm）= FL 2.40/3.36/4.82、FR 1.64/1.89/4.54、RL 2.59/2.13/6.17、RR 1.84/2.56/5.38（hip/thigh/calf）；`LEG_FF_FV[12]` 全 0（Ex54 回归 b 不可靠）
+- 🔴 **扭矩限幅不在本文件**：`LEG_TORQUE_LIMIT` 已删除。真机限幅由 `include/motor/ele_motor_def.h` 的 `MOTOR_LIMITS`（协议量程）+ `TORQUE_CMD_LIMIT`（编码前命令 clamp）决定 = **Hip 120 / Thigh 120 / Calf 200 / Wheel 52 Nm**（2026-08-30 固件改限幅，2026-09-04 Hip/Thigh 110→120）。
+
+### 观测布局（`src/strategy/rl_controller.cpp`，共 64）
+`base_lin_vel(3)=0 | base_ang_vel(3) | projected_gravity(3) | joint_pos_rel(12) | joint_vel(16) | last_action(16) | command(3) | gait_phase(8)`
+- `gait_phase` 为**分组**布局：`obs[56..59]=sin(2πφ)×4脚`、`obs[60..63]=cos(2πφ)×4脚`（**不是**交错）。φ = `fmod(step*0.02/0.6 + GAIT_OFFSET[foot], 1)`；`0ee431f`（2026-09-07）由交错改为分组以对齐训练。
+- `world2self(q,v)` 等价 `brax rotate(v, quat_inv(q))`；`projected_gravity = world2self(quat, [0,0,-1])`。
+
+### 关节序与真机↔URDF 转换
+- `POLICY_TO_MJX = {0,1,2,12, 3,4,5,13, 6,7,8,14, 9,10,11,15}`；`MJX_TO_POLICY = {0,1,2,4,5,6,8,9,10,12,13,14,3,7,11,15}`。POLICY 序 = 12 腿 + 4 轮；MJX/CAN 序 = 每腿 hip/thigh/calf/wheel。
+- `DEFAULT_POSE`（POLICY 序）：hip 0、thigh +0.20、calf −0.35、wheel 0（四腿相同），与 dogurdf `NOMINAL_*` 一致。
+- `CONV_A`：每腿 hip/thigh/calf = `+1, −1, +1`，四轮 `+1`；`CONV_B`：每腿 `+0.0297, −0.9624, −1.2832`，四轮 `0`。
+- 关系：`URDF = CONV_A*GetStatus + CONV_B`；`GetStatus = (URDF − CONV_B)/CONV_A`（`src/strategy/sim2real_conv.cpp`）。
+
+### 标定表（`include/motor/motor_calibration.h`）
+- `MOTOR_CALIBRATION[4][4]`（`{pos_scale, vel_scale, pos_offset}`，**vel_scale 必须 = pos_scale**）：
+
+| CAN | Hip | Thigh | Calf | Wheel |
+|---|---|---|---|---|
+| 0 (FL) | −1, −1, 0.611 | +1, +1, 0.441 | −1, −1, 0.211 | −1, −1, 0 |
+| 1 (FR) | +1, +1, 0.611 | −1, −1, 0.441 | +1, +1, 0.211 | +1, +1, 0 |
+| 2 (RL) | +1, +1, 0.611 | +1, +1, 0.441 | −1, −1, 0.211 | −1, −1, 0 |
+| 3 (RR) | −1, −1, 0.611 | −1, −1, 0.441 | +1, +1, 0.211 | +1, +1, 0 |
+
+- ⚠️ FR hip `pos_offset` 代码 = **0.611**；曾评估 0.78（实测 FR hip 下发位置偏 RL +0.18），但**未落地**，勿按 0.78 写。
+- 方向约定：反馈侧 `pos*scale+offset`、`vel*scale`、`torque*pos_scale`；发送侧 `pos=(pos−offset)*scale`、`vel*scale`、`torque*pos_scale`。按字段 helper 为 `ApplyMotorCalibrationPos/Vel/Torque`，`ApplyMotorCalibration` 是三者的组合。
+
+### 关节阻抗与整机参数（`include/motion/robot_calibration.h`）
+- `JOINT_IMPEDANCE[4][3]`（kp/kd/tau_ff）：hip 300/10/**−10**；thigh 250/10/**代码 +5.0f**；calf 250/10/**+12（CAN0/1）/ +20（CAN2/3）**。
+- ⚠️ **待现场确认**：thigh `tau_ff` **代码 = +5.0f**；历史行内注释与提交 `6546688` 曾写 `−5`，现注释已标注为 +5（代码值）+ 待核实。**保持代码值不变**，上真机前人工确认符号。
+- `CONTROL_HZ=500`；连杆 `LEG_L1=0.1308`、`LEG_L2=0.34`、`LEG_L3=0.343`；机身 `BODY_LENGTH=0.653`、`BODY_WIDTH=0.16`、`BODY_SIZE_HEIGHT=0.06`。
+- 关节限位（deg）：θ1 `[−60, +15]`、θ2 `[−70, +90]`、θ3 `[+60, +180]`。
+- ⚠️ **待现场确认**：`UPPER_LIMIT_THETA1_DEG` **代码 = 15.0f**，但旧注释写"放宽到 +30°"。**保持代码值不变**，勿按 +30 写。
+- 站立姿态（真机标定角）：`STAND_HIP/THIGH/CALF = 0 / −60 / +60`；趴下姿态：`LIE_DOWN = +11.4 / −55.2 / +12.6`（Example50 标定）。
+- `WHEEL_KVP=3.0`（与 `rl::WHEEL_KVP` 同值）。
+- ⚠️ `LINK_DYNAMICS` / `BODY_MASS` / `MOTOR_DRIVE` **仍是 TODO 占位未实测**（全 0 / 占位 1.0），动力学解算勿依赖。
+
+### 轮控安全（🔴 旧策略侧软限位已删除）
+- 轮速保护由 `MotorManager`（`src/motor/motor_manager.cpp`）承担：`WHEEL_ESTOP_KVP=3.0`、`WHEEL_ESTOP_VEL_CMD=0.02 rad/s`（避 v=0 固件歧义）、`WHEEL_ESTOP_VEL=15.0 rad/s` 自动触发、`WHEEL_ESTOP_GRACE_TICKS=1000`（2s 静默窗口）。自动超速为**瞬态**（只当次制动）；手动 `WheelEmergencyStop()` 才保持。
+- 固件模式同步 `MODE_SETTLE_TICKS=20`（写模式后等 ~40ms 再发控制帧）；轮速一阶低通 α=0.2（仅轮，`src/motor/ele_motor.cpp`）。
+- 🔴 **2026-09-29 删除**（迁移 SPEED 后无调用者的死代码；历史数值留档，**勿再依赖**）：
+  - `rl::wheel_torque()` = `kd·(WHEEL_VEL_SCALE·action − vel) + WHEEL_FF 前馈 + 速度软限位`
+  - `WHEEL_FF[4][2]` = FL{+0.6,−0.6} FR{+0.5,−0.4} RL{+0.8,−0.8} RR{+0.5,−0.4}（Ex35 实测，CAN2 阻力最大）；`WHEEL_FF_ENABLE=false`
+  - `WHEEL_SOFT_LIMIT_ENABLE`（曾 true）、`WHEEL_VEL_SOFT_LIMIT=5.0 rad/s`、`WHEEL_SOFT_LIMIT_TORQUE=30.0 Nm`（2026-08-30 由 10→30）
+  - `WHEEL_TORQUE_LIMIT=52.0`（曾 53）、`LEG_TORQUE_LIMIT=250`（历史 150，从未参与 clamp）
+
+### sim2sim 对齐与已知差异（`dogurdf_sim2sim_deploy/src/sim2sim.py`）
+- 与真机一致的常量：`ACTION_SCALE=0.25`、`WHEEL_VEL_SCALE=12.5`、`LEG_KP/LEG_KD=250/4`、`GAIT_CYCLE_TIME=0.6`、`GAIT_PHASE_OFFSETS=(0,0.5,0.5,0)`、gait_phase 分组布局、`CONTROL_DT=0.02`。
+- 积分参数：`SIM_DT=0.005`、`DECIMATION=4`（→ 控制 50Hz）。⚠️ 旧文档写的 `SIM_DT=0.002/DECIMATION=10` **已过时**；本仓库无 `MOTOR_DECIMATION`。
+- `--real_actuator` 把仿真扭矩上限对齐真机（hip/thigh 120、calf 200、wheel 52）并默认 1 步动作延迟；`--wheel_gate` 复现真机站立锁轮门控（阈值 0.1）；不带 `--real_actuator` 时仿真仍用 `LEG_TORQUE_LIMIT=250 / WHEEL_TORQUE_LIMIT=53`。
+- ⚠️ 仍存在的建模差异：sim2sim 轮子走 `kd·(w_target − qd)`（`WHEEL_KD=2.0`），真机轮子走固件 SPEED 环（`kvp=3.0, ki=0.05`）。
+- 时延：真机纯传输延迟实测 ≈24ms（可信区间 18~30ms），建议 `action_delay_steps=1`（见 `docs/ACTION_DELAY_MEASURE.md`）；**训练是否含 action delay 的旧文档说法互斥，以 `RL_Train/code` 训练配置为唯一真源**。
+
+## 示例（demo）与运行方式
+- 示例总数 **40**，编号 **17~57**（编号不连续；1~16 已清理，**Example55 从未实现，2026-09-29 删除其声明与注释调用**）。
+- 分发机制：改 `src/app/main.cpp` 的注释 + 重新编译，**无命令行参数、无注册表**。
+- **当前激活 = `Example37_RLTeleopControl`**（`main.cpp` 结尾唯一未注释的调用）。
+- 文件分工：`ex_basic.cpp`（17~23，7 个）、`ex_diag.cpp`（24, 26~29, 33, 34, 39~50, 54, 57，21 个）、`ex_rl.cpp`（25, 30~32, 35~38, 51~53, 56，12 个）。
+- 关键示例：Ex25 完整 RL + 手柄；Ex30 离线链路回归（不碰 CAN）；Ex34 轮子方向核对；Ex35 轮摩擦前馈标定（历史）；Ex36 RL 站立循环；**Ex37 RL 遥操作（当前激活）**；Ex38 动作延迟辨识；Ex47 整狗 chirp 辨识；Ex49 轮 SPEED 环 kvp 扫描；Ex51 站立→趴下；Ex54 吊装摩擦辨识；Ex56 固定 yaw 遥测落盘；Ex57 单腿零位对照（验证 CONV_A/B）。
+- `examples_common` 只有 4 个 helper：`RawTerminal`、`poll_key`、`g_rl_stop`+`rl_signal_handler`、`EnableRlFrictionFF/DisableRlFrictionFF`。
+- ⚠️ 安全现状：装 `SIGINT` 急停（`rl_signal_handler`）的示例共 **11 个** —— Ex25/34/35/36/37/38/51/52/53/54/56；其余会使能电机的示例没有软急停，运行前须留安全距离。
+
+## 其他事实
+- 手柄：左摇杆上推=+vx 前进、右摇杆左推=+wz 左转(CCW)，vy 恒 0，量程 vx±1.0 m/s、wz±1.0 rad/s；B 键急停；Ctrl+C 急停。
+- 站立前冲补偿 `CMD_BIAS_VX = −0.05`（Ex36/Ex37/Ex51/Ex53 + `MotionController::cmd_bias_vx`）：抵消策略 wheel action 正向偏置。⚠️ 其绝对值必须 < 训练 `turn_lin_threshold`(0.1)，否则退出纯 yaw gate 变扭腿。
+- IMU（维特 HWT606，`/dev/ttyUSB0`，安装 `Z_DOWN_X`，115200）：`base_ang_vel`=gyro（机体系 rad/s）；`projected_gravity`=world2self(quat,[0,0,−1])。放平判读 pgr≈(0,0,−1)；右倾→pgr.y 变负；开机需机身水平（水平校准基准）。
+- ⚠️ IMU 串口：`/dev/ttyUSB0` 曾被 Ubuntu **brltty 盲文服务抢占**（`PRODUCT==1a86/7523`）。已 `systemctl stop/disable/mask brltty` 与 `brltty-udev` 修复，勿再启用；另加 CH340 udev 规则（MODE=0666）。
+- ⚠️ 代码教训：`rl::world2self`/`build_observation` 要求 quat 是**连续 float[4]**。写 IMU 读取时统一用数组 + `GetQuat(quat[0],...)`，勿用独立局部变量地址。
+- 控制台日志分类：`include/common/log_control.h` 的 `LogCat`（SYSTEM/MOTOR/RL/IMU/WHEEL/CAN/DIAG）+ `LOG_SWITCH[]`；CSV 落盘开关 `include/common/motor_logger.h` 的 `LogFileSwitch`；S2R 遥测 `include/common/s2r_recorder.h`。
+- Python 工具（`tool/`）：`export_policy.py`（ckpt → `policy_weights.h`/`policy_test_ref.h`）、`compare_sim2real.py`（sim `--record` CSV vs 真机 `log/rl_*.csv` 按 `wall_ms` 对齐）、`friction_id_offline.py`（Ex54 落盘 → fc/fv 回归，含 `--demo` 自测）、`verify_friction_ff.py`、`plot_rlrun.py`、`plot_motor_torque.py`、`plot_joint_torque.py`。
+- 🗄️ 轮子乱转根因（2026-08-21 Example36 诊断锁定，已修复存档）：起立目标 `STAND_*` 与 RL 目标 `DEFAULT_POSE` 跳变 → 腿猛动带轮子 → 轮速冲高 → 制动饱和 → 污染策略观测 → 发散。修复：起立目标改用 `urdf_to_status(DEFAULT_POSE)` 消除跳变。
+
+## 2026-09 变更要点
+- 09-01 `463d230` 腿摩擦前馈 `fc·tanh(τ_pd/2)+fv·dq` + 电机扭矩命令限幅（当时 Hip/Thigh 110、Calf 200、Wheel 52）；`72200b0` Example54 吊装摩擦辨识；`a723bb3` 注释与文档对齐代码现状。
+- 09-03 `ada57ff` 权重同步 iteration_2100。
+- 09-05 `f10a2f5` 稳定版存档（标定与扭矩修正 / S2R 遥测记录）；`5c4b30a` 摩擦前馈高频化 500Hz（`SetLegTauFFOverride`，Ex56 A/B 腿跟踪误差 −46%）。
+- 09-07 `0544f6c` Ex37 遥操作行走稳定（设为激活示例）；`0ee431f` gait_phase 交错→分组（对齐训练）。
+- 09-11 `3039927` iteration_3500；09-12 `33b672e` iteration_4350；09-15 `b61216e` 回退到 iteration_2100；09-17 `0d0257c` iteration_5350；09-22 `98ef8ea` iteration_9754（当前）。
+- 09-13 `bfadc76` 新增 Ex57 单腿零位对照；`6546688` 真机参数调整（腿重力前馈清零 / 轮软限位 30Nm / Ex37 量程 0.7）；`88a64e1` sim2sim `--wheel_gate`。
+
+## 本次审查修复（2026-09-29）
+1. `dogurdf_sim2sim_deploy/run_sim2sim.sh`：默认 checkpoint → `../weights/iteration_9754.pkl`（与真机同权重），支持 `SIM2SIM_CKPT` 覆盖。
+2. `src/motor/ele_motor.cpp`：修复**参数回帧二次标定** —— 单寄存器回帧原先对 `position/velocity/torque` 三者整体再标定一次（符号被翻回 / offset 重复叠加），现只标定被更新的那个字段；`MOTOR_OR_torque` 原先**完全没标定**，现补上；日志 raw 值改为在标定前捕获。
+3. `include/motor/motor_calibration.h`：按字段标定 helper `ApplyMotorCalibrationPos/Vel/Torque` 启用，`ApplyMotorCalibration` 改为其组合（配合第 2 条）。
+4. `include/motor/ele_motor.h`：删除死成员 `state_mutex`（全仓无任何使用，实际加锁为 `MotorManager::m_motor_mutex`）。
+5. `include/strategy/rl_controller.h` + `src/strategy/rl_controller.cpp`：删除死代码簇 `wheel_torque()`、`WHEEL_FF[4][2]`、`WHEEL_FF_ENABLE`、`WHEEL_SOFT_LIMIT_*`、`WHEEL_TORQUE_LIMIT`、`LEG_TORQUE_LIMIT`（历史数值见上文「轮控安全」节）。
+6. `include/app/examples/ex_diag.h` + `src/app/main.cpp`：删除 `Example55_SingleLegLimitMeasure` 的声明与被注释调用（该示例从未实现，取消注释即链接失败）。
+7. `src/app/main.cpp`：删除未使用的全局 `static RobotApp g_app;`（其析构会访问已销毁的 `MotorManager` 单例，属静态析构顺序 UB）及随之无用的 `#include "runtime/robot_app.h"`。
+8. bug 修复：`can_device.cpp` 的 `DWORD` 用 `%d` 打印（改 `%lu`）；`log_control.h` 注释里的 `/*` 触发 `-Wcomment`；`ex_rl.cpp` 未使用 typedef、`ex_diag.cpp` 未使用变量 `POS_LIMIT`、`ex_basic.cpp` 未使用变量 `dt`；`MotionController` 三个插值函数在 `mm_==nullptr` 或 `total<=0` 时会崩 / 产生 NaN（加保护）；`Usb2CanTransport::recv` 用 `operator[]` 会给未打开通道凭空建条目（改 `find`）；`examples_common.cpp` 的 `poll_key` 读方向键时字节分次到达会丢键（改为带缓冲的状态解析）；`types.h` 的 `#endif` 注释与宏名不符。
+9. `include/motion/robot_calibration.h`：修正与代码不符的注释（θ1 上限 15°、"仍压在 0 边界"等），以及引用已删除 Example55 的措辞。
+10. 仍**保持原值不变、仅标注**的两处冲突（安全相关，⚠️ **待现场确认**）—— 见上文 `JOINT_IMPEDANCE[..][THIGH].tau_ff`（代码 `+5.0f` / 注释与 `6546688` 写 `−5`）与 `UPPER_LIMIT_THETA1_DEG`（代码 `15.0f` / 旧注释 `+30°`）。
 
 ## 注意
 - `PLAN.md`（12 电机）与 `TODO.md` 滞后于代码（实际 16 电机）；`TODO.md` 列的 Bug 1~5 多已在代码中修复。
 - 零位偏移唯一真值来源是 `MOTOR_CALIBRATION[].pos_offset`；`robot_calibration.h` 直接引用它，勿再手抄字面量。
-- 训练权威 = `RL_Train/code`（非 `dogurdf_sim2sim_deploy`，后者是历史快照）；sim2sim.py 用 SIM_DT=0.002/DECIMATION=10/MOTOR_DECIMATION=1（500Hz PD 子环）。
-- 最新提交（2026-08-30）：a0327c8 参数辨识（Example47 整狗 chirp）+ 轮子 500Hz 闭环 + motor_send 1ms→2ms + USB2CAN recv 取空队列；6e9877b 站立稳定（JOINT_IMPEDANCE、CMD_BIAS_VX、WHEEL_KD 2→1、Example48）；8da704a 迁移 traj_v28 + 对齐 v28 PD；8b114bc **RL 轮控 SPEED 迁移 + 轮控安全层 + sim2real 对比工具（run_dual_compare.sh）+ 趴下姿态**；f56b588 tau_ff 存档 + sim2sim Ctrl+C 修复；cae611c 解决 RMA 层缺失。新增 `docs/RL_TRAINING_REFERENCE.md`（真机辨识参数/控制架构/KP/KD/tau_ff 建议）。
+- 训练权威 = `RL_Train/code`（非 `dogurdf_sim2sim_deploy`，后者是历史快照）。
+- `RobotDog` 类仍未实现；`include/runtime` 的 `state_calc`/`monitor` 预留线程至今未实现；`RobotApp` 当前无调用者（示例各自建局部 `ThreadManager`）。

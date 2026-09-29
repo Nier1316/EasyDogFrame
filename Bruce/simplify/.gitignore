@@ -5,5 +5,14 @@ build_debug/
 log/
 CANET.log
 
+# clangd 索引缓存（本地生成，勿入库）
+.cache/
+
+# 空跑诊断日志
+asan_run.log
+
+# 临时目录
+temp/
+
 # sim 对照调试产物（数据大，不入库）
 tmp_s2r/

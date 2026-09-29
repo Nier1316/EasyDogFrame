@@ -17,7 +17,7 @@
 ## 快速开始
 
 ```cpp
-#include "thread/thread_manager.h"
+#include "runtime/thread_manager.h"
 
 ThreadManager mgr;
 
@@ -138,7 +138,8 @@ mgr.register_thread("sensor_poll", []() {
 
 ```cpp
 // 高优先级实时线程（需要 root 权限或 CAP_SYS_NICE）
-mgr.register_thread("motor_ctrl", motor_func, ThreadMode::LOOP, 1, 80);
+// 本项目电机收发线程实际用 2ms（500Hz）+ 优先级 80
+mgr.register_thread("motor_ctrl", motor_func, ThreadMode::LOOP, 2, 80);
 
 // 普通优先级线程
 mgr.register_thread("monitor", monitor_func, ThreadMode::LOOP, 100, 0);
@@ -171,13 +172,13 @@ if (shared.has("motor_speed")) { ... }
 **典型模式**：一个线程写，另一个线程读。
 
 ```cpp
-// motor_receive 线程写入
+// motor_receive 线程写入（实际节拍 2ms = 500Hz）
 mgr.register_thread("motor_receive", [&]() {
     float speed = read_from_can();
     mgr.get_shared_data().set<float>("speed", speed);
-}, ThreadMode::LOOP, 1);
+}, ThreadMode::LOOP, 2);
 
-// state_calc 线程读取
+// state_calc 线程读取（⚠️ 预留线程，至今未实现，见下文）
 mgr.register_thread("state_calc", [&]() {
     float speed = mgr.get_shared_data().get<float>("speed");
     // 使用 speed 进行计算...
@@ -201,30 +202,38 @@ mgr.register_thread("state_calc", [&]() {
 
 ---
 
-## 在 RobotApp 中的用法
+## RobotApp 的现状（⚠️ 目前没有任何调用者）
 
-本项目使用 `RobotApp` 持有唯一的 `ThreadManager` 实例，各模块只负责提供任务函数：
+`include/runtime/robot_app.h` 里的 `RobotApp` 设计上是要持有唯一的 `ThreadManager` 实例、统一编排线程：
 
 ```
-main.cpp
-└── RobotApp
-    ├── ThreadManager thread_mgr_   ← 唯一实例
-    ├── MotorManager::Initialize(thread_mgr_)  ← 注册 motor_receive / motor_send
-    └── start() / stop()            ← 统一控制所有线程
+RobotApp
+├── ThreadManager thread_mgr_   ← 设计中的唯一实例
+├── MotorManager::Initialize(thread_mgr_)  ← 注册 motor_receive / motor_send
+└── start() / stop()            ← 设计上统一控制所有线程
 ```
 
-新增模块时，在 `RobotApp::init()` 中注册线程：
+**但截至 2026-09-29，`RobotApp` 没有任何调用者**：`init()` / `start()` / `stop()` 从未被调用过。
+实际运行路径是所有示例各自创建局部 `ThreadManager`，再调用 `MotorManager::Initialize(thread_mgr)`：
 
 ```cpp
-void RobotApp::init() {
-    MotorManager::GetInstance().Initialize(thread_mgr_);
-
-    // 新增：注册状态解算线程
-    thread_mgr_.register_thread("state_calc", [this]() {
-        // 解算逻辑
-    }, ThreadMode::LOOP, 5, 50);
-}
+// 现行实际写法（各 Example 一致，如 ex_rl.cpp / ex_basic.cpp）
+MotorManager& motor_mgr = MotorManager::GetInstance();
+ThreadManager thread_mgr;                  // 局部实例，示例函数返回时析构
+motor_mgr.SetChannelTransport(1, &Usb2CanTransport::GetInstance());  // 可选，须在 Initialize 前
+motor_mgr.Initialize(thread_mgr);          // 注册 motor_receive / motor_send
+thread_mgr.start_thread("motor_receive");
+thread_mgr.start_thread("motor_send");
 ```
+
+`RobotApp::init()` 里预留的 `state_calc` / `monitor` 两个线程**至今未实现**——`src/runtime/robot_app.cpp`
+中两处注册和两处启动仍是注释（`// thread_mgr_.register_thread("state_calc", ...)` 等），
+`RobotApp::start()` 只启动 `motor_receive` / `motor_send`。
+
+`src/app/main.cpp` 也**不再引用 `RobotApp`**（原先的全局 `static RobotApp g_app;` 已于 2026-09-29 删除，
+它从未被 `init()`/`start()`，且静态析构会触碰已销毁的 `MotorManager` 单例）。
+若要启用 `RobotApp`，需要重新在 `main.cpp` 里显式 `RobotApp app; app.init(); app.start();`，
+并把上文的 `state_calc` / `monitor` 逻辑补全。
 
 ---
 

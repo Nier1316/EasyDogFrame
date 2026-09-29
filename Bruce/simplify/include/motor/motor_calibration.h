@@ -109,9 +109,15 @@ struct JointImpedanceParam
  * 注意量级：站稳时保持扭矩只有个位数到十几 N·m，占限幅 5~9%。
  * 填 40~60 这种量级会让关节直接顶过去——tau_ff 是前馈，不受位置误差约束。
  *
- * kp/kd 与 tau_ff（2026-08-29 更新）：RL 循环腿软改善——thigh/calf 填重力前馈
- * 直接给支撑力矩，不再靠位置误差塌换。表内实际 tau_ff：hip=-10、thigh=-5、
- * calf=+12（前腿）/ +20（后腿）Nm。同时保留训练 kp/kd（LEG_KP/KD 由
+ * kp/kd 与 tau_ff（2026-08-29 更新，2026-09-13 最后一次改动）：RL 循环腿软改善——thigh/calf
+ * 填重力前馈直接给支撑力矩，不再靠位置误差塌换。表内**实际代码值**为：
+ *   hip = -10、thigh = **+5**、calf = +12（前腿 CAN0/1）/ +20（后腿 CAN2/3）Nm。
+ * ⚠ 两处历史不一致，数值本身未改动（改 tau_ff 会直接改变真机支撑力矩，必须现场确认）：
+ *   1) thigh 的行内注释与 commit 6546688 的提交信息都写 "tau_ff=-5 / 置 0"，但同一次提交
+ *      把代码值从 -5.0f 改成了 **+5.0f**。以代码为准 = +5；若现场发现该关节越顶越偏，
+ *      再按"先折半、必要时翻符号"的流程复核。
+ *   2) 该提交信息写"thigh/calf 置 0"，而代码把 calf 恢复成 12/20 —— 同属信息未同步。
+ * 同时保留训练 kp/kd（LEG_KP/KD 由
  * rl_controller.h 下发，表内 kp/kd 仅作参考，RL 循环只取此表的 tau_ff）。
  * 量级规则：站稳保持扭矩个位数~十几 Nm；填 40~60 会顶过关节。
  */
@@ -120,25 +126,25 @@ static const JointImpedanceParam JOINT_IMPEDANCE[CAN_PORTS][3] = {
     // CAN0 端口 (左前腿)
     {
         {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-10
-        {250.0f, 10.0f, 5.0f},  // Motor 2 (Thigh)  tau_ff=-5
+        {250.0f, 10.0f, 5.0f},  // Motor 2 (Thigh)  tau_ff=+5（代码值；⚠ 注释/提交信息曾写 -5，待核实）
         {250.0f, 10.0f, 12.0f},  // Motor 3 (Calf)   tau_ff=12
     },
     // CAN1 端口 (右前腿)
     {
         {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-10
-        {250.0f, 10.0f, 5.0f},  // Motor 2 (Thigh)  tau_ff=-5
+        {250.0f, 10.0f, 5.0f},  // Motor 2 (Thigh)  tau_ff=+5（代码值；⚠ 注释/提交信息曾写 -5，待核实）
         {250.0f, 10.0f, 12.0f},  // Motor 3 (Calf)   tau_ff=12
     },
     // CAN2 端口 (左后腿)
     {
         {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-10
-        {250.0f, 10.0f, 5.0f},  // Motor 2 (Thigh)  tau_ff=-5
+        {250.0f, 10.0f, 5.0f},  // Motor 2 (Thigh)  tau_ff=+5（代码值；⚠ 注释/提交信息曾写 -5，待核实）
         {250.0f, 10.0f, 20.0f},  // Motor 3 (Calf)   tau_ff=20
     },
     // CAN3 端口 (右后腿)
     {
         {300.0f, 10.0f, -10.0f}, // Motor 1 (Hip)  tau_ff=-10
-        {250.0f, 10.0f, 5.0f},  // Motor 2 (Thigh)  tau_ff=-5
+        {250.0f, 10.0f, 5.0f},  // Motor 2 (Thigh)  tau_ff=+5（代码值；⚠ 注释/提交信息曾写 -5，待核实）
         {250.0f, 10.0f, 20.0f},  // Motor 3 (Calf)   tau_ff=20
     },
 };
@@ -159,22 +165,49 @@ inline const JointImpedanceParam &GetJointImpedance(uint8_t can_port,
 }
 
 /**
- * @brief 应用标定参数到电机反馈数据（接收方向）
+ * @brief 按字段应用标定（接收方向）
+ *
+ * ⚠ 必须"哪个字段被更新就只标定哪个字段"。参数回帧（读单个寄存器）一次只带回
+ *   一个量，若顺手对 position/velocity/torque 三者整体调用，会把另外两个**已经
+ *   标定过**的量再标定一次：scale 为 ±1 时速度/扭矩符号被翻回，位置会重复叠加
+ *   pos_offset（scale=-1 时反而丢掉 offset）。历史事故见 ele_motor.cpp 的调用处。
+ */
+inline void ApplyMotorCalibrationPos(uint8_t can_port, uint8_t motor_id,
+                                     float &position)
+{
+    if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN)
+        return;
+    const MotorCalibrationParam &calib = MOTOR_CALIBRATION[can_port][motor_id - 1];
+    position = position * calib.pos_scale + calib.pos_offset;
+}
+
+inline void ApplyMotorCalibrationVel(uint8_t can_port, uint8_t motor_id,
+                                     float &velocity)
+{
+    if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN)
+        return;
+    velocity = velocity * MOTOR_CALIBRATION[can_port][motor_id - 1].vel_scale;
+}
+
+inline void ApplyMotorCalibrationTorque(uint8_t can_port, uint8_t motor_id,
+                                        float &torque)
+{
+    if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN)
+        return;
+    // 反馈扭矩与位置同坐标系，一并翻转，保证收发对称
+    torque = torque * MOTOR_CALIBRATION[can_port][motor_id - 1].pos_scale;
+}
+
+/**
+ * @brief 一次性把三个反馈量都标定（仅用于三量来自**同一帧原始数据**的场合，
+ *        即 set_motor_para_bt 的周期回帧；单寄存器回帧请用上面的分字段版本）
  */
 inline void ApplyMotorCalibration(uint8_t can_port, uint8_t motor_id,
                                   float &position, float &velocity, float &torque)
 {
-    if (can_port >= CAN_PORTS || motor_id < 1 || motor_id > MOTORS_PER_CAN)
-    {
-        return;
-    }
-
-    const MotorCalibrationParam &calib = MOTOR_CALIBRATION[can_port][motor_id - 1];
-
-    position = position * calib.pos_scale + calib.pos_offset;
-    velocity = velocity * calib.vel_scale;
-    // 反馈扭矩与位置同坐标系，一并翻转，保证收发对称
-    torque = torque * calib.pos_scale;
+    ApplyMotorCalibrationPos(can_port, motor_id, position);
+    ApplyMotorCalibrationVel(can_port, motor_id, velocity);
+    ApplyMotorCalibrationTorque(can_port, motor_id, torque);
 }
 
 /**

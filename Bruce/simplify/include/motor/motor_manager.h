@@ -2,7 +2,8 @@
  * @file    motor_manager.h
  * @brief   16电机批量管理器
  * @details MotorManager 是单例，管理 4×4=16 个 EleMotor 实例：
- *          - 4 路 CANET TCP 连接（CAN0~CAN3）
+ *          - 4 路 CAN（CAN0~CAN3），传输后端可注入：**默认达妙 Usb2CanTransport**，
+ *            原 CANET TCP 后端已弃用；上层只依赖 CanTransport 接口
  *          - 每路 4 个电机（motor_id=1/2/3/4，1-3 腿关节 + 4 轮电机）
  *          - 线程由外部 ThreadManager 统一管理，Initialize() 只负责注册任务函数
  *          - 线程安全：每个电机一把 std::mutex，状态读写加锁
@@ -36,8 +37,9 @@ public:
     void Stop();  // 关闭 CAN 设备（线程由外部 ThreadManager 统一停止）
 
     /**
-     * 注入传输后端（默认 CanetTransport）。换硬件（如 USB2CAN）时调用，
-     * 需在 Initialize() 之前。上层代码只依赖 CanTransport 接口。
+     * 注入传输后端。**默认（未注入时）为 Usb2CanTransport（达妙 USB2CAN）**，
+     * CANET 后端已弃用（仅 Example27/28 仍直连 CanetTransport）。
+     * 换硬件时调用，需在 Initialize() 之前。上层代码只依赖 CanTransport 接口。
      */
     void SetTransport(CanTransport* transport);
 
@@ -115,10 +117,10 @@ public:
     // MotorManager 只提供单次轮询，不拥有线程生命周期；线程由 runtime 层
     // RegisterMotorIoThreads() 注册到 ThreadManager 驱动。
 
-    /** 单次 CAN 接收轮询（10ms 节拍，对齐 SDK VCI_Receive 粒度） */
+    /** 单次 CAN 接收轮询（由 motor_receive 线程以 2ms / 500Hz 节拍驱动） */
     void ReceiveOnce();
 
-    /** 单次发送轮询（1ms 节拍，把 target 字段编帧发出） */
+    /** 单次发送轮询（由 motor_send 线程以 2ms / 500Hz 节拍驱动，把 target 字段编帧发出） */
     void SendOnce();
 
     /** 诊断：ReceiveOnce 最近一次心跳（程序启动后毫秒）。-1 = 从未运行。

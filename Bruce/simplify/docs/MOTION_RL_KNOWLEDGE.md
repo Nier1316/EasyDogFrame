@@ -4,6 +4,10 @@
 > 行为准则、工作方式、安全边界见系统提示词（「怎么做」）。
 > 数值若有出入，一律以对应源码头文件为准（下文每处都标注了唯一真值来源）。
 > 2026-08-30 整理：对齐分层重构 + USB2CAN + traj_v28 + 轮控 SPEED 迁移。
+>
+> ✅ **2026-09-29 更新**：权重 `weights/iteration_9754.pkl`（sim2sim 同步同一份）；`main.cpp` 激活 **Example37_RLTeleopControl**；
+> 示例总数 40（编号 17~57，`Example55` 从未实现已移除）；`gait_phase` 观测为**分组**布局；真机扭矩命令限幅 120/120/200/52；
+> 轮速软限位已失效，现由 `MotorManager` 的 `WHEEL_ESTOP_*` 承担。
 
 ---
 
@@ -131,7 +135,7 @@ bool connected();
 
 - `ApplyMotorCalibration(can,id, pos, vel, torque)` — 接收方向（原始→标定）。
 - `ApplyMotorCalibrationInverse(can,id, pos, vel, torque*)` — 发送方向（统一坐标→原始）。
-- `JOINT_IMPEDANCE[can][motor_id-1]`（仅关节 1~3）= `{kp, kd, tau_ff}`：**hip 300/10/tau_ff=-10、thigh 250/10/-5、calf 250/10/+12(前)/+20(后)**；RL 闭环只取此表的 `tau_ff`（kp/kd 由 `rl::LEG_KP/KD` 下发）。
+- `JOINT_IMPEDANCE[can][motor_id-1]`（仅关节 1~3）= `{kp, kd, tau_ff}`：hip 300/10/tau_ff=-10、thigh 250/10/**tau_ff=+5（代码值；行内注释与提交信息曾写 -5，属未解冲突，待现场确认）**、calf 250/10/+12(前)/+20(后)；RL 闭环只取此表的 `tau_ff`（kp/kd 由 `rl::LEG_KP/KD` 下发）。
 
 ### 4.2 整机参数（唯一真值来源：`include/motion/robot_calibration.h`）
 
@@ -140,10 +144,12 @@ bool connected();
 | 连杆 | `LEG_L1=0.1308`、`LEG_L2=0.34`、`LEG_L3=0.343`（m） |
 | 机身 | `BODY_LENGTH=0.653`、`BODY_WIDTH=0.16`（m） |
 | 零位偏移 | 髋 `0.611`、大腿 `0.441`、小腿 `0.211`（rad）——直接引用 `MOTOR_CALIBRATION` |
-| 关节限位（度） | θ₁ `[-60, 0]`、θ₂ `[-70, 90]`、θ₃ `[60, 180]` |
+| 关节限位（度） | θ₁ `[-60, +15]`（代码 `UPPER_LIMIT_THETA1_DEG=15.0f`；`robot_calibration.h` 注释曾写"放宽到 +30°"，以代码 **+15** 为准）、θ₂ `[-70, 90]`、θ₃ `[60, 180]` |
 | 站立姿态 | `STAND_HIP_DEG=0`、`STAND_THIGH_DEG=-60`、`STAND_CALF_DEG=60` |
+| 趴下姿态 | `LIE_DOWN_HIP_DEG=+11.4`、`LIE_DOWN_THIGH_DEG=-55.2`、`LIE_DOWN_CALF_DEG=+12.6` |
 | 控制周期 | `CONTROL_HZ=500` |
-| 轮参数 | `WHEEL_MAX_SPEED`、`WHEEL_KVP=3.0`、`WHEEL_KVI=0.3`、`WHEEL_MAX_TURN`、`WHEEL_SPEED_CAP` |
+| 轮参数（`robot_calibration.h`） | `WHEEL_MAX_SPEED`、`WHEEL_KVP=3.0`、`WHEEL_KVI=0.3`、`WHEEL_MAX_TURN`、`WHEEL_SPEED_CAP` |
+| 轮参数（RL 实际） | `include/strategy/rl_controller.h`：`WHEEL_KVP=3.0`、**`WHEEL_KVI=0.05`**（⚠ 整机表里的 0.3 是键盘控轮历史值，RL 上会振荡疯转，勿混用）、`WHEEL_SOFT_KVP=0.1`、`WHEEL_CMD_ALPHA=0.2`、`WHEEL_CMD_MOVE_THR=0.1` |
 | 腿编号 | `LegIndex{FL=0,FR=1,RL=2,RR=3}`；`JointIndex{HIP=0,THIGH=1,CALF=2}` |
 
 ---
@@ -152,14 +158,17 @@ bool connected();
 
 > 来源：`include/motor/ele_motor_def.h` 的 `MOTOR_LIMITS[]`，2026-08-07 用 `Example24_ReadMotorParams` 从固件寄存器实测回读。
 
-| 参数 | 关节 | 轮 |
-|---|---|---|
-| 位置 p（rad） | ±12.5 | ±12.5 |
-| 速度 v（rad/s） | **±3**（不是 65） | **±48** |
-| 扭矩 t（Nm） | ±150 | **±52** |
-| kp | 0~500 | 0~500 |
-| kd | **0~100**（不是 500） | 0~100 |
-| ki | 0~500（待厂商确认） | 0~500 |
+| 参数 | 关节 (hip/thigh) | 关节 (calf) | 轮 |
+|---|---|---|---|
+| 位置 p（rad） | ±12.5 | ±12.5 | ±12.5 |
+| 速度 v（rad/s） | **±3**（不是 65） | **±3** | **±48** |
+| 扭矩 t（Nm） | **±120** | **±200** | **±52** |
+| kp | 0~500 | 0~500 | 0~500 |
+| kd | **0~100**（不是 500） | 0~100 | 0~100 |
+| ki | 0~500（待厂商确认） | 0~500 | 0~500 |
+
+> 扭矩量程 2026-08-30 由固件层改、2026-09-04 hip/thigh 110→120；`ele_motor_def.h` 的 `MOTOR_LIMITS` 量程
+> 与命令限幅 `TORQUE_CMD_LIMIT`（120/120/200/52）现为同一组值。⚠ 旧文写的「关节 ±150」已作废。
 
 - 编解码两侧量程不一致会导致收发数值全错（曾出现速度差 21.7 倍）。
 - 控制命令宏：`MOTOR_STRAT=0xFC`、`MOTOR_STOP=0xFD`、`MOTOR_ANGLE_ZERO=0xFE`、`MOTOR_CLEAR_ERROR=0xF4`。
@@ -203,17 +212,26 @@ void leg_fk_all(const float q_all[12], float foot_body[4][3]);             // 12
 ## 8. RL 对接要点（dogurdf 轮足，traj_v28）
 
 - **观测（64 维）**：base_lin_vel(3)=0 | base_ang_vel(3) | projected_gravity(3) | joint_pos_rel(12) | joint_vel(16) | last_action(16) | command(3) | gait_phase(8)。IMU（HWT606）提供 gyro + 四元数算 ang_vel/projected_gravity。
+  - `gait_phase` 是**分组**布局：`obs[56..59]=sin(2πφ)×4脚`、`obs[60..63]=cos(2πφ)×4脚`（**不是** `[sin,cos]` 交错）。φ = `fmod(step·0.02/0.6 + GAIT_OFFSET[foot], 1)`，offset=`{0,0.5,0.5,0}`。2026-09-19 提交 `0ee431f` 从交错改为分组以对齐训练（`src/strategy/rl_controller.cpp` 的 `build_observation`）。
 - **动作（16 维）**：12 腿位置偏移 + 4 轮速目标；`ACTION_SCALE=0.25`、`WHEEL_VEL_SCALE=12.5`。
 - **控制律**：腿 `τ = LEG_KP(q_t−q) + LEG_KD(0−qd)`（LEG_KP/KD=250/4，经 `urdf_to_status` 下发）；轮 `SendSpeed(vel, WHEEL_KVP, WHEEL_KVI)`。
 - **关节顺序**：policy order（12 腿 + 4 轮）↔ CAN order 经 `POLICY_TO_MJX/MJX_TO_POLICY`。
 - **零位转换**：`sim2real_conv` 的 `CONV_A/CONV_B`（真机 GetStatus ↔ URDF）。
-- **sim-real**：仿真走 `SimSync`（12 关节，度）；训练权威 `RL_Train/code`（sim2sim 用 SIM_DT=0.002/DECIMATION=10/MOTOR_DECIMATION=1，500Hz PD 子环）。
-- **部署入口**：`src/app/examples/ex_rl.cpp`；RL 决策 50Hz，电机 500Hz。
-- **安全兜底**：动作 clamp 到限位、扭矩 clamp、跌倒检测、急停、轮速软限位 + 移动门控锁轮。
+- **sim-real**：真机↔MATLAB 仿真走 `SimSync`（12 关节，度，轮不在环内）；训练权威 `RL_Train/code`（其 sim2sim 用 SIM_DT=0.002/DECIMATION=10/MOTOR_DECIMATION=1，500Hz PD 子环）。
+  **本仓库自带**的 `dogurdf_sim2sim_deploy/src/sim2sim.py` 是另一套原生 MuJoCo 验证器：`SIM_DT=0.005 / DECIMATION=4`（同样 50Hz 控制），默认已与真机同权重 `weights/iteration_9754.pkl`。
+- **部署入口**：`src/app/examples/ex_rl.cpp`（当前激活 **Example37_RLTeleopControl**，见 `src/app/main.cpp`）；RL 决策 50Hz，电机 500Hz。
+- **安全兜底**：动作 clamp 到限位、`TORQUE_CMD_LIMIT` 扭矩 clamp（120/120/200/52）、急停、`WHEEL_CMD_MOVE_THR` 移动门控锁轮。
+  ⚠ 旧文写的"轮速软限位"（`WHEEL_SOFT_LIMIT_*` / `rl::wheel_torque()`）已失效、无调用者；轮速保护现由 `MotorManager` 的 `WHEEL_ESTOP_*`（15 rad/s 自动急停）承担。
+- **action latency**：本仓库不记录训练侧是否含时延——**以 `RL_Train/code` 的配置为唯一真源**；本仓库实测结论是真机纯传输延迟 ≈24ms（18~30ms），建议 `action_delay_steps=1`。
 
 ---
 
-## 9. 示例索引（`src/app/examples/`，示例 17~53）
+## 9. 示例索引（`src/app/examples/`，示例 17~57，共 40 个）
+
+> 分发机制：改 `src/app/main.cpp` 里各示例调用的注释 + 重新编译，**无命令行参数、无注册表**。
+> ⚠️ `Example55_SingleLegLimitMeasure` 在本仓库**从未实现**（声明与被注释调用已在本次清理中删除），不要再当作可用示例。
+> ⚠️ 安全现状（2026-09-29 脚本复核）：40 个示例中 **27 个会使能电机**，其中只有 **11 个装了 `SIGINT` 急停**（Ex25/34/**35**/36/37/38/51/52/53/54/56）；
+> 其余 **16 个会发使能帧但无 `SIGINT` 保护**（Ex18/19/20/21/22/23/29/32/41/44/45/46/47/48/49/57）——跑这些示例务必人在现场、可随时断电。
 
 ### ex_basic.cpp（17~23）
 | 示例 | 功能 |
@@ -226,10 +244,11 @@ void leg_fk_all(const float q_all[12], float foot_body[4][3]);             // 12
 | Example22 | 起立 + 轮子测试 |
 | Example23 | 单路 CAN 键盘控制 |
 
-### ex_diag.cpp（24/26-29/33/34/39-50）
-`Example24` 只读固件参数；`Example26` 键盘输入测试；`Example27/28` CANET 频率/批量探针；`Example29` 控制环频率；`Example33` IMU 检查；`Example34` 轮子方向；`Example39-46` USB2CAN 系列（探针/读状态/500Hz站立/速率/CAN顺序标定/手柄/移零位/单步）；`Example47` 整狗 chirp 参数辨识；`Example48` 轮子方向验证；`Example49` 轮速环测试；`Example50` 趴下角度记录。
+### ex_diag.cpp（24/26-29/33/34/39-50/54/57）
+`Example24` 只读固件参数；`Example26` 键盘输入测试；`Example27/28` CANET 频率/批量探针（CANET 已弃用，仅这两个示例仍直接用）；`Example29` 控制环频率；`Example33` IMU 检查；`Example34` 轮子方向；
+`Example39-43` USB2CAN 系列（探针/读状态/500Hz站立/速率/CAN顺序标定）；`Example44` USB2CAN 手柄控制；`Example45` 移到零位；`Example46` 单电机阶跃；`Example47` 整狗 chirp 参数辨识；`Example48` 轮子方向验证；`Example49` 轮 SPEED 环 kvp 扫描；`Example50` 趴下角度记录（标定 LIE_DOWN_*）；`Example54` 吊装摩擦辨识；`Example57` 单腿零位对照（验证 `CONV_A/B`）。
 
-### ex_rl.cpp（25/30-32/35-38/51-53）
-`Example25` RL 循环；`Example30` 离线回归；`Example31` 零位对齐；`Example32` 默认姿态验证；`Example35` 轮摩擦前馈标定；`Example36` USB2CAN RL 站立循环；`Example37` 手柄遥操作；`Example38` 动作延迟测量；`Example51` 站立后趴下；`Example52` 固定 yaw；`Example53` 重力前馈测量。
+### ex_rl.cpp（25/30-32/35-38/51-53/56）
+`Example25` 完整 RL 循环 + 手柄；`Example30` 离线链路回归（**不碰 CAN**）；`Example31` 零位对齐；`Example32` 默认姿态验证；`Example35` 轮摩擦前馈标定；`Example36` RL 站立循环；`Example37` RL 遥操作（手柄前进/后退/转向）；`Example38` 动作延迟辨识；`Example51` 站立后趴下；`Example52` 固定 yaw；`Example53` 重力前馈测量；`Example56` 固定 yaw 遥测落盘。
 
-> 当前 `main.cpp` 激活：**Example44_USB2CanXboxControl**。
+> 当前 `main.cpp` 激活：**Example37_RLTeleopControl**。

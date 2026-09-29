@@ -87,9 +87,11 @@ constexpr float LEG_MOUNT[4][3] = {
 //
 //  物理角 = ZERO_OFFSET + 指令角，指令角必须落在 [LOWER, UPPER] 内。
 //
-//  ⚠ 站立姿态限位余量（2026-09-04 逐项核对，依据 Example55 单腿实测 + Ex54 摩擦扫掠需求）：
-//     θ₁ 原指令 0° == UPPER_LIMIT_THETA1_DEG（髋正方向零余量，压死摩擦扫掠区）
-//        → 已放宽到 +30°（FR 挡点实测 +35.4°，留 5° 裕量）
+//  ⚠ 站立姿态限位余量（2026-09-04 单腿实测 + Ex54 摩擦扫掠需求；原始记录出自当时的
+//     Example55_SingleLegLimitMeasure，该示例从未实现、已于 2026-09-29 删除，数值本身保留）：
+//     θ₁ 原指令 0° == 当时的 UPPER_LIMIT_THETA1_DEG（髋正方向零余量，压死摩擦扫掠区）
+//        → 2026-09-04 放宽；2026-09-05（f10a2f5）定稿为 **+15°**（FR 挡点实测 +35.4°，
+//          留足裕量）。注意代码值是 15，早期注释曾写 +30°（中间试探值，未落盘）。
 //     θ₃ 现仍 60° == LOWER_LIMIT_THETA3_DEG（小腿负方向零余量，STAND calf=60 贴边）
 //        → 若需摩擦扫掠/调姿态放大小腿区间，同样要放宽（FR 伸直挡点实测 ≈+10°）
 //  IK 反解只要略微越界就会被 clamp 削掉，表现为该关节"跟不上指令"。
@@ -108,9 +110,10 @@ constexpr float CALF_POS_OFFSET_RAD  = MOTOR_CALIBRATION[0][2].pos_offset;
 // --- θ1 髋外摆 ---
 constexpr float ZERO_OFFSET_THETA1_DEG = rad2deg(HIP_POS_OFFSET_RAD);    // 35.01°
 constexpr float LOWER_LIMIT_THETA1_DEG = -60.0f;
-// 上限放宽 0°→+30°（2026-09-04，Ex54 摩擦辨识需要）：原 0° 使 STAND hip=0° 贴边界，
-//   扫掠区自适应被压到 MIN_AMP，摩擦配对区间过窄(仅 8 格)失败。Example55 实测 FR hip
-//   指令角挡点 ≈+35.4°，放宽到 +30°（留 ~5° 裕量）。正常站姿 hip=0° 不受影响；
+// 上限 0°→+15°（2026-09-04 起为 Ex54 摩擦辨识放宽，2026-09-05 定稿 +15）：原 0° 使
+//   STAND hip=0° 贴边界，扫掠区自适应被压到 MIN_AMP，摩擦配对区间过窄(仅 8 格)失败。
+//   单腿实测 FR hip 指令角挡点 ≈+35.4°，放宽到 +15° 已留足裕量（早期注释写的 +30° 是
+//   中间试探值，未落盘）。正常站姿 hip=0° 不受影响；
 //   顶机械挡仍有 Ex54 的 err>0.2 abort 保护兜底。
 constexpr float UPPER_LIMIT_THETA1_DEG =  15.0f;
 
@@ -146,8 +149,8 @@ constexpr int   CONTROL_HZ = 500;                 // 主控制循环频率 (Hz) 
 //   占限幅 5~6%，四腿高度对称）。
 // 注意 Thigh 是 −60° 而非 −30°：Example19 的 printf 里误写成 −30，
 // 但 TGT_PHYS 实际下发 −60，日志已证实。照 printf 抄会得到站不起来的姿态。
-// θ₁ 仍压在 §4 的 UPPER_LIMIT_THETA1_DEG=0 边界上，Hip 扭矩 8~12 N·m
-// 是三关节里最吃力的一个，属已知待改项。
+// θ₁ 上限已由 0° 放宽到 §4 的 UPPER_LIMIT_THETA1_DEG=+15°（2026-09-05 定稿），
+// 站立 hip=0° 现距上限有 15° 余量；Hip 扭矩 8~12 N·m 仍是三关节里最吃力的一个。
 constexpr float STAND_HIP_DEG   =   0.0f;
 constexpr float STAND_THIGH_DEG = -60.0f;
 constexpr float STAND_CALF_DEG  =  60.0f;
@@ -155,7 +158,7 @@ constexpr float STAND_CALF_DEG  =  60.0f;
 // ---- 趴下姿态（2026-08-29 Example50 手动标定，MotionController::lieDown 用）----
 // 用户手动摆狗腿到趴下姿态，Example50 记录的实际角度（标定后真机角，四腿平均）：
 //   hip +11.4°（外展撑开）、thigh -55.2°、calf +12.6°（小腿近伸直，身体趴低）。
-// ⚠ 注意：hip +11.4 > θ₁ 上限(0)、calf +12.6 < θ₃ 下限(60)——趴下姿态本身超出"站立限位"。
+// ⚠ 注意：calf +12.6 < θ₃ 下限(60)——趴下姿态仍超出"站立限位"（hip +11.4 在 θ₁ 上限 +15 之内）。
 //   lieDown 走 sendInterpFrame 无 clamp 直接下发，固件位置量程 ±12.5 rad 容纳，可正常到达。
 //   仅当需要趴下后再走带 clamp 的路径（如 RL 循环）才需考虑放宽限位。
 constexpr float LIE_DOWN_HIP_DEG   =  11.4f;

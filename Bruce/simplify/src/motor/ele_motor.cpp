@@ -189,7 +189,13 @@ void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
 				   motor.device_idx, motor.motor_id, type, canRecev.fValue);
 		}
 
-		// 根据参数类型更新电机结构体
+		// 根据参数类型更新电机结构体。
+		// ⚠ 单寄存器回帧一次只带回一个量，因此**只标定被更新的那个字段**。
+		//   旧实现更新完后对 position/velocity/torque 三者整体调用一次
+		//   ApplyMotorCalibration，把另外两个"已经标定过"的量又标定了一遍：
+		//   scale 为 ±1 时速度/扭矩符号被翻回，位置重复叠加（或丢失）pos_offset。
+		//   三量同时到达的周期控制回帧走下面的 else 分支，那里整体标定才是对的。
+		//   注：日志的 raw 三列中，未被本帧更新的两个量只能填已标定值（本帧没有原始值）。
 		switch (type) {
 			case MOTOR_OR_temperature:
 				motor.current_temp = canRecev.fValue;
@@ -197,28 +203,34 @@ void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
 			case MOTOR_OR_angle: {
 				float raw_pos = canRecev.fValue;
 				motor.current_position = raw_pos;
-				float before[3] = {motor.current_position, motor.current_speed, motor.current_torque};
-				ApplyMotorCalibration(motor.device_idx, motor.motor_id,
-									  motor.current_position, motor.current_speed, motor.current_torque);
+				ApplyMotorCalibrationPos(motor.device_idx, motor.motor_id,
+										 motor.current_position);
 				MotorLogger::GetInstance().LogRecv(motor.device_idx, motor.motor_id,
-					before[0], before[1], before[2],
+					raw_pos, motor.current_speed, motor.current_torque,
 					motor.current_position, motor.current_speed, motor.current_torque);
 				break;
 			}
 			case MOTOR_OR_velocity: {
 				float raw_vel = canRecev.fValue;
 				motor.current_speed = FilterWheelVel(motor, raw_vel);
-				float before[3] = {motor.current_position, motor.current_speed, motor.current_torque};
-				ApplyMotorCalibration(motor.device_idx, motor.motor_id,
-									  motor.current_position, motor.current_speed, motor.current_torque);
+				ApplyMotorCalibrationVel(motor.device_idx, motor.motor_id,
+										 motor.current_speed);
 				MotorLogger::GetInstance().LogRecv(motor.device_idx, motor.motor_id,
-					before[0], before[1], before[2],
+					motor.current_position, raw_vel, motor.current_torque,
 					motor.current_position, motor.current_speed, motor.current_torque);
 				break;
 			}
-			case MOTOR_OR_torque:
-				motor.current_torque = canRecev.fValue;
+			case MOTOR_OR_torque: {
+				float raw_torque = canRecev.fValue;
+				motor.current_torque = raw_torque;
+				// 旧实现此处完全没做标定 → 读回的扭矩与位置/速度坐标系不一致
+				ApplyMotorCalibrationTorque(motor.device_idx, motor.motor_id,
+											motor.current_torque);
+				MotorLogger::GetInstance().LogRecv(motor.device_idx, motor.motor_id,
+					motor.current_position, motor.current_speed, raw_torque,
+					motor.current_position, motor.current_speed, motor.current_torque);
 				break;
+			}
 			case MOTOR_OR_error_register:
 				motor.error_code = (uint16_t)canRecev.fValue;
 				break;

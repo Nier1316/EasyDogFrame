@@ -3,9 +3,10 @@
  * @brief   CAN 传输层抽象接口（L1）
  * @details 定义后端无关的 CAN 收发接口。上层（MotorManager 等）只依赖本接口，
  *          具体实现按硬件选择：
- *            - CanetTransport  ：CANET TCP（现状，默认）
- *            - Usb2CanTransport：USB2CAN ttyACM（达妙模块，协议见 tool/usb2can_probe）
- *            - SocketCanTransport：Linux canX（预留）
+ *            - Usb2CanTransport：USB2CAN ttyACM（达妙模块）—— **当前默认后端**
+ *              （MotorManager::Initialize 未注入时的兜底，见 motor_manager.cpp）
+ *            - CanetTransport  ：CANET TCP（**已弃用**，仅 Example27/28 仍直连）
+ *            - SocketCanTransport：Linux canX（预留，未实现）
  *          换硬件不动上层：open/send/sendBatch/recv/close 语义一致。
  */
 #ifndef CAN_TRANSPORT_H_

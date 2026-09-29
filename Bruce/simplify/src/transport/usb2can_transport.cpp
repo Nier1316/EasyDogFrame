@@ -71,7 +71,7 @@ bool Usb2CanTransport::ensureDevice(uint8_t dev_idx, const TransportConfig& cfg)
 
 bool Usb2CanTransport::open(uint8_t idx, const TransportConfig& cfg) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_channels.count(idx) && m_channels[idx].dev_idx < 0xff) return true;
+    if (m_channels.count(idx)) return true;   // 已打开（幂等）
 
     uint8_t dev_idx = idx / 2;   // 逻辑路 → 物理设备
     uint8_t ch      = idx % 2;   // 物理通道
@@ -164,7 +164,11 @@ void Usb2CanTransport::onRecv(dmcan_device_handle* handle, usb_rx_frame_t* frame
 
 bool Usb2CanTransport::recv(uint8_t idx, std::vector<CanFrame>& out, int timeout_ms) {
     std::unique_lock<std::mutex> lock(m_mutex);
-    auto& rx = m_channels[idx].rx;   // operator[] 自动创建空 channel
+    // ⚠ 不能用 m_channels[idx]：operator[] 会给**未打开的通道**凭空建一个默认条目
+    //   （dev_idx=0/ch=0），之后 open(idx) 会据此误判"已打开"而跳过真正打开设备。
+    auto it = m_channels.find(idx);
+    if (it == m_channels.end()) return false;
+    auto& rx = it->second.rx;
     if (rx.empty()) {
         m_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms),
                       [&]() { return !rx.empty(); });

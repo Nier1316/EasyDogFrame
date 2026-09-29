@@ -10,6 +10,11 @@
 #
 #   Python 环境：自动优先使用 conda 的 MJX 环境，否则回退到系统 python3。
 #   需要的第三方库：jax numpy mujoco flax (brax可选) pygame(手柄) mediapy(录视频)
+#
+#   权重：默认使用与真机 C++ 完全相同的那一份 —— ../weights/iteration_9754.pkl
+#   （即 tool/export_policy.py 的默认输入，导出到 include/strategy/policy_weights.h）。
+#   sim2sim 与真机必须同权重，否则 run_dual_compare.sh 的对比结论无效。
+#   需要跑别的版本时：SIM2SIM_CKPT=<path.pkl> ./run_sim2sim.sh
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -26,11 +31,15 @@ fi
 PY="$(command -v python || command -v python3)"
 
 # --- checkpoint 校验 -----------------------------------------------------
-# 默认用 traj_v28/iteration_3000（与真机 C++ policy_weights.h 一致，2026-08-30 对齐）
-CKPT="checkpoints/dogurdf_velocity/iteration_3000.pkl"
+# 默认 = 真机部署权重（同一文件）。sim2sim 与真机策略必须一致，否则对比无意义。
+# 2026-09-29 前此处硬编码 iteration_3000，而真机已切到 9754，属版本错配，已修正。
+DEFAULT_CKPT="$HERE/../weights/iteration_9754.pkl"
+CKPT="${SIM2SIM_CKPT:-$DEFAULT_CKPT}"
 if [ ! -f "$CKPT" ]; then
   echo "ERROR: checkpoint 不存在: $CKPT" >&2
-  echo "  期望路径: $HERE/$CKPT" >&2
+  echo "  默认应为真机同款: $DEFAULT_CKPT" >&2
+  echo "  可用 SIM2SIM_CKPT=<path.pkl> 指定其它版本。" >&2
+  echo "  历史存档（不与真机同步）: $HERE/checkpoints/dogurdf_velocity/" >&2
   exit 1
 fi
 

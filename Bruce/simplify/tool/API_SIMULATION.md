@@ -1,5 +1,12 @@
 # 四足机器狗仿真 — C++ 实时控制 API
 
+> 🗄️ **历史文档（2026-06-11 撰写，横幅更新于 2026-09-29）。**
+> 现行实现已与该文不同，请以下列为准：
+> - 头文件已从 `include/SimSync.h` 移到 **`include/motion/SimSync.h`**（2026-08-26 分层重构）。
+> - 发送接口已改名：原来的 `sim.send(joints)` 现为 **`send_deg()`（传度）/ `send_rad()`（传弧度，自动转度）**。
+> - `SimSync` 只覆盖 **12 个腿关节（3×4 腿）**；**4 个轮电机不在 SimSync 环内**（轮的仿真同步不在本协议里）。
+> - 现行示例见 `src/app/examples/ex_basic.cpp`（Example17/18，`#include "motion/SimSync.h"`）。
+
 ## 概述
 
 MATLAB 仿真程序 `quadruped_realtime.m` 作为 **TCP 服务器** 启动，
@@ -26,17 +33,20 @@ quadruped_realtime(12346)
 ### C++ 端（后启动）
 
 ```cpp
-#include "SimSync.h"
+#include "motion/SimSync.h"
 
 SimSync sim("127.0.0.1", 12345);
 
-// 每帧发送
+// 每帧发送（12 个腿关节，单位：度）
 float joints[12] = { 0, -30, 60,    // FL θ1, θ2, θ3
                      0, -30, 60,    // FR
                      0, -30, 60,    // RL
                      0, -30, 60 };  // RR
-sim.send(joints);
+sim.send_deg(joints);      // 传度；或用 sim.send_rad(joints) 传弧度（内部自动转度）
 ```
+
+> 现行接口（`include/motion/SimSync.h`）：`send_deg(const float joints_deg[12])` / `send_rad(const float joints_rad[12])`。
+> 仅 12 个腿关节；轮电机不走 `SimSync`。
 
 ---
 
@@ -82,9 +92,12 @@ sim.send(joints);
 
 ### `SimSync.h` — 单头文件，直接包含使用
 
+> 现行文件位置：`include/motion/SimSync.h`（下文为**现行实现**，与 2026-06 版本的差异是
+> `send()` → `send_deg()` / 新增 `send_rad()`）。
+
 ```cpp
-// SimSync.h — 四足仿真 TCP 同步客户端
-// 使用: #include "SimSync.h"
+// motion/SimSync.h — 四足仿真 TCP 同步客户端
+// 使用: #include "motion/SimSync.h"
 // 依赖: 标准库 + POSIX socket (Linux) / Winsock (Windows)
 
 #pragma once
@@ -108,6 +121,12 @@ sim.send(joints);
     inline void closesocket(int fd) { close(fd); }
 #endif
 
+/// @brief 与 MATLAB 四足仿真 (quadruped_realtime) 的 TCP 同步客户端
+///
+/// 用法:
+///   SimSync sim("127.0.0.1", 12345);
+///   sim.send_deg(joints_deg);   // 传度
+///   sim.send_rad(joints_rad);   // 传弧度（自动转度）
 class SimSync {
 public:
     /// @brief 连接 MATLAB 仿真
@@ -141,15 +160,23 @@ public:
 
     bool connected() const { return sock_ != INVALID_SOCK; }
 
-    /// @brief 发送一帧关节角
-    /// @param joints 长度为 12 的 float 数组
+    /// @brief 发送一帧关节角 (单位: 度)
+    /// @param joints_deg 长度为 12 的 float 数组
     ///        [FLθ1, FLθ2, FLθ3, FRθ1, FRθ2, FRθ3,
     ///         RLθ1, RLθ2, RLθ3, RRθ1, RRθ2, RRθ3]
-    ///        单位: 度 (°)
-    bool send(const float joints[12]) {
+    bool send_deg(const float joints_deg[12]) {
         if (sock_ == INVALID_SOCK) return false;
-        int ret = ::send(sock_, (const char*)joints, 48, 0);
+        int ret = ::send(sock_, (const char*)joints_deg, 48, 0);
         return ret == 48;
+    }
+
+    /// @brief 发送一帧关节角 (单位: 弧度, 自动转度)
+    bool send_rad(const float joints_rad[12]) {
+        float joints_deg[12];
+        for (int i = 0; i < 12; i++) {
+            joints_deg[i] = joints_rad[i] * (180.0f / M_PI);
+        }
+        return send_deg(joints_deg);
     }
 
 private:
@@ -157,10 +184,13 @@ private:
 };
 ```
 
+> **只覆盖 12 个腿关节**：`SimSync` 的 48 字节帧里没有轮电机；轮（motor_id=4）不走这条链路。
+> 若需要轮子的仿真同步，要另外扩展协议（当前代码未提供）。
+
 ### 使用示例
 
 ```cpp
-#include "SimSync.h"
+#include "motion/SimSync.h"
 #include <thread>
 #include <chrono>
 
@@ -173,14 +203,14 @@ int main() {
     }
     printf("已连接仿真\n");
 
-    // 站立姿态
+    // 站立姿态（度）
     float joints[12] = {
          0, -30, 60,    // FL
          0, -30, 60,    // FR
          0, -30, 60,    // RL
          0, -30, 60,    // RR
     };
-    sim.send(joints);
+    sim.send_deg(joints);
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
     // 前摆: 抬起 FL 腿
@@ -192,7 +222,7 @@ int main() {
         joints[1] = -60 * lift;           // FL θ2 (前摆)
         joints[2] = 60 + 40 * lift;       // FL θ3 (抬腿时小腿收)
 
-        sim.send(joints);
+        sim.send_deg(joints);
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
 

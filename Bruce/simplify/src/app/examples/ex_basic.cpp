@@ -1210,7 +1210,6 @@ void Example23_SingleCanKeyboardControl() {
         float body_height = 0.0f;   // 身体高度偏移量
         int   wheel_hold  = 0;      // 轮子指令保持计数（>0 表示最近有左右键）
         float wheel_stick = 0.0f;   // 轮子摇杆等效输入 [-1,1]
-        const float dt = 1.0f / HZ;
         bool running = true;
         int  frame = 0;
 
@@ -1310,9 +1309,3 @@ void Example23_SingleCanKeyboardControl() {
     fflush(stdout);
 }
 
-// ================= 示例 24：只读固件参数诊断 =================
-// 全程不使能任何电机，只发读参数帧，安全可反复运行。
-// 用途：
-//   1) 核对固件量程与 MOTOR_LIMITS 是否一致（kd_max 项目写 500，厂商参考是 100）
-//   2) 读上电初始速度反馈，判断 CAN1 轮电机 -43 rad/s 的假速度是否与使能无关
-//   3) 读固件当前控制模式，确认上电默认值

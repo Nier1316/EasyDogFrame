@@ -3,6 +3,10 @@
 > 本文记录 dogurdf 轮足策略从训练到真机的完整部署链路、关键规格、验证结果与剩余工作。
 > 数值唯一真值来源：`include/strategy/rl_controller.h`(.cpp)、`include/strategy/sim2real_conv.h`(.cpp)、`include/strategy/imu_device.h`(.cpp)。
 > 训练侧权威参考：`/home/sysu/Desktop/Project/Bruce/RL_Train/code`（`src/sim2sim.py`、`src/cfg/dogurdf_config.py`）。
+>
+> ✅ **最新（2026-09-29 核对）**：权重 `weights/iteration_9754.pkl`（sim2sim 已同步同一份）；`main.cpp` 激活 **Example37_RLTeleopControl**；
+> `gait_phase` 观测为**分组**布局（`obs[56..59]=sin×4脚`、`obs[60..63]=cos×4脚`）；真机扭矩命令限幅为 `TORQUE_CMD_LIMIT` 120/120/200/52。
+> 🗄️ 历史存档：`dogurdf_sim2sim_deploy/checkpoints/dogurdf_velocity/iteration_450.pkl`、`iteration_3000.pkl`（已不与真机同步）。
 
 ---
 
@@ -39,9 +43,10 @@ HWT606 IMU ─(115200 串口, Z朝下绕X翻)─► imu_device
 | `imu_device.h/.cpp` | HWT606 串口读取 + 安装方向变换 |
 
 ### 部署入口（`src/app/`）
-- `examples/ex_rl.cpp`：Example25/30/31/32/35/36/37/38/51/52/53（RL 相关）
-- `examples/ex_diag.cpp`：Example24/26-29/33/34/39-50（诊断 + USB2CAN）
-- `main.cpp`：当前激活 **Example44_USB2CanXboxControl**（USB2CAN 手柄控制）
+- `examples/ex_rl.cpp`：Example25/30/31/32/35/36/37/38/51/52/53/56（RL 相关）
+- `examples/ex_diag.cpp`：Example24/26-29/33/34/39-50/54/57（诊断 + USB2CAN）
+- `main.cpp`：当前激活 **Example37_RLTeleopControl**（USB2CAN 手柄遥操作 RL 闭环）
+- 示例总数 **40 个**，编号 **17~57**（1~16 已清理；`Example55_SingleLegLimitMeasure` 在本仓库从未实现，声明与调用已移除，勿再引用）
 
 ### 权重导出
 - `tool/export_policy.py`：默认读取入库副本 `weights/iteration_9754.pkl`（`--ckpt` 可覆盖任意 .pkl，如 `RL_Train/code/checkpoints/dogurdf_velocity/checkpoints_20260919_115617_smalllift_s45/iteration_9754.pkl`）→ 写 `include/strategy/policy_weights.h` + `policy_test_ref.h`（含 numpy/flax 交叉校验）。
@@ -58,10 +63,12 @@ HWT606 IMU ─(115200 串口, Z朝下绕X翻)─► imu_device
 | 站姿 default pose（URDF 约定） | hip=0, thigh=0.20, calf=−0.35, wheel=0（站高 0.45 m） |
 | 腿控制律（代码实际） | `τ = 250·(q_t−q) − 4·q̇`（LEG_KP=250, LEG_KD=4，对齐 v28 sim2sim 默认） |
 | 轮控制律 | **固件 SPEED 速度环**（`SendSpeed(vel, kvp, ki)`，WHEEL_KVP=3.0/WHEEL_KVI=0.05） |
-| 扭矩限幅 | 腿 250 N·m，轮 53 N·m |
+| 扭矩限幅（真机） | **命令扭矩** `TORQUE_CMD_LIMIT`：Hip 120 / Thigh 120 / Calf 200 / Wheel 52 N·m（`ele_motor_def.h`，编码前 clamp）；协议 `MOTOR_LIMITS` 量程同值 |
+| 扭矩限幅（sim2sim） | 内部默认腿 250 / 轮 53；`--real_actuator` 才对真机 120/120/200/52 |
 | 关节限位 | hip ±0.6，thigh −0.7~1.75，calf −1.0~0.35（rad） |
 
-> 部署参数已统一对齐 v28 sim2sim.py 默认（LEG_KP/KD=250/4、LEG_TORQUE_LIMIT=250）。⚠ 300/10 是 V30 参数勿混淆。
+> 部署参数已统一对齐 v28 sim2sim.py 默认（LEG_KP/KD=250/4）。⚠ 起立用的 `JOINT_IMPEDANCE` kp/kd=hip 300/10、thigh/calf 250/10 是**另一套**参数，勿与 RL 的 `LEG_KP/KD` 混淆。
+> ⚠ 旧文写的「`LEG_TORQUE_LIMIT=250`」已失效：真机腿扭矩上限现由固件阻抗环 + `TORQUE_CMD_LIMIT`（120/120/200）决定，轮 52。
 
 ### 观测 64 维布局（`rl_controller.cpp: build_observation`）
 与训练 `sim2sim.py::_build_observation` 严格一致：
@@ -75,9 +82,15 @@ HWT606 IMU ─(115200 串口, Z朝下绕X翻)─► imu_device
 | joint_vel | 21–36 | 16 | 全部关节速度（含轮） |
 | last_action | 37–52 | 16 | 上一控制步 action |
 | command | 53–55 | 3 | `[vx, vy, wz]`（vy 恒 0） |
-| gait_phase | 56–63 | 8 | `[sin(2πφ), cos(2πφ)]×4` |
+| gait_phase | 56–63 | 8 | **分组**：`obs[56..59]=sin(2πφ)×4脚`，`obs[60..63]=cos(2πφ)×4脚` |
 
 gait_phase：`φ = (step·0.02/0.6 + offset) mod 1`，`offset=[0,0.5,0.5,0]`（FL,FR,RL,RR），**step 每控制步 +1、复位归 0**。观测整体 clip 到 [−100,100]。
+
+> ⚠️ **布局是分组而非交错**（`src/strategy/rl_controller.cpp` 的 `build_observation`，2026-09-19 提交 `0ee431f` 修正）。
+> 训练侧 `observations.py: phase_feat = concat([sin(2πφ), cos(2πφ)])`，φ 为 4 脚数组 →
+> 顺序 `[sinFL,sinFR,sinRL,sinRR, cosFL,cosFR,cosRL,cosRR]`。
+> 旧文写的「`[sin,cos]` 交错 ×4 脚」是**错的**：交错会让 `obs[56..63]` 从 index 57 起整体错位。
+> sim2sim（`src/sim2sim.py::_build_observation`）同样用 `concatenate([sin, cos])`，两侧一致。
 
 ---
 
@@ -132,7 +145,7 @@ CONV_B: hip+0.0297 / thigh−0.9624 / calf−1.2832 / wheel 0   (rad)
 ```bash
 cd simplify
 cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j$(nproc)
-# main.cpp 当前激活 Example44_USB2CanXboxControl（USB2CAN 手柄控制），直接运行：
+# main.cpp 当前激活 Example37_RLTeleopControl（USB2CAN 手柄遥操作 RL），直接运行：
 ./bin/can_motor_app
 ```
 
@@ -159,7 +172,9 @@ cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j$(nproc)
 
 1. **CONV_B 现场微调**：基于一次 L 形目测，真机低增益验证（Example32）后微调；当前新值下默认姿态已在限位内。
 2. **LEG_KD 真机复核**：代码 LEG_KD=4 对齐 v28 训练；曾评估提至 10（hip 外翻漂移）未落地，若真机 hip 仍漂移可现场试提 6~10。
-3. **真机起步**：先 PD 保持站姿确认能托住，再小 yaw 指令起步，逐步加大（v28 训练含 action_delay，抗 20-60ms 总线时延，无需额外补偿）。
+3. **真机起步**：先 PD 保持站姿确认能托住，再小 yaw 指令起步，逐步加大。
+   关于训练是否含 action latency：**以 repo 外的训练工程 `RL_Train/code` 配置为唯一真源**（`env cfg` 的 `action_delay` / `randomize_action_latency`），本仓库不复制该结论。
+   本仓库只记录实测：真机纯传输延迟 ≈ **24 ms（18~30 ms）**，对应 50Hz 下建议 `action_delay_steps = 1`（见 `docs/ACTION_DELAY_MEASURE.md`）。
 
 ---
 
@@ -167,6 +182,8 @@ cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j$(nproc)
 
 - **BRLTTY 抢占串口**：Linux 上 brltty 抢 CH340 导致 `/dev/ttyUSB0` 不出现，需 `systemctl stop/disable/mask brltty` 后重新插拔；udev 规则 CH340 → MODE=0666。
 - **轮子阻抗前馈已废弃**（2026-08-29 SPEED 迁移）：轮速控制走固件 SPEED 速度环；阻抗模式忽略 vel_des，勿再用阻抗扭矩通道控轮。
-- **WHEEL_KVI 别用 0.3**：RL 上积分过强会振荡疯转，用 0.05。
+  `rl::wheel_torque()` / `WHEEL_FF` 已无调用者（本次代码清理移除），`WHEEL_SOFT_LIMIT_*` 同样已失效、勿再依赖。
+- **轮速保护现由 `MotorManager` 的 `WHEEL_ESTOP_*` 承担**：`WHEEL_ESTOP_VEL=15.0 rad/s` 自动触发急停（瞬态制动），手动 `WheelEmergencyStop()` 才保持锁死；`WHEEL_ESTOP_GRACE_TICKS=1000`（2s 静默窗口）。
+- **WHEEL_KVI 别用 0.3**：RL 上积分过强会振荡疯转，用 0.05（0.3 是 `robot_calibration.h` 的键盘控轮历史值，非 RL 路径）。
 - **权重生成物路径**：`export_policy.py` 必须输出到 `include/strategy/`（`include/rl/` 已废弃，编译不引用）。
 - **达妙链接环境**：依赖本机 conda 的 libstdc++/libusb，CMakeLists 自动探测，换机器可用 `-DCONDA_LIB_DIR` 覆盖。

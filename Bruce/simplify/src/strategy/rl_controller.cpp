@@ -36,14 +36,10 @@ const int MJX_TO_POLICY[NUM_JOINTS] = {
     0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 3, 7, 11, 15
 };
 
-// 轮子摩擦前馈（Example35 实测 2026-08-21）：wheel_idx 0..3 = FL,FR,RL,RR == CAN0..3。
-// 含义：轮子悬空时"恰好克服静摩擦开始转动"的正/负扭矩。CAN2(RL) 明显偏大。
-const float WHEEL_FF[4][2] = {
-    { +0.600f, -0.600f },  // FL(C0)
-    { +0.500f, -0.400f },  // FR(C1)
-    { +0.800f, -0.800f },  // RL(C2) — 阻力较大
-    { +0.500f, -0.400f },  // RR(C3)
-};
+// 轮子摩擦前馈 WHEEL_FF[4][2] 已随死代码 wheel_torque() 一并删除（2026-09-29）。
+// 历史实测值（Example35_WheelFFCalibrate，2026-08-21，轮悬空恰好起转的扭矩）：
+//   FL{+0.600,-0.600}  FR{+0.500,-0.400}  RL{+0.800,-0.800}  RR{+0.500,-0.400}（CAN2 阻力最大）
+// 已不再参与控制：轮子走固件 SPEED 速度环，轮速保护由 MotorManager 的 WHEEL_ESTOP_* 承担。
 
 // 腿摩擦前馈库仑摩擦 fc（2026-09-04 Example54 吊装摩擦辨识，Ex54 直接回归，
 // POLICY order：FL,FR,RL,RR × hip/thigh/calf，共 12）。方向由 tanh(τ_pd) 决定，存幅值。

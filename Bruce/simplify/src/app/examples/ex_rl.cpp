@@ -254,12 +254,9 @@ void Example25_RLPolicyControl() {
     printf("[INFO] Example25 完成\n");
 }
 
-// ================= 示例 26：键盘输入接收测试（纯诊断，不碰电机） =================
-// 用途：在开电机之前，先确认当前运行环境（集成终端 / 调试器 Debug Console）
-// 到底能不能收到键盘输入。Example23 的控制依赖两段输入通路：
-//   阶段1 行模式选路（poll + scanf）—— 决定默认选哪路 CAN
-//   阶段2 raw 模式方向键（poll_key） —— 主控制循环的方向/高度/轮子
-// 哪一段收不到，Example23 就永远跑不起来。本示例把两段拆开单独测。
+// ================= 示例 30：RL 策略链路离线验证（不碰 CAN） =================
+// 用导出工具生成的 REF_OBS/REF_ACTION 验证 MLP 权重与推理、观测构建 vs sim2sim.py。
+// 纯 CPU，不初始化 CAN、不使能电机。
 void Example30_RLPolicyLinkTest() {
     printf("\n========== 示例 30：RL 策略链路离线验证 ==========\n");
     printf("[INFO] 不碰 CAN。用 REF_OBS(64) 跑 mlp_forward，对比 REF_ACTION(16)。\n");
@@ -615,21 +612,19 @@ void Example32_RLPoseCheck() {
     fflush(stdout);
 }
 
-// ================= 示例 33：IMU 链路验证（只读，不碰电机） =================
-// 目的：在跑完整 RL（Example25）之前，验证 IMU 链路是否正确——
-//       串口连通、帧校验通过、gyro/quat 合理，且 RL 观测里直接用的
-//       base_ang_vel（= gyro，机体系 rad/s）与 projected_gravity 方向符合约定。
-// 约定（与 sim2sim.py / rl_controller.h 一致）：
-//   - 机体系 X+ 前 / Y+ 左 / Z+ 上；IMU 实际安装 Z_DOWN_X（Z 朝下、绕 X 翻面），
-//     与 Example25 一致。
-//   - projected_gravity = world2self(quat, [0,0,-1])，机器人水平放平时 ≈ (0,0,-1)。
-//     （world2self 已离线验证 == 仿真 brax rotate(v, quat_inv(q))。）
-// 判读：
-//   1) 水平放平、静止：quat≈(1,0,0,0)、欧拉角≈0、pgr≈(0,0,-1)、gyro≈0。
-//   2) 前倾：pitch>0，pgr.x 变正；右倾：roll>0，pgr.y 变负（MuJoCo 约定）。
-//   3) gyro 只在转动时非零，方向与转动一致。
-//   4) 放平但 pgr 明显偏离 (0,0,-1) → 安装方向/开机水平校准有问题，先别上 RL。
-// 60s 窗口，1s 刷新。
+// ================= 示例 35：轮电机前馈标定 =================
+// 目的：测量四个轮电机在悬空状态下"恰好克服静摩擦开始转动"的正/负扭矩。
+//   ⚠ 2026-09-29：这套值原本喂给 rl::wheel_torque() 的摩擦前馈补偿
+//     （tau = KD*(VEL_SCALE*a - vel) + tau_ff）。轮控改用固件 SPEED 速度环后该函数
+//     已无调用者并被删除，本示例现**只做测量**：输出结果仅供存档/复核（例：判断某路
+//     轮子阻力是否异常偏大），不再需要回填到任何常量。
+// 流程：记录初始腿位置 → 5s 起立（四腿支撑、轮子悬空）→ 逐电机标定（CAN0→CAN3）：
+//   先测正扭矩：↑/↓ 从 0 以 0.1 梯度调（正阶段 clamp≥0），轮子恰好转动时按回车记录；
+//   再测负扭矩：同样从 0 往下调（负阶段 clamp≤0），回车记录。
+// → 4 电机测完打印每路正/负前馈值 → 5s 回位 → 失能。
+// 注：需从集成终端运行（stdin 为真实终端）；Ctrl+Q 提前退出（回位+失能）。
+
+
 void Example35_WheelFFCalibrate() {
     printf("\n========== 示例 35：轮电机前馈标定 ==========\n");
     printf("[WARN] 将使能 16 电机并起立（5s），轮子悬空。\n");
@@ -648,7 +643,6 @@ void Example35_WheelFFCalibrate() {
 
     signal(SIGINT, rl_signal_handler);
     g_rl_stop = 0;
-    using clk = std::chrono::steady_clock;
 
     // 使能 16 电机（阻抗模式）
     for (int cp = 0; cp < 4; cp++)
@@ -775,12 +769,12 @@ void Example35_WheelFFCalibrate() {
     }
 
     // ---- 打印结果 ----
-    printf("\n========== 前馈标定结果 ==========\n");
-    printf("const float WHEEL_FF[4][2] = {\n");
+    // 仅作测量记录（2026-09-29 起轮子摩擦前馈路径已删除，无需回填任何常量）
+    printf("\n========== 前馈标定结果（仅存档）==========\n");
+    printf("wheel_idx 0..3 = FL,FR,RL,RR；正向/负向恰好起转扭矩 (Nm)：\n");
     for (int can = 0; can < 4; can++)
         printf("    { %+6.3ff, %+6.3ff },  // %s\n",
                ff_result[can][0], ff_result[can][1], legname[can]);
-    printf("};\n");
 
     // ---- 5s 回位 ----
     printf("\n[INFO] 回位中（5s）...\n");
@@ -816,7 +810,7 @@ void Example35_WheelFFCalibrate() {
 // 与 Example25 的唯一区别：去掉手柄。cmd 恒为 {0,0,0} 原地站立。
 // 目的：定位"轮电机乱转"——
 //   若本示例稳定：问题在手柄（SDL 初始化干扰 / 摇杆回中漂移越过死区）。
-//   若仍乱转：问题在 wheel_torque 摩擦前馈 / pos_scale / 观测链路。
+//   若仍乱转：问题在 pos_scale（扭矩方向）/ 观测链路。
 void Example36_RLStandLoop() {
     printf("\n========== Example 36: RL 站立循环（USB2CAN 4 路，无手柄） ==========\n");
     printf("[INFO] 50 Hz RL 循环，cmd 固定 {0,0,0} 原地站立，4 路全走达妙 USB2CAN。\n");

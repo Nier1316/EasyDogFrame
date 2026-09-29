@@ -9,7 +9,7 @@
  * 用法：
  *   1) 只改下面 LOG_SWITCH 数组（true=开 / false=关），重新编译即可开关某类日志。
  *   2) 需要按类控制的日志用 LOG(LogCat::XXX, fmt, ...) 代替 printf(...)。
- *   3) MotorLogger（log/*.csv）负责数据记录（帧级 CSV），与本模块互补。
+ *   3) MotorLogger（log 目录下的 *.csv）负责数据记录（帧级 CSV），与本模块互补。
  *
  * 约定：分类 + 开关 = 只控制"诊断类"输出；关键流程提示（初始化失败等）请保持 printf。
  */

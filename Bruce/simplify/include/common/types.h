@@ -72,4 +72,4 @@ struct CanDeviceConfig {
     CanDeviceConfig() : device_idx(0), port(0), server_ip(nullptr), work_mode(0) {}
 };
 
-#endif // DATA_TYPES_H_
+#endif // TYPES_H_

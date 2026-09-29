@@ -1,5 +1,6 @@
 #pragma once
-// RL/前馈/延迟辨识示例 25, 30~32, 35~38
+// RL/前馈/延迟辨识示例：25, 30~32, 35~38（策略·链路回归·零位·姿态·轮前馈·站立·遥操作·延迟）
+//                      51~53, 56（站立后趴下·固定 yaw·重力前馈·固定 yaw 遥测录制）
 void Example25_RLPolicyControl();
 void Example30_RLPolicyLinkTest();
 void Example31_RLZeroAlign();

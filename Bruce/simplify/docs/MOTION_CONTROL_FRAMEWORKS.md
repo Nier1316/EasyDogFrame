@@ -2,6 +2,11 @@
 
 > 调研整理于 2026-08，面向本工程（16 电机四足：12 关节 + 4 轮，CAN 阻抗控制，C++ 实机框架）的后续运控与 RL 对接选型。
 > 每个框架标注：**定位 / 语言 / 与本工程的相关性**。链接为官方仓库或文档。
+>
+> ⚠️ **2026-09-29 时效说明**：第 1~5 章的**选型调研清单仍然有效**（框架生态没变），可继续作为备选参考。
+> 但第 **§6「对本工程的对接建议」已被实际实现推翻**——工程实际走的是：**50Hz** 策略环（`rl::CONTROL_DT=0.02`）、
+> **手写 MLP**（`include/strategy/mlp.h`，零依赖，不用 ONNX Runtime / LibTorch）、腿 **kp/kd = 250/4**（`rl::LEG_KP/KD`，非 200/20）。
+> 详见 §6 开头的订正块。当前部署权重 `weights/iteration_9754.pkl`，`main.cpp` 激活 **Example37_RLTeleopControl**。
 
 ---
 
@@ -15,6 +20,9 @@
 | 非 RL 的经典运控（MPC/WBC） | **legged_control**（qiayuanl，ROS2） | OCS2、CHAMP、Cheetah-Software |
 | 刚体动力学/正逆动力学 | **Pinocchio** | Drake、MuJoCo、RBDL |
 | 实机部署（ONNX/LibTorch） | **legged_rl_deploy**（ONNX Runtime + LibTorch） | engineai_legged_gym、rl_sar |
+
+> ⚠️ 注：本工程**最终没有采用** ONNX Runtime / LibTorch，而是用自己的手写 MLP（`include/strategy/mlp.h`）+ 内嵌权重头文件 `policy_weights.h`。
+> 上表仅作**选型参考**，不代表现状。详见 §5/§6 订正。
 
 > 本工程已有自研 C++ 实机层（`MotorManager` + `leg_kinematics` + 阻抗控制），不直接套用现成实机 SDK；
 > 上述框架主要用于**仿真训练侧**与**部署侧的代码范式**参考，需为本机写自定义 URDF 与环境。
@@ -130,7 +138,8 @@
 ### legged_rl_deploy（Renkunzhao）
 - 定位：将 `legged_gym` 训练的 PPO 策略部署到实机（Unitree 系），ONNX Runtime + LibTorch 双后端。
 - 语言：C++。
-- 相关性：**高**。部署范式（obs 归一化→推理→act 反归一化/clamp→下发）与本工程 100Hz 控制循环直接对应。
+- 相关性：**高（仅作范式参考）**。部署范式（obs 归一化→推理→act 反归一化/clamp→下发）与本工程的控制循环**思路**对应；
+  ⚠️ 频率不是 100Hz 而是 **50Hz**（`rl::CONTROL_DT=0.02`），推理也不是 ONNX Runtime 而是**手写 MLP**（`include/strategy/mlp.h`）。
 
 ### engineai_legged_gym（部署部分）
 - 定位：训练 + 部署一体，含 C++ 推理与实机闭环样例。
@@ -148,8 +157,23 @@
 
 ## 6. 对本工程的对接建议
 
-1. **训练侧**：以 `legged_gym + rsl_rl` 起步（成熟、教程多），为本机写自定义 URDF + 环境类（12 关节位置/速度/扭矩 + 4 轮）；长期迁 `Isaac Lab` 或 `MuJoCo MJX`（开源免费、速度快）。
-2. **动作接口对齐**：仿真环境中的动作→力矩，应与本工程 `SendImpedance(pos, vel, kp, kd, tau_ff)` 语义一致（位置增量 + 前馈力矩），`kp/kd` 用 `GetJointImpedance()`（默认 200/20）。
-3. **部署侧**：训练导出 ONNX，参考 `legged_rl_deploy` 在 C++ 侧用 ONNX Runtime 推理，挂进 100Hz 线程；obs/act 的归一化与 clamp 与仿真保持一致。
+> ## 🔴 **本节建议已被实际实现推翻（2026-09-29）**
+>
+> 下面这条清单是 2026-08 的**调研期设想**，工程最终**没有照它做**。保留仅供追溯，勿再当作现状或待办：
+>
+> | 本节旧建议 | 实际实现（以代码为准） |
+> |---|---|
+> | 100Hz 控制循环 | **50Hz** 策略环（`rl::CONTROL_DT=0.02f`，见 `include/strategy/rl_controller.h`）；电机收发独立线程 2ms/500Hz |
+> | ONNX Runtime 推理 | **手写 C++ MLP**（`include/strategy/mlp.h`，64→512→256→128→16，ELU），零外部依赖，权重由 `tool/export_policy.py` 导出成 `include/strategy/policy_weights.h` |
+> | `kp/kd = 200/20` | 腿 **`LEG_KP=250 / LEG_KD=4`**（对齐 traj_v28 训练）；起立另有 `JOINT_IMPEDANCE` hip 300/10、thigh/calf 250/10 |
+> | obs 归一化 | **无 running normalization**，观测直接 clip 到 [−100,100] 后喂网络 |
+> | 力矩 clamp | 真机 `TORQUE_CMD_LIMIT` = Hip 120 / Thigh 120 / Calf 200 / Wheel 52 N·m |
+> | 轮子速度目标 | **固件 SPEED 速度环**（`SendSpeed`，`WHEEL_KVP=3.0/WHEEL_KVI=0.05`），不是上位机 500Hz 闭环 |
+>
+> 结论：**§1~§5 的选型清单可继续用于后续技术选型**（如换 Isaac Lab / MuJoCo MJX 重训），但 §6 的"怎么接"必须以现有代码为准。
+
+1. **训练侧**：以 `legged_gym + rsl_rl` 起步（成熟、教程多），为本机写自定义 URDF + 环境类（12 关节位置/速度/扭矩 + 4 轮）；长期迁 `Isaac Lab` 或 `MuJoCo MJX`（开源免费、速度快）。⚠ 实际训练走的是自研 MJX/JAX PPO 管线（`RL_Train/code`），本仓库 `dogurdf_sim2sim_deploy/` 是其原生 MuJoCo 验证器。
+2. **动作接口对齐**：仿真环境中的动作→力矩，与本工程 `SendImpedance(pos, vel, kp, kd, tau_ff)` 语义一致（位置增量 + 前馈力矩）这一点仍然成立；但 `kp/kd` 取 `rl::LEG_KP/KD = 250/4`（RL 闭环）或 `JOINT_IMPEDANCE`（起立，hip 300/10、thigh/calf 250/10）——**不是**旧文写的 `GetJointImpedance()` 默认 200/20。
+3. **部署侧（已被推翻）**：旧建议"导出 ONNX + ONNX Runtime + 100Hz 线程"**未采用**。现状：`tool/export_policy.py` 把手写网络权重导出为 C 头文件，`mlp_forward()` 直接内联推理，挂进 50Hz RL 循环。clamp 仍与仿真保持一致（动作/限位/扭矩）。
 4. **非 RL 备选**：若先做可解释的运控，用 `legged_control`（qiayuanl）+ `OCS2` 做 NMPC/WBC，或 `CHAMP` 快速搭步态。
-5. **sim-real 一致**：本工程 `leg_kinematics.h` 与仿真 `leg_kinematics.m` 已对齐；连杆/限位/`kp/kd` 统一由 `robot_calibration.h` 定义，仿真侧参数要与之一致。
+5. **sim-real 一致**：本工程 `leg_kinematics.h` 与仿真 `leg_kinematics.m` 已对齐；连杆/限位/站立姿态由 `robot_calibration.h` 定义，**RL 的 `kp/kd` 由 `include/strategy/rl_controller.h` 定义**（250/4），仿真侧参数要与之一致；sim2sim 侧另见 `dogurdf_sim2sim_deploy/src/sim2sim.py`（`SIM_DT=0.005 / DECIMATION=4`，默认与真机同权重 `weights/iteration_9754.pkl`）。

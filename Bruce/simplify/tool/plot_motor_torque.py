@@ -39,13 +39,14 @@ from matplotlib.ticker import AutoMinorLocator
 
 # ---------------------------------------------------------------- 常量
 
-# 与 include/motor_drive/ele_motor_def.h 的 MOTOR_LIMITS 保持一致
+# 与 include/motor/ele_motor_def.h 的 MOTOR_LIMITS / TORQUE_CMD_LIMIT 保持一致
+# （2026-09-29 对齐：Hip/Thigh ±120、Calf ±200、Wheel ±52；速度量程 关节 ±3、轮 ±48）
 MOTOR_NAMES = {1: "Hip 髋", 2: "Thigh 大腿", 3: "Calf 小腿", 4: "Wheel 轮"}
-TORQUE_LIMIT = {1: 150.0, 2: 150.0, 3: 150.0, 4: 53.0}
+TORQUE_LIMIT = {1: 120.0, 2: 120.0, 3: 200.0, 4: 52.0}
 
-# 编码量程下限，用于识别上电首帧
+# 编码量程下限，用于识别上电首帧（按电机类型不同：关节与轮速度量程不同）
 POS_MIN = -12.5
-VEL_MIN = -65.0
+VEL_MIN = {1: -3.0, 2: -3.0, 3: -3.0, 4: -48.0}
 
 CAN_PORTS = 4
 MOTORS_PER_CAN = 4
@@ -109,11 +110,12 @@ def load_log(path: Path, keep_junk: bool = False) -> tuple[pd.DataFrame, int]:
     junk = 0
     if not keep_junk:
         # 上电首帧：数据位全 0，按 uint_to_float 解码后正好落在三个量程下限
-        # （-12.5 rad / -65 rad·s⁻¹ / -t_max Nm）。不是真实读数，但幅值等于
-        # 限幅，会把纵轴撑满、真实信号压成直线，必须剔除。
+        # （-12.5 rad / v_min（关节 -3、轮 -48）rad·s⁻¹ / -t_max Nm）。不是真实读数，
+        # 但幅值等于限幅，会把纵轴撑满、真实信号压成直线，必须剔除。
         lim = df["motor_id"].map(TORQUE_LIMIT).astype("float32")
+        vlim = df["motor_id"].map(VEL_MIN).astype("float32")
         mask = (np.isclose(df["raw_pos"], POS_MIN, atol=1e-3)
-                & np.isclose(df["raw_vel"], VEL_MIN, atol=1e-3)
+                & np.isclose(df["raw_vel"], vlim, atol=1e-3)
                 & np.isclose(df["raw_torque"].abs(), lim, atol=1e-3))
         junk = int(mask.sum())
         df = df[~mask]
@@ -131,7 +133,7 @@ def compute_stats(df: pd.DataFrame, col: str) -> pd.DataFrame:
     rows = []
     for (port, motor), g in df.groupby(["can_port", "motor_id"], sort=True):
         v = g[col].to_numpy(dtype=np.float64)
-        lim = TORQUE_LIMIT.get(int(motor), 150.0)
+        lim = TORQUE_LIMIT.get(int(motor), 120.0)
         absmax = float(np.abs(v).max()) if v.size else float("nan")
         rows.append({
             "can_port": int(port),
@@ -173,7 +175,7 @@ def plot_torque(df: pd.DataFrame, col: str, stats: pd.DataFrame,
     field_cn = "标定后" if col == "cal_torque" else "标定前原始"
 
     for ax, motor in zip(axes, range(1, MOTORS_PER_CAN + 1)):
-        lim = TORQUE_LIMIT.get(motor, 150.0)
+        lim = TORQUE_LIMIT.get(motor, 120.0)
         sub = df[df["motor_id"] == motor]
 
         for port in ports:

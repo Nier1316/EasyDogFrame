@@ -33,7 +33,8 @@ inline std::string line(const char* label, float val, const char* unit) {
 }
 
 // 按指定模式把 8 字节解读为参数。d 指向至少 8 字节。
-inline std::string decode_as(Mode model, const uint8_t* d) {
+inline std::string decode_as(Mode model, const uint8_t* d, MotorType type = HIP) {
+    const TypeRange& tr = TYPE_RANGE[type];
     std::string r;
     if (model == IMPEDANCE) {
         uint32_t p  = ((uint32_t)(d[0] & 0x7f) << 8) | d[1];
@@ -43,19 +44,19 @@ inline std::string decode_as(Mode model, const uint8_t* d) {
         uint32_t tq = ((uint32_t)(d[6] & 0xF) << 8) | d[7];
         r += "  【阻抗模式 IMPEDANCE】\n";
         r += line("期望角度 pos", uint_to_float(p, P_MIN, P_MAX, 15), "rad");
-        r += line("期望角速度 vel", uint_to_float(v, V_MIN, V_MAX, 12), "rad/s");
+        r += line("期望角速度 vel", uint_to_float(v, tr.v_lo, tr.v_hi, 12), "rad/s");
         r += line("刚度 kp", uint_to_float(kp, KP_MIN, KP_MAX, 12), "");
         r += line("阻尼 kd", uint_to_float(kd, KD_MIN, KD_MAX, 12), "");
-        r += line("前馈扭矩 tau", uint_to_float(tq, T_MIN, T_MAX, 12), "Nm");
+        r += line("前馈扭矩 tau", uint_to_float(tq, tr.t_lo, tr.t_hi, 12), "Nm");
     } else if (model == SPEED) {
         uint32_t v   = ((uint32_t)(d[0] & 0x7f) << 24) | ((uint32_t)d[1] << 16)
                      | ((uint32_t)d[2] << 8) | d[3];
         uint32_t kvp = ((uint32_t)d[4] << 8) | d[5];
         uint32_t kvi = ((uint32_t)d[6] << 8) | d[7];
         r += "  【速度模式 SPEED】\n";
-        r += line("期望角速度 vel", uint_to_float(v, V_MIN, V_MAX, 31), "rad/s");
+        r += line("期望角速度 vel", uint_to_float(v, tr.v_lo, tr.v_hi, 31), "rad/s");
         r += line("速度环 kvp", uint_to_float(kvp, KP_MIN, KP_MAX, 16), "");
-        r += line("速度环 kvi", uint_to_float(kvi, KI_MIN, KI_MAX, 16), "");
+        r += line("速度环 kvi", uint_to_float(kvi, 0.0f, tr.ki_hi, 16), "");
     } else { // POSITION
         uint32_t p   = ((uint32_t)(d[0] & 0x7f) << 8) | d[1];
         uint32_t kvp = ((uint32_t)d[2] << 4) | (d[3] >> 4);
@@ -67,13 +68,13 @@ inline std::string decode_as(Mode model, const uint8_t* d) {
         r += line("位置环 kvp", uint_to_float(kvp, KP_MIN, KP_MAX, 12), "");
         r += line("速度环 kp", uint_to_float(kp, KP_MIN, KP_MAX, 12), "");
         r += line("位置环 kd", uint_to_float(kd, KD_MIN, KD_MAX, 12), "");
-        r += line("速度环 kvi", uint_to_float(kvi, KI_MIN, KI_MAX, 12), "");
+        r += line("速度环 kvi", uint_to_float(kvi, 0.0f, tr.ki_hi, 12), "");
     }
     return r;
 }
 
 // 顶层解码：先判特殊帧，否则按给定模式解读（mode<0 时给出全部三种解读）。
-inline std::string decode(const uint8_t* d, int mode /* -1=全部 */) {
+inline std::string decode(const uint8_t* d, int mode /* -1=全部 */, MotorType type = HIP) {
     std::string r;
     // 特殊指令帧：0x80 开头 + 末字节为命令字，中间多为 0xFF
     const char* sp = special_name(d[7]);
@@ -96,11 +97,11 @@ inline std::string decode(const uint8_t* d, int mode /* -1=全部 */) {
              "此帧更可能是特殊/参数帧，或字节对齐有误。\n\n";
     }
     if (mode < 0) {
-        r += decode_as(IMPEDANCE, d) + "\n";
-        r += decode_as(SPEED, d) + "\n";
-        r += decode_as(POSITION, d);
+        r += decode_as(IMPEDANCE, d, type) + "\n";
+        r += decode_as(SPEED, d, type) + "\n";
+        r += decode_as(POSITION, d, type);
     } else {
-        r += decode_as((Mode)mode, d);
+        r += decode_as((Mode)mode, d, type);
     }
     return r;
 }

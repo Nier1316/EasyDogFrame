@@ -1,8 +1,34 @@
 # 四足机器狗电机控制框架 — 完整使用指南
 
-> ⚠ **2026-08-30 标注：本文描述重构前的框架结构（架构图/目录树/示例代码为旧版）。
-> 现工程已分层重组（`src/app|runtime|strategy|motion|motor|transport`）、接入达妙 USB2CAN、
-> 示例扩展到 17~53。结构性内容以当前代码为准，详见 `docs/MOTION_RL_KNOWLEDGE.md` 与 `memory/FACT.md`。**
+> # ⚠️ 过时横幅（2026-09-29 更新）
+>
+> **本文的「架构设计」「核心模块」「API 文档」「使用示例」「文件结构」等章节，以及文中所有示例代码片段，
+> 描述的是 2026-08 重构前的历史结构，仅作历史存档参考，不再代表当前工程。**
+>
+> 现工程已按 **L0~L7 分层**重组：
+> `common`(L0) → `transport`(L1) → `motor`(L2/L3) → `runtime`(L4) → `motion`(L5) → `strategy`(L6) → `app`(L7)。
+>
+> - **现状真源**：`docs/SIM2REAL_DEPLOY.md`、`memory/FACT.md`（与之冲突时以这两个文件与当前代码为准）。
+> - 重构前的旧路径 / 旧类名，见下方「已失效名称 → 当前实现」对照表。
+> - **仍然有效**：第 8 章「编译、运行和调试」与第 9 章「调试指南」（GDB / Valgrind / AddressSanitizer /
+>   perf / strace / 网络配置等通用内容）不随重构失效，请继续参考。
+
+### 🔴 已失效名称 → 当前实现（速查对照）
+
+| 历史写法（本文中） | 状态 | 当前实现 |
+|---|---|---|
+| `BspCan` / `bsp/bsp_can.h` / `BspCanFrame` | 🔴 已删除 | L1 `CanTransport` 纯虚接口（`include/transport/can_transport.h`）+ `CanetTransport` / `Usb2CanTransport` 两个后端；`BspCanFrame` → `CanFrame`（`include/common/types.h`）。**默认后端 = 达妙 USB2CAN（`Usb2CanTransport`）** |
+| `include/data_types.h` | 🔴 已移动 | `include/common/types.h` |
+| `include/motor_manager.h` | 🔴 已移动 | `include/motor/motor_manager.h` |
+| `include/thread/thread_manager.h` | 🔴 已移动 | `include/runtime/thread_manager.h` |
+| `include/motor_calibration.h` | 🔴 已移动 | `include/motor/motor_calibration.h` |
+| `include/motor_drive/ele_motor.h` | 🔴 已移动 | `include/motor/ele_motor.h` |
+| `include/leg_kinematics.h` / `include/SimSync.h` | 🔴 已移动 | `include/motion/leg_kinematics.h` / `include/motion/SimSync.h` |
+| `src/base/`（厂商 common / crc16 / log / jsoncpp / md5 / network） | 🔴 已删除 | 目录已不存在；第「文件结构」中的该子树仅为历史存档 |
+| `RobotDog` / `robot_dog.h` | 🔴 从未实现 | 全仓无该类/文件；四足语义由 `motion` 层与各示例直接调用 `MotorManager` 承担 |
+| CANET TCP 配置（`192.168.0.178`，端口 4001~4004） | ⚠️ 已弃用 | **仅 Example27 / Example28 仍直连 `CanetTransport` 做探针**；正式控制默认走达妙 USB2CAN |
+| `main.cpp` 示例编号 `Example9 / 11 / 19 / 21 / 44` | 🔴 已清理或改号 | 现存 **17~57 共 40 个**（编号不连续）；**当前启用 `Example37_RLTeleopControl`** |
+| `motor_receive` / `motor_send` 节拍 1ms / 10ms | ⚠️ 过时 | 各 **2ms（500Hz）**，SCHED_FIFO 优先级 **80** |
 
 ## 目录
 1. [框架概述](#框架概述)
@@ -35,6 +61,9 @@
 
 ### 分层结构
 
+> 🗄️ **历史存档（重构前，2026-08 之前）** —— 下图中的 `RobotApp` / `CanDevice` / `BspCan` / CANET
+> 组合已不再是当前结构，仅用于理解演进过程。
+
 ```
 ┌─────────────────────────────────────────┐
 │         应用层 (RobotApp)               │  用户应用
@@ -43,22 +72,37 @@
 ├─────────────────────────────────────────┤
 │    设备层 (CanDevice + EleMotor)        │  CAN设备 + 单电机
 ├─────────────────────────────────────────┤
-│    BSP层 (BspCan)                       │  硬件抽象
+│    BSP层 (BspCan)           🔴 已删除    │  硬件抽象 → 现为 CanTransport
 ├─────────────────────────────────────────┤
-│    硬件 (CANET + 电机)                   │  物理设备
+│    硬件 (CANET + 电机)                   │  物理设备（现默认达妙 USB2CAN）
 └─────────────────────────────────────────┘
+```
+
+**当前分层（L0~L7，以代码为准）**：
+
+```
+L7 app        main.cpp + 示例 ex_basic/ex_diag/ex_rl + 示例公共 helper
+L6 strategy   观测构建 + PD 律 + 关节序映射、真机↔URDF 转换、IMU、手写 MLP
+L5 motion     起立/趴下/回位/RL 单步、腿运动学、整机参数
+L4 runtime    ThreadManager（ONCE/LOOP + SCHED_FIFO）、RobotApp、线程注册
+L3 motor      MotorManager 单例：16 电机、三模式、500Hz SendOnce、轮控急停
+L2 motor      EleMotor 单电机结构、MIT 协议编解码、按电机类型量程
+L1 transport  CanTransport 纯虚接口 + CanetTransport(TCP) / Usb2CanTransport(达妙)
+L0 common     CanFrame/电机状态类型、共享数据区、日志分类开关、CSV/RL 遥测记录
 ```
 
 ### 模块职责
 
-| 模块 | 文件 | 职责 |
-|------|------|------|
-| **ThreadManager** | `include/runtime/thread_manager.h` | 线程生命周期管理、共享数据区 |
-| **CanDevice** | `include/transport/can_device.h` | CAN 设备封装、TCP/USB 连接管理 |
-| **EleMotor** | `include/motor/ele_motor.h` | 单电机数据结构、状态管理 |
-| **MotorManager** | `include/motor_manager.h` | 16 电机批量管理、命令分发 |
-| **CanTransport** | `include/transport/`（canet/usb2can） | 传输抽象（⚠ BspCan 已删，重构为 CanTransport 子类） |
-| **DataTypes** | `include/data_types.h` | 通用数据结构定义 |
+> 🗄️ 下表为**重构前**的模块划分。若要在现工程中定位，请按「当前路径」一列；L0~L7 分层见上。
+
+| 模块 | 历史文件（本文语境） | 当前路径 | 职责 |
+|------|------|------|------|
+| **ThreadManager** | `include/thread/thread_manager.h` | `include/runtime/thread_manager.h` | 线程生命周期管理、共享数据区 |
+| **CanDevice** | `include/transport/can_device.h` | `include/transport/can_device.h`（仍存，CANET 专用） | CANET 设备封装、TCP 连接管理 |
+| **EleMotor** | `include/motor_drive/ele_motor.h` | `include/motor/ele_motor.h` | 单电机数据结构、状态管理 |
+| **MotorManager** | `include/motor_manager.h` | `include/motor/motor_manager.h` | 16 电机批量管理、命令分发 |
+| **CanTransport** | `include/bsp/bsp_can.h` 🔴 | `include/transport/can_transport.h` + `canet_transport.h` / `usb2can_transport.h` | 传输抽象（`BspCan` 已删，重构为 `CanTransport` 子类，默认 `Usb2CanTransport`） |
+| **DataTypes** | `include/data_types.h` 🔴 | `include/common/types.h` | 通用数据结构定义（`CanFrame` / `MotorStatus` / `TransportConfig`） |
 
 ---
 
@@ -93,7 +137,8 @@ CAN3 → 右后腿 (RR)
 ```
 
 > 说明：每路 CAN 挂载 4 个电机（3 关节 + 1 轮），常量定义见
-> `include/motor_calibration.h`：`CAN_PORTS = 4`、`MOTORS_PER_CAN = 4`，共 16 个电机。
+> `include/motor/motor_calibration.h`（历史路径 `include/motor_calibration.h`）：`CAN_PORTS = 4`、
+> `MOTORS_PER_CAN = 4`，共 16 个电机。轮电机 `motor_id = 4`，`motor_id` 取值 [1,4]。
 
 ### CAN 帧 ID 映射
 
@@ -103,6 +148,19 @@ CAN3 → 右后腿 (RR)
 | 电机 → 上位机 | 51, 52, 53, 54 | 50 + motor_id |
 
 ### TCP 连接参数
+
+> ## ⚠️ 本节整体已弃用（2026-09-29 标注）
+>
+> CANET TCP 后端（`CanetTransport`）**已不作为正式控制链路**，`MotorManager::Initialize()`
+> 在未注入传输后端时统一兜底为 **达妙 USB2CAN（`Usb2CanTransport`）**
+> （见 `src/motor/motor_manager.cpp` 的兜底分支，日志打印
+> `使用默认传输后端 Usb2CanTransport (达妙 USB2CAN)`）。
+>
+> 现在**仅 Example27（CANET 接收频率探针）与 Example28（CANET 批量发送探针）** 仍直接使用
+> `CanetTransport`，用于链路诊断。换后端请用
+> `MotorManager::SetTransport()` / `SetChannelTransport()` 注入 `CanTransport*`。
+>
+> 以下 TCP 配置内容**仅对 Example27/28 或历史代码有效**，保留供诊断时参考。
 
 ```
 服务器地址：192.168.0.178
@@ -165,7 +223,13 @@ ping -c 3 192.168.0.178
 
 #### 3. 在代码中配置 TCP 端口
 
-**基本配置**：
+> 🔴 **已失效**：下表代码使用已删除的 `BspCan` 单例与 `#include "bsp/bsp_can.h"`，
+> 现工程无法编译。当前等价做法是构造 `TransportConfig` 后调用
+> `CanTransport::open(idx, cfg)`，或经 `MotorManager::SetTransport()` 注入。
+> `BspCanFrame` → `CanFrame`，`device_idx` → `TransportConfig::device_idx`，
+> `port` / `server_ip` / `work_mode` → `TransportConfig::tcp_port / tcp_ip / tcp_mode`。仅存档。
+
+**基本配置（🔴 历史代码，不可编译）**：
 ```cpp
 #include "bsp/bsp_can.h"
 
@@ -323,7 +387,7 @@ if (bsp.ReceiveFrames(0, frames, 1000)) {
 **依赖前提**：
 
 - CMake ≥ 3.8、支持 C++17 的编译器（gcc/g++）
-- **SDL2 开发库**：Example21（Xbox 手柄控制）依赖 SDL2。由于 `main.cpp` 默认启用的 Example44（USB2CAN 手柄）也依赖 SDL2，缺少 SDL2 会导致编译失败
+- **SDL2 开发库**：Example21（Xbox 手柄控制）依赖 SDL2。由于 `main.cpp` 当前启用的 **Example37_RLTeleopControl**（USB2CAN 手柄遥操作）也依赖 SDL2，缺少 SDL2 会导致编译失败
   （`fatal error: SDL2/SDL.h: No such file or directory`）。安装：
 
   ```bash
@@ -341,8 +405,8 @@ cmake --build build -j$(nproc)
 ### 2. 初始化框架
 
 ```cpp
-#include "motor_manager.h"
-#include "thread/thread_manager.h"
+#include "motor/motor_manager.h"          // 历史路径: "motor_manager.h"
+#include "runtime/thread_manager.h"       // 历史路径: "thread/thread_manager.h"
 
 int main() {
     // 创建线程管理器
@@ -354,6 +418,8 @@ int main() {
         printf("Failed to initialize MotorManager\n");
         return -1;
     }
+    // Initialize() 内部已经通过 RegisterMotorIoThreads() 注册好
+    // motor_receive / motor_send 两个 LOOP 线程（各 2ms=500Hz，优先级 80）。
     
     // 启动收发线程（各 2ms 间隔，500Hz）
     // 注意：必须同时启动 motor_receive 和 motor_send，
@@ -433,6 +499,11 @@ mgr.stop_thread("receive");
 ```
 
 ### CanDevice — CAN 设备管理
+
+> ⚠️ **CANET 专用、已弃用为正式控制链路**：`CanDevice` 仍存在于
+> `include/transport/can_device.h`，但只被 `CanetTransport` 使用。
+> 现在正式控制默认走达妙 USB2CAN（`Usb2CanTransport`），本节的配置方式
+> 仅对 Example27/28 或历史代码有效。
 
 **职责**：封装 CANET 库，提供面向对象的 CAN 设备接口
 
@@ -551,9 +622,9 @@ enum ControlMode {
 
 | 参数 | 范围 | 单位 | 说明 |
 |------|------|------|------|
-| 位置 (pos) | ±12.5 | rad | 关节角度 |
+| 位置 (pos) | ±12.5 | rad | 关节角度（固件实测量程） |
 | 速度 (vel) | 关节 ±3 / 轮 ±48 | rad/s | 角速度（固件实测量程） |
-| 扭矩 (torque) | 腿 ±150 / 轮 ±52 | Nm | 关节扭矩 |
+| 扭矩 (torque) | 髋/大腿 ±120、小腿 ±200 / 轮 ±52 | Nm | 命令扭矩 clamp，见 `include/motor/ele_motor_def.h` 的 `TORQUE_CMD_LIMIT` |
 | Kp | 0~500 | - | 刚度/位置环比例系数 |
 | Kd | 0~100 | - | 阻尼系数 |
 | Ki | 0~500 | - | 速度环积分系数 |
@@ -562,11 +633,16 @@ enum ControlMode {
 
 ## 使用示例
 
+> ⚠️ **注意编号歧义**：本节「示例 1/2/3/4」是本文自编的教学代码片段，
+> **与工程内 `src/app/examples/` 的 `Example17~Example57` 毫无对应关系**。
+> 工程内现存示例共 **40 个**（编号 17~57，不连续），切换方式见第 8 章 2.3 节。
+> 实际可运行的示例清单与定位请以 `docs/SIM2REAL_DEPLOY.md`、`memory/FACT.md` 为准。
+
 ### 示例 1：基础电机控制
 
 ```cpp
-#include "motor_manager.h"
-#include "thread/thread_manager.h"
+#include "motor/motor_manager.h"       // 历史路径: "motor_manager.h"
+#include "runtime/thread_manager.h"    // 历史路径: "thread/thread_manager.h"
 #include <unistd.h>
 
 int main() {
@@ -1069,9 +1145,11 @@ gdb ./bin/can_motor_app
 
 ### Q1: 如何判断电机是否已连接 / 有响应？
 
-**A**: 注意：`MotorStatus` 结构体虽然定义了 `ack` / `fault` 字段，但当前
-`MotorManager::GetStatus`（`src/motor_manager.cpp`）**并未填充这两个字段**，它们恒为
-默认值 `false`，不能用来判断连接状态。
+**A**: 注意：`MotorStatus` 结构体（`include/common/types.h`，历史路径 `data_types.h`）
+现在**只有 `motor_id / enable / position / velocity / torque / error_code` 六个字段**；
+历史上曾有的 `ack` / `fault` 字段**已删除**，`MotorManager::GetStatus`
+（`src/motor/motor_manager.cpp`）自然也不再填它们。`enable` 只是应用层命令态，
+并不代表链路已通，不能用来判断连接状态。
 
 判断电机是否有响应，建议用以下两种方式之一：
 
@@ -1083,11 +1161,11 @@ if (status.enable) {
 }
 
 // 方式 2：观察反馈值是否更新（收到电机反馈帧后 position/velocity 会变化），
-//         或在接收线程侧统计 BspCan 的接收帧计数来确认链路是否有数据
+//         或在接收线程侧统计 CanTransport 的接收帧计数来确认链路是否有数据
 ```
 
-> 若确实需要 `ack` / `fault` 语义，需在 `GetStatus` 中补充对应字段的赋值
-> （数据来源见 `data_types.h` 中 `MotorStatus` 各字段的 bit 定义注释）。
+> 若你需要额外的应答/故障语义，需自行在 `MotorStatus` 中新增字段并在
+> `GetStatus` 中赋值（当前发送/接收链路见 `include/transport/can_transport.h`）。
 
 ### Q2: 电机报错怎么处理？
 
@@ -1102,14 +1180,15 @@ if (status.error_code != 0) {
 
 ### Q3: 如何设置实时优先级？
 
-**A**: 在注册线程时指定优先级（需要 root 权限）：
+**A**: 在注册线程时指定优先级（需要 root 权限）。当前工程中 `motor_receive` /
+`motor_send` 实际就是 **2ms（500Hz）+ 优先级 80**（见 `src/runtime/motor_io.cpp`）：
 ```cpp
 thread_mgr.register_thread(
     "motor_receive",
     []() { /* 任务 */ },
     ThreadMode::LOOP,
-    2,      // 2ms 间隔
-    50      // SCHED_FIFO 优先级 50（1~99）
+    2,      // 2ms 间隔（500Hz）
+    80      // SCHED_FIFO 优先级 80（1~99）
 );
 ```
 
@@ -1233,15 +1312,30 @@ pkill can_motor_app
 
 #### 2.3 选择要运行的示例
 
-当前 `src/main.cpp` 的入口是 `int main()`，**不接收命令行参数**。要运行哪个示例，
-是通过在 `main.cpp` 中注释/取消注释对应的示例调用来硬编码选择的：
+示例入口在 **`src/app/main.cpp`**（历史路径 `src/main.cpp`）的 `int main()`，
+**不接收命令行参数**（`./bin/can_motor_app 2/3/4`、`./bin/can_motor_app <编号>` 这类用法
+**都不存在**，也没有示例注册表）。切换示例的方式是：
+
+**在 `main.cpp` 中取消注释目标示例的那 3 行（printf / 调用 / printf），其余全部保持注释，然后重新编译。**
+
+- 现存示例：**17~57 共 40 个**（编号不连续；1~16 已清理，`Example55_SingleLegLimitMeasure`
+  从未实现、已从示例体系移除，故 55 号不存在）。
+- **当前启用：`Example37_RLTeleopControl`**（RL 遥操作，手柄前进/后退 + 转向，USB2CAN 4 路）。
 
 ```cpp
-// src/main.cpp —— 取消注释想运行的示例，注释掉其余的
-// Example9_BasicMotorCtr();        // 基础电机控制
-// Example11_MoveAll();             // 全电机扭矩控制
-// Example19_ReadAndStand();        // 读取姿态并缓慢站立
-Example21_XboxControllerControl();  // Xbox 手柄控制（需要 SDL2，见下）
+// src/app/main.cpp —— 只保留目标示例的 3 行不注释，其余保持注释
+// printf("[INFO] Running Example36_RLStandLoop...\n");
+// Example36_RLStandLoop();
+// printf("[INFO] Example36 completed.\n");
+
+// 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，USB2CAN 4 路）
+printf("[INFO] Running Example37_RLTeleopControl...\n");
+Example37_RLTeleopControl();
+printf("[INFO] Example37 completed.\n");
+
+// printf("[INFO] Running Example56_FixedYawRecord...\n");
+// Example56_FixedYawRecord();
+// printf("[INFO] Example56 completed.\n");
 ```
 
 修改后需要重新编译：
@@ -1251,24 +1345,56 @@ cmake --build build -j$(nproc)
 ./bin/can_motor_app
 ```
 
+> `main.cpp` 顶部的「示例切换说明」注释块已同步为「现存 17~57（共 40 个；55 从未实现，
+> 已删除）；当前启用 Example37」。切换示例时请顺手更新该注释块，并注意以文件末尾
+> **实际未注释的那三行**为准。
+>
 > 如需支持 `./bin/can_motor_app <编号>` 这种命令行选择方式，需自行改造
 > `main.cpp` 加入 `argc/argv` 解析。当前版本不支持。
 
-#### 2.4 优雅停止程序
+**常用示例定位**：
 
-程序支持 **Ctrl+C** 优雅停止：
+| 编号 | 名称 | 用途 |
+|---|---|---|
+| Ex25 | `RLPolicyControl` | 完整 RL + 手柄 |
+| Ex30 | `RLPolicyLinkTest` | 离线链路回归（不碰 CAN） |
+| Ex36 | `RLStandLoop` | RL 站立 |
+| **Ex37** | **`RLTeleopControl`** | **RL 遥操作（当前激活）** |
+| Ex38 | `ActionDelayMeasure` | 动作延迟辨识 |
+| Ex47 | `ChirpSysId` | 整狗 chirp 辨识 |
+| Ex49 | `StandAndWheelSpeedLoopTest` | 轮 SPEED 环 kvp 扫描 |
+| Ex51 | `StandRLThenLieDown` | 站立 → 趴下 |
+| Ex54 | `FrictionSysId` | 吊装摩擦辨识 |
+| Ex56 | `FixedYawRecord` | 固定 yaw 遥测落盘 |
+| Ex57 | `SingleLegZeroAlign` | 单腿零位对照（验证 CONV_A/B） |
+
+> ⚠️ 安全现状（2026-09-29 grep 核对）：40 个示例中 **27 个会调用
+> `EnableMotor()` / `PreEnableZeroTorque()` 使能电机**，但仅 **11 个**装了 `SIGINT` 急停
+> （**Ex25/34/35/36/37/38/51/52/53/54/56**）。运行其余示例前请确认现场安全与独立断电手段。
+
+#### 2.4 停止程序（Ctrl+C）
 
 ```bash
 ./bin/can_motor_app
-# 按 Ctrl+C 停止程序
-# 程序会自动调用 g_app.stop() 进行清理
+# 按 Ctrl+C 停止
 ```
 
-**工作原理**：
-- 捕获 `SIGINT` (Ctrl+C) 和 `SIGTERM` 信号
-- 设置 `g_running = false` 标志
-- 主循环检测到标志后退出
-- 调用 `g_app.stop()` 进行资源清理
+> ⚠️ **当前 `main.cpp` 没有任何全局信号处理或统一清理逻辑。**
+> 历史上此处的 `static RobotApp g_app` 以及只置位、从未被读取的
+> `signal(SIGINT, signal_handler)` + `g_running` 处理器，已于 **2026-09-29 删除**
+> （空处理器会吞掉 Ctrl+C，让未自装处理的示例"按了不退、电机持续使能"，比默认行为更危险）。
+> 因此：
+> - 未自行安装 `SIGINT` 处理的示例（40 个示例中其余 29 个）
+>   **回归默认终止语义**：Ctrl+C 直接结束进程，不会调用 `MotorManager::Stop()`，
+>   也**不会自动给电机发失能帧**。
+> - 需要"优雅退出 / 急停"的示例自行调用 `signal(SIGINT, rl_signal_handler)`
+>   （helper 见 `include/app/examples_common.h` 的 `g_rl_stop` + `rl_signal_handler`）；
+>   2026-09-29 grep 核对的完整清单为 **Ex25/34/35/36/37/38/51/52/53/54/56**（共 11 个）。
+>
+> 调试运行前请确认现场安全与独立断电手段。若需完整清理流程，示意如下
+> （示例多自建局部 `ThreadManager`，`RobotApp` 当前无人使用，见 `include/runtime/README.md`）：
+> `thread_mgr.stop_thread("motor_receive")` / `stop_thread("motor_send")`
+> → `MotorManager::GetInstance().Stop()`。
 
 ### 3. 调试方法
 
@@ -1382,6 +1508,10 @@ ls CMakeLists.txt  # 确认文件存在
 error: CANET.h: No such file or directory
 ```
 
+> ⚠️ **历史错误（CANET 已弃用）**：当前默认传输后端是达妙 USB2CAN，正式构建**不需要 CANET 库**。
+> 只有编译/运行 Example27、Example28 这两个 CANET 探针示例时才会走到这条路径。
+> 若这两个示例不参与当前编译，可忽略本条。
+
 **解决方案**：
 ```bash
 # 检查依赖库是否安装
@@ -1428,7 +1558,7 @@ sudo ./bin/can_motor_app
 fatal error: SDL2/SDL.h: No such file or directory
 ```
 
-**原因**：手柄示例依赖 SDL2，而 `main.cpp` 默认启用的 Example44（USB2CAN Xbox 手柄）也需要 SDL2。
+**原因**：手柄示例依赖 SDL2，而 `main.cpp` 当前启用的 **Example37_RLTeleopControl**（USB2CAN Xbox 手柄遥操作）也需要 SDL2。
 
 **解决方案**：
 ```bash
@@ -1440,7 +1570,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 ```
 
-或在 `src/main.cpp` 中改用其它不依赖 SDL2 的示例。
+或在 `src/app/main.cpp` 中改用其它不依赖 SDL2 的示例（例如 Example30 离线链路回归、Example24 只读诊断）。
 
 ### 5. 性能优化
 
@@ -1508,57 +1638,84 @@ cmake --build build -j$(nproc)
 
 ## 文件结构
 
+> 🗄️ **下面的旧目录树是重构前的历史存档，请勿据此找文件。**
+> `include/bsp/`、`include/thread/`、`include/motor_drive/`、`include/RoboTasks/`、
+> `include/data_types.h`、`include/motor_manager.h`、`src/base/`、`src/example.cpp`、
+> `src/bsp/` 等**全部已不存在**（详见文首「已失效名称 → 当前实现」对照表）。
+
+**历史目录树（重构前）**：
 ```
 simplify/
 ├── include/
-│   ├── motor_manager.h          # 电机管理器（16 电机）
+│   ├── motor_manager.h          # 电机管理器（16 电机）      🔴 已移至 include/motor/
 │   ├── can_device.h             # CAN 设备（VCI_CAN_OBJ 封装）
-│   ├── data_types.h             # 数据结构定义（MotorStatus / CanDeviceConfig 等）
-│   ├── motor_calibration.h      # 电机标定参数、CAN_PORTS/MOTORS_PER_CAN 常量
-│   ├── motor_logger.h           # 收发日志（CSV，输出到 log/）
-│   ├── leg_kinematics.h         # 腿部运动学
-│   ├── xbox_controller.h        # Xbox 手柄封装（依赖 SDL2）
-│   ├── SimSync.h                # 仿真同步
-│   ├── example.h
-│   ├── thread/
-│   │   └── thread_manager.h     # 线程管理器
-│   ├── motor_drive/
-│   │   ├── ele_motor.h          # 单电机
-│   │   └── ele_motor_def.h      # 电机参数定义
-│   ├── bsp/
-│   │   └── bsp_can.h            # CAN 底层接口（BspCanFrame，实际收发主路径）
-│   └── RoboTasks/
-│       └── robot_app.h          # 顶层应用
+│   ├── data_types.h             # MotorStatus / CanDeviceConfig 等   🔴 现 include/common/types.h
+│   ├── motor_calibration.h      # 电机标定参数                🔴 已移至 include/motor/
+│   ├── motor_logger.h           # 收发日志（CSV）             🔴 已移至 include/common/
+│   ├── leg_kinematics.h         # 腿部运动学                  🔴 已移至 include/motion/
+│   ├── xbox_controller.h        # Xbox 手柄封装（依赖 SDL2）  🔴 已移至 include/strategy/
+│   ├── SimSync.h                # 仿真同步                    🔴 已移至 include/motion/
+│   ├── example.h                # 示例声明                    🔴 现 include/app/examples.h
+│   ├── thread/                  🔴 已删（现 include/runtime/）
+│   ├── motor_drive/             🔴 已删（现 include/motor/）
+│   ├── bsp/bsp_can.h            🔴 已删（现 include/transport/）
+│   └── RoboTasks/robot_app.h    🔴 已删（现 include/runtime/robot_app.h）
 ├── src/
-│   ├── main.cpp                 # 入口（硬编码选择示例）
-│   ├── example.cpp              # 示例 Example9~22
-│   ├── motor_manager.cpp
-│   ├── can_device.cpp
-│   ├── motor_drive/
-│   │   └── ele_motor.cpp
-│   ├── thread/
-│   │   └── thread_manager.cpp
-│   ├── bsp/
-│   │   └── bsp_can.cpp
-│   ├── RoboTasks/
-│   │   └── robot_app.cpp        # 顶层应用实现
-│   └── base/                    # 基础库（CMakeLists SOURCES 中一并编译）
-│       ├── common.cpp
-│       ├── crc16.cpp
-│       ├── log.cpp
-│       ├── jsoncpp/jsoncpp.cpp
-│       ├── md5/aw_md5.cpp
-│       └── platform/linux/network.cpp
+│   ├── main.cpp                 # 入口（硬编码选择示例）      🔴 现 src/app/main.cpp
+│   ├── example.cpp              # 示例 Example9~22          🔴 现 src/app/examples/*.cpp（17~57）
+│   ├── motor_manager.cpp        🔴 现 src/motor/motor_manager.cpp
+│   ├── can_device.cpp           🔴 现 src/transport/can_device.cpp
+│   ├── motor_drive/ele_motor.cpp 🔴 现 src/motor/ele_motor.cpp
+│   ├── thread/thread_manager.cpp 🔴 现 src/runtime/thread_manager.cpp
+│   ├── bsp/bsp_can.cpp          🔴 已删（现 src/transport/{canet,usb2can}_transport.cpp）
+│   ├── RoboTasks/robot_app.cpp  🔴 现 src/runtime/robot_app.cpp
+│   └── base/                    🔴 已删除（厂商 common/crc16/log/jsoncpp/md5/network）
 ├── CMakeLists.txt
 └── FRAMEWORK_GUIDE.md           # 本文档
 ```
 
-> 注：`src/base/` 下还包含 BleConfigLib / DTUCloudConfigLib / serial 等厂商库文件，
-> 上表只列出了参与当前编译（`CMakeLists.txt` 的 `SOURCES`）的核心文件。
+**当前目录树（以文件系统为准）**：
+```
+simplify/
+├── include/
+│   ├── common/      # L0  types.h shared_data.h log_control.h motor_logger.h s2r_recorder.h
+│   ├── transport/   # L1  can_transport.h canet_transport.h usb2can_transport.h can_device.h + CAN_TRANSPORT_GUIDE.md
+│   ├── motor/       # L2/L3 ele_motor.h ele_motor_def.h motor_calibration.h motor_manager.h (+ 设计文档)
+│   ├── runtime/     # L4  thread_manager.h robot_app.h motor_io.h (+ README/ThreadPlan)
+│   ├── motion/      # L5  motion_controller.h leg_kinematics.h robot_calibration.h SimSync.h wheel_position_loop.h
+│   ├── strategy/    # L6  rl_controller.h sim2real_conv.h mlp.h policy_weights.h policy_test_ref.h imu_device.h xbox_controller.h
+│   └── app/         # L7  examples.h examples_common.h examples/{ex_basic,ex_diag,ex_rl}.h
+├── src/
+│   ├── common/s2r_recorder.cpp
+│   ├── transport/{can_device,canet_transport,usb2can_transport}.cpp
+│   ├── motor/{ele_motor,motor_manager}.cpp
+│   ├── runtime/{thread_manager,robot_app,motor_io}.cpp
+│   ├── motion/motion_controller.cpp
+│   ├── strategy/{rl_controller,sim2real_conv,imu_device}.cpp
+│   └── app/
+│       ├── main.cpp                      # 入口（注释切换示例，无命令行参数）
+│       └── examples/{ex_basic,ex_diag,ex_rl,examples_common}.cpp   # Example17~57 共 40 个
+├── docs/            # 现状真源：SIM2REAL_DEPLOY.md 等
+├── memory/          # FACT.md / JOURNAL.jsonl
+├── weights/         # iteration_9754.pkl（真机当前权重）
+├── dogurdf_sim2sim_deploy/   # sim2sim 部署（默认 checkpoint 已指向 ../weights/iteration_9754.pkl）
+├── tool/            # Python 工具（export_policy.py / compare_sim2real.py / friction_id_offline.py ...）
+├── lib/  log/  bin/          # 第三方库 / 运行日志 / 产物 bin/can_motor_app
+├── CMakeLists.txt
+└── FRAMEWORK_GUIDE.md        # 本文档（历史指南，通用调试章节仍有效）
+```
+
+> 注：`docs/SIM2REAL_DEPLOY.md` 与 `memory/FACT.md` 是现状真源；上述 `*.md` 指南文件
+> 可能随文档同步继续更名，以实际 `ls` 结果为准。
 
 ---
 
 ## 总结
+
+> ⚠️ 下面的总结是**重构前的视角**。当前工程：L0~L7 分层、16 电机（4 路 × 4）、
+> 默认达妙 USB2CAN、示例 17~57 共 40 个（当前启用 Example37_RLTeleopControl）、
+> 收发线程各 2ms/500Hz（优先级 80）、策略环 50Hz。现状以
+> `docs/SIM2REAL_DEPLOY.md`、`memory/FACT.md` 为准。
 
 本框架提供了一个**完整的、生产级别的**四足机器狗电机控制解决方案。通过分层设计和线程管理，实现了高效、安全、易用的电机控制接口。
 

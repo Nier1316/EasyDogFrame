@@ -622,9 +622,14 @@ void Example29_MainLoopCadenceTest() {
     fflush(stdout);
 }
 
-// ================= 示例 30：RL 策略链路离线验证（不碰 CAN） =================
-// 用导出工具生成的 REF_OBS/REF_ACTION 参考数据验证 MLP 权重与推理正确性，
-// 以及观测构建与 sim2sim.py 的一致性。纯 CPU 计算，不初始化 CAN、不使能电机。
+// ================= 示例 33：IMU 链路验证（只读，不碰电机） =================
+// 目的：在跑完整 RL（Example25）之前，验证 IMU 链路是否正确——串口连通、帧校验、
+//   gyro/quat 合理，RL 观测里直接用的 base_ang_vel（机体系 rad/s）与 projected_gravity
+//   方向符合约定（安装 Z_DOWN_X，与 Example25 一致）。
+// 判读：
+//   1) 水平放平、静止：quat≈(1,0,0,0)、欧拉角≈0、pgr≈(0,0,-1)、gyro≈0。
+//   2) 前倾：pitch>0，pgr.x 变正；右倾：roll>0，pgr.y 变负（MuJoCo 约定）。
+//   3) 放平但 pgr 明显偏离 (0,0,-1) → 安装方向/开机水平校准有问题，先别上 RL。
 void Example33_IMUCheck() {
     printf("\n========== 示例 33：IMU 链路验证 ==========\n");
     printf("[INFO] 只读 IMU，不初始化 CAN、不使能电机。\n");
@@ -685,8 +690,9 @@ void Example33_IMUCheck() {
 
 // ================= 示例 34：轮子扭矩方向测向 =================
 // 目的：验证 MOTOR_CALIBRATION 轮子 pos_scale（扭矩下发方向）是否正确。
-//   RL 轮子走 wheel_torque 扭矩前馈（下发经 pos_scale 翻转），与速度环（vel_scale）独立。
-//   2026-08-21 实测已把 CAN0/2 轮子 pos_scale 修正为 +1，本示例用于复核/复测。
+//   轮子扭矩经 pos_scale 翻转下发，与速度环用的 vel_scale 相互独立。
+//   当前表内轮子 pos_scale = CAN0/CAN2 → -1、CAN1/CAN3 → +1（2026-08-21 扭矩测向结论），
+//   本示例用于复核/复测（换电机、重装标定后重跑）。
 // 流程：使能 16 电机 → 10s 起立（四腿支撑、轮子悬空）→ +1.0 Nm 测向 3s
 //       → 停 0.5s → -1.0 Nm 测向 3s → 10s 回位 → 失能。
 // 判读：
@@ -834,15 +840,6 @@ void Example34_WheelDirectionCheck() {
     printf("\n[INFO] 示例34 完成。\n");
     fflush(stdout);
 }
-
-// ================= 示例 35：轮电机前馈标定 =================
-// 目的：测量四个轮电机在悬空状态下"恰好克服静摩擦开始转动"的正/负扭矩前馈值，
-//   用于 wheel_torque 的摩擦前馈补偿：tau = KD*(VEL_SCALE*a - vel) + tau_ff。
-// 流程：记录初始腿位置 → 5s 起立（四腿支撑、轮子悬空）→ 逐电机标定（CAN0→CAN3）：
-//   先测正扭矩：↑/↓ 从 0 以 0.1 梯度调（正阶段 clamp≥0），轮子恰好转动时按回车记录；
-//   再测负扭矩：同样从 0 往下调（负阶段 clamp≤0），回车记录。
-// → 4 电机测完打印每路正/负前馈值 → 5s 回位 → 失能。
-// 注：需从集成终端运行（stdin 为真实终端）；Ctrl+Q 提前退出（回位+失能）。
 
 // ================= 示例 39：USB2CAN 传输链路验证 =================
 // 走 CanTransport 接口直接测达妙 USB2CAN（不经过 MotorManager/CANET）：
@@ -2046,7 +2043,10 @@ void Example48_WheelDirectionVerify() {
     usleep(300000);
 
     const float TORQ = 1.5f;   // 测试扭矩 (Nm)
-    const float POS_LIMIT = 50.0f;  // 位置保护（rad，轮子悬空可转多圈）
+    // 注：此处原有 `POS_LIMIT = 50.0f` 的"位置保护"常量，但从未被使用（编译告警）。
+    //     而且轮子位置编码量程只有 ±12.5 rad、多圈会回绕，"按 |pos| 判超限"本就无意义
+    //     （连续多圈需要像 include/motion/wheel_position_loop.h 那样做 unwrap 累加）。
+    //     故 2026-09-29 直接删除该常量，不做无效保护。
     const int   DUR_MS = 500;  // 每方向 0.5s
 
     // 返回 {pos, cal_vel}，同时验证"正向转时 cal_vel 符号"（速度环反馈方向）
@@ -2388,8 +2388,10 @@ void Example54_FrictionSysId() {
     const float MIN_AMP      = 0.12f;              // 最小扫掠半幅（限位太窄时）
 
     // 指令角限位 (rad)：θ₁/θ₂/θ₃ —— 引用 robot_calibration.h §4 宏（单一真值）。
-    // ⚠ 曾本地硬编码 calf 下限 60°：与 §4(Example55 实测已放宽 20°)不一致，会把
-    //   STAND calf=60° 基准的下行(伸直)扫掠空间吞成 0，半幅被压死。故改为引用宏。
+    // ⚠ 曾本地硬编码 calf 下限 60°，与 §4 的宏脱钩。注意 §4 里 θ₃ 下限**至今仍是 60°**
+    //   （LOWER_LIMIT_THETA3_DEG 自 2026-08-05 起未改过；早期注释写"已放宽 20°"是笔误），
+    //   而 STAND calf 基准也是 60° → 扫掠下行(伸直)空间天然很窄，靠 MIN_AMP 兜底。
+    //   故这里必须引用宏而不是手抄，以免日后放宽限位时两处漂移。
     const float LIM_LO[3] = {deg2rad(LOWER_LIMIT_THETA1_DEG),
                              deg2rad(LOWER_LIMIT_THETA2_DEG),
                              deg2rad(LOWER_LIMIT_THETA3_DEG)};

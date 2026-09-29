@@ -31,14 +31,13 @@ void register_thread(
 ```cpp
 // 注册线程（不启动）
 void register_thread(const std::string& name, std::function<void()> func,
-                     ThreadMode mode, uint32_t interval_ms, int priority);
+                     ThreadMode mode, uint32_t interval_ms = 0, int priority = 0);
 
 // 启动指定线程
 void start_thread(const std::string& name);
 
 // 停止指定线程
 void stop_thread(const std::string& name);
-```
 
 // 查询线程状态
 ThreadState get_thread_state(const std::string& name);
@@ -51,13 +50,17 @@ SharedData& get_shared_data();
 
 ```cpp
 enum class ThreadState {
-    UNREGISTERED,  // 未注册
-    REGISTERED,    // 已注册，未启动
-    RUNNING,       // 运行中
-    STOPPED,       // 已停止
-    ERROR          // 出错
+    UNREGISTERED,  // 未在 ThreadManager 中注册
+    REGISTERED,    // 已注册，尚未启动
+    RUNNING,       // 线程正在运行
+    STOPPED        // 线程已停止（可重新启动）
 };
 ```
+
+> 注：早期计划里的 `ThreadState::ERROR` **已删除**（`include/runtime/thread_manager.h` 当前只有上述四态）。
+> 状态转移：`UNREGISTERED → REGISTERED`（register_thread）→ `RUNNING`（start_thread）
+> → `STOPPED`（stop_thread 或任务执行完毕）→ `RUNNING`（再次 start_thread）。
+> 未注册的线程名，`get_thread_state()` 返回 `UNREGISTERED`。
 
 ### 共享数据区
 

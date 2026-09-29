@@ -9,9 +9,11 @@
 #include "transport/canet_transport.h"
 #include "transport/usb2can_transport.h"
 #include "runtime/motor_io.h"
-// 轮控安全常量（WHEEL_VEL_SOFT_LIMIT / WHEEL_SOFT_LIMIT_TORQUE / WHEEL_TORQUE_LIMIT）：
-// SendOnce 对轮子做上位机速度环 + 软限位，与策略侧共用同一份常量，避免重复定义漂移。
-#include "strategy/rl_controller.h"
+// 轮控保护：本文件自带 WHEEL_ESTOP_*（15 rad/s 自动急停 + 固件速度环制动）。
+// 与策略层解耦：轮子扭矩软限位/摩擦前馈那套（原 rl_controller.h 的 wheel_torque()、
+// WHEEL_FF、WHEEL_SOFT_LIMIT_*、WHEEL_TORQUE_LIMIT）在 2026-08-29 轮控迁移到固件 SPEED
+// 速度环后即无调用者，已于 2026-09-29 整体删除。本文件本就未引用任何 rl:: 符号，
+// 因此不再 include strategy/rl_controller.h（motor 层不反向依赖 strategy 层）。
 #include <cstdio>
 #include <cmath>
 #include <chrono>
@@ -152,6 +154,11 @@ void MotorManager::ReceiveOnce() {
         // CANET 后端无副作用：VCI_Receive 内部按 ~10ms 粒度轮询，请求 timeout<10ms
         // 一律被抬升到 ~10ms（timeout 扫描：1/5/10ms 都 ~10ms 返回），语义不变。
         // WaitTime=0 会被当作无限阻塞，绝不能用 0（否则某路无帧时线程卡死）。
+        // ⚠ 已知限制：4 路**全空**时最坏耗时 4×1ms = 4ms > 注册的 2ms 间隔，
+        //   即总线空闲时本线程实际只能跑到 ~250Hz（有帧时远快于此）。
+        //   未改成"只等第一路/按需等待"，因为 CANET 的 WaitTime=0 语义是无限阻塞，
+        //   改成 0 会让选中 CANET 后端的构建直接挂死；真要修应在传输层区分
+        //   阻塞/非阻塞语义（Usb2CanTransport 的 recv 是 wait_for，可安全用 0）。
         if (m_transport[can_port] && m_transport[can_port]->recv(can_port, frames, 1)) {
             for (const auto& frame : frames) {
                 if (frame.id >= 51 && frame.id <= 54) {
