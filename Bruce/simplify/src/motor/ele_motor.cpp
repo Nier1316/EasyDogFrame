@@ -10,6 +10,7 @@ void EleMotor::init() {
     current_torque = 0.0f;
     current_position = 0.0f;
     current_temp = 0.0f;
+    current_vbus = 0.0f;       // 未轮询到 / 固件不支持时保持 0
     target_speed = 0.0f;
     target_torque = 0.0f;
     target_position = 0.0f;
@@ -199,6 +200,12 @@ void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc) {
 		switch (type) {
 			case MOTOR_OR_temperature:
 				motor.current_temp = canRecev.fValue;
+				break;
+			case MOTOR_OR_Vbus:
+				// 母线电压：**必须在这里显式处理**，否则会落到 default 分支被打印出来。
+				// 本值由 MotorManager 以 1 Hz 轮询（数据集录制时），16 个电机 1 行/秒，
+				// 若走 default 分支会变成持续刷屏。
+				motor.current_vbus = canRecev.fValue;
 				break;
 			case MOTOR_OR_angle: {
 				float raw_pos = canRecev.fValue;

@@ -149,6 +149,14 @@ private:
 
     std::mutex m_ff_mtx;                        // 腿前馈覆盖回调锁（Set/Clear/SendOnce 读）
     LegTauFFOverrideFn m_leg_ff;                // 500Hz 摩擦前馈覆盖（空=关闭）
+
+    // ---- sim2real 统一数据集（L0.5，见 common/s2r_dataset.h）----
+    // 每个发送节拍把「16 电机目标 + 最新反馈 + IMU + 电压/温度」压进录制器的无锁环形缓冲。
+    // 仅在 S2RDataset::inst().active() 时工作；不进缓冲、不做 I/O，绝不拖慢 500Hz 控制环。
+    void CaptureDatasetRow();
+    /** 低频遥测轮询（1 Hz，仅录制时）：Vbus（每路 1 号电机）+ 温度（全部 16 个） */
+    void PollSlowTelemetry();
+    int m_slow_poll_tick = 0;                   // 500 拍（=1 s）计数
 };
 
 #endif // MOTOR_MANAGER_H_

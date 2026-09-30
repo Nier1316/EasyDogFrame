@@ -6,6 +6,7 @@
 #include "motor/motor_calibration.h"
 #include "common/motor_logger.h"
 #include "common/log_control.h"
+#include "common/s2r_dataset.h"   // 统一 sim2real 数据集（500Hz 指令+反馈同帧）
 #include "transport/canet_transport.h"
 #include "transport/usb2can_transport.h"
 #include "runtime/motor_io.h"
@@ -487,6 +488,62 @@ void MotorManager::SendOnce() {
                         motor.kd, motor.ki, POSITION);
                     break;
             }
+        }
+    }
+
+    // ---- sim2real 统一数据集：每个发送节拍录一行（指令 + 反馈 + 共时间戳）----
+    // 放在 16 电机循环之后：此时电机字段未被任何锁持有，逐电机短暂加锁读取即可。
+    // active() 为假时只多一次原子读，开销可忽略。
+    if (S2RDataset::inst().active()) {
+        CaptureDatasetRow();
+        if (++m_slow_poll_tick >= 500) {   // 500 拍 @2ms = 1 s
+            m_slow_poll_tick = 0;
+            PollSlowTelemetry();
+        }
+    }
+}
+
+void MotorManager::CaptureDatasetRow() {
+    DatasetSample s;
+    for (uint8_t cp = 0; cp < CAN_PORTS; cp++) {
+        for (uint8_t mi = 1; mi <= MOTORS_PER_CAN; mi++) {
+            const int i = cp * MOTORS_PER_CAN + (mi - 1);   // CAN 顺序
+            std::lock_guard<std::mutex> lock(m_motor_mutex[cp][mi - 1]);
+            const EleMotor& m = m_motors[cp][mi - 1];
+
+            s.mode[i] = (uint8_t)m.control_mode;
+            // 下发值统一坐标系（= SendImpedance/SendSpeed 接受的坐标 = GetStatus 的坐标）。
+            // c_* 的语义随 mode 变化，详见 s2r_dataset.h 的表。
+            s.c_pos[i] = m.target_position;
+            s.c_vel[i] = m.target_speed;
+            if (m.control_mode == SPEED) {
+                s.c_pos[i] = 0.0f;  s.c_kp[i] = m.kvp;  s.c_kd[i] = 0.0f;      s.c_tau[i] = m.ki;
+            } else if (m.control_mode == POSITION) {
+                s.c_kp[i] = m.kvp;  s.c_kd[i] = m.kp;   s.c_tau[i] = m.ki;
+            } else {
+                s.c_kp[i] = m.kp;   s.c_kd[i] = m.kd;   s.c_tau[i] = m.target_torque;
+            }
+            s.m_pos[i]  = m.current_position;
+            s.m_vel[i]  = m.current_speed;
+            s.m_tau[i]  = m.current_torque;
+            s.m_temp[i] = m.current_temp;
+            s.m_vbus[i] = m.current_vbus;
+        }
+    }
+    // IMU / 上层命令由调用方通过 S2RDataset::SetImu()/SetCmd() 注入，录制器会自动并进本行
+    S2RDataset::inst().Push(s);
+}
+
+// 低频遥测：Vbus + 温度。只读寄存器，不改控制状态。
+// ⚠ Vbus(0x07) 在本工程的 Example24 参数表里**没有**被读过，属首次启用；
+//   若回读恒为 0 或异常，先确认固件是否支持该寄存器（不影响其它录制内容）。
+void MotorManager::PollSlowTelemetry() {
+    for (uint8_t cp = 0; cp < CAN_PORTS; cp++) {
+        ReadParam(cp, 1, MOTOR_OR_Vbus);            // 每路取 1 号电机代表
+    }
+    for (uint8_t cp = 0; cp < CAN_PORTS; cp++) {
+        for (uint8_t mi = 1; mi <= MOTORS_PER_CAN; mi++) {
+            ReadParam(cp, mi, MOTOR_OR_temperature);
         }
     }
 }

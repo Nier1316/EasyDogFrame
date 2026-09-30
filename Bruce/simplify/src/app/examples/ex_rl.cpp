@@ -18,6 +18,7 @@
 #include "common/motor_logger.h"
 #include "common/log_control.h"
 #include "common/s2r_recorder.h"
+#include "common/s2r_dataset.h"   // 统一 500Hz 数据集（可选，见 RECORD_DATASET）
 #include "motion/robot_calibration.h"
 #include <cstdio>
 #include <cmath>
@@ -1228,6 +1229,17 @@ void Example37_RLTeleopControl() {
     // S2R 遥测自动记录（log/rlrun_<ts>/trace.csv，退出后打印绘图命令）
     S2RRecorder::inst().begin("Example37 RL 遥操作（手柄）");
 
+    // ---- 统一 sim2real 数据集（可选，见 docs/SIM2REAL_DATA_FEEDBACK.md）----
+    // 打开后：每 2ms 一行（188 列）= 16 电机的目标+反馈 + IMU + cmd，共时间基准。
+    // ⚠ 约 420 KB/s（几分钟 ≈ 100 MB），日常跑保持 false，只在采集训练数据时改 true。
+    constexpr bool RECORD_DATASET = false;
+    if (RECORD_DATASET) {
+        S2RDataset::inst().Begin("Example37 RL 遥操作（手柄）");
+        S2RDataset::inst().Meta("weight", "iteration_9754.pkl");
+        S2RDataset::inst().Meta("example", "Example37");
+        printf("[DATA] 统一数据集已开启 → %s（约 420 KB/s）\n", S2RDataset::inst().path());
+    }
+
     printf("[INFO] RL 循环启动：左摇杆前进/后退，B 急停，q 优雅退出\n");
 
     RawTerminal term;         // q 键优雅退出
@@ -1256,6 +1268,15 @@ void Example37_RLTeleopControl() {
                 g_rl_stop = 1;
             }
             motion.setCmd(cmd);
+        }
+
+        // 0.9) 数据集注入（采样保持；未开启时只多一次原子读）
+        if (S2RDataset::inst().active()) {
+            float g[3], qd[4];
+            if (imu_ok) { imu.GetGyro(g[0], g[1], g[2]); imu.GetQuat(qd[0], qd[1], qd[2], qd[3]); }
+            else        { g[0] = g[1] = g[2] = 0.0f; qd[0] = 1.0f; qd[1] = qd[2] = qd[3] = 0.0f; }
+            S2RDataset::inst().SetImu(g, qd);
+            S2RDataset::inst().SetCmd(cmd);
         }
 
         // 1) RL 一步（读状态→obs→推理→下发→跌倒检测）
@@ -1307,6 +1328,10 @@ void Example37_RLTeleopControl() {
 
     // ---- S2R 收尾：关文件 + 打印绘图命令 ----
     S2RRecorder::inst().finish();
+    if (S2RDataset::inst().active()) {
+        S2RDataset::inst().Finish();
+        printf("[DATA] 分析： python3 tool/dataset_health.py %s\n", S2RDataset::inst().path());
+    }
 
     // ---- 清理 ----
     printf("[INFO] 正在失能...\n");
@@ -2358,13 +2383,42 @@ void Example53_MeasureGravityFF() {
         }
         // 四腿平均建议
         printf("\n  → 建议 JOINT_IMPEDANCE.tau_ff（四腿平均，上层坐标系）:\n");
+        float avg_j[3] = {0, 0, 0};
         for (int j = 0; j < 3; j++) {
             float a = 0;
             for (int leg = 0; leg < 4; leg++) a += sum_tau[leg * 3 + j] / rec_cnt;
             a /= 4.0f;
+            avg_j[j] = a;
             printf("    %-6s tau_ff %+.1f Nm\n", jname[j], a);
         }
         printf("    （狗站得越稳，读数越接近纯重力；若塌/抖需先稳住再采）\n");
+
+        // ---- 与表内当前值对比并给判定（2026-09-29 新增）----
+        // 背景：`include/motor/motor_calibration.h` 的 JOINT_IMPEDANCE[..][THIGH].tau_ff
+        //   代码是 +5.0f，而行内注释与 commit 6546688 的提交信息都写 −5，一直未定论。
+        //   本段把"实测需要多少"和"表内当前填了什么"并排放出来，
+        //   **符号相反时基本可以直接判定表内符号写错了**（这是"抬腿无力/整体下塌"的常见病因）。
+        printf("\n  === 与表内当前值对比（差异大 → 优先改表；符号相反 → 表内符号很可能错了）===\n");
+        printf("  %-6s %10s %12s %10s   %s\n", "关节", "表内值", "实测建议", "差值", "判定");
+        for (int j = 0; j < 3; j++) {
+            // 四路表值本来应一致；不一致时取 0 号腿并提示
+            const float tab = GetJointImpedance(0, j + 1).tau_ff;
+            bool uniform = true;
+            for (int leg = 1; leg < 4; leg++)
+                if (fabsf(GetJointImpedance(leg, j + 1).tau_ff - tab) > 1e-3f) uniform = false;
+
+            const float diff = avg_j[j] - tab;
+            const char* verdict;
+            if (fabsf(avg_j[j]) < 1.0f && fabsf(tab) < 1.0f)   verdict = "都在 0 附近，无需改";
+            else if (tab * avg_j[j] < 0.0f)                     verdict = "⚠ 符号相反 → 表内符号很可能错";
+            else if (fabsf(diff) > 5.0f)                        verdict = "量级偏差较大，建议按实测改";
+            else if (fabsf(diff) > 2.0f)                        verdict = "可微调";
+            else                                                verdict = "一致，保持";
+            printf("  %-6s %+10.1f %+12.1f %+10.1f   %s%s\n", jname[j], tab, avg_j[j], diff,
+                   verdict, uniform ? "" : "（四路表值不一致，此处列的是 CAN0）");
+        }
+        printf("  ⚠ 提醒：改 tau_ff 后请重跑本示例复核（收敛后误差应变小）；\n");
+        printf("     若改符号后变差，立即改回 —— 这是真机行为改动，务必人在现场。\n");
     } else {
         printf("[WARN] 未采到记录步（提前中断）\n");
     }

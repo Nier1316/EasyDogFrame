@@ -94,7 +94,7 @@
 - ⚠️ 不要做**接触触发的相位重置**：轮足无清晰 GRF 上升沿，有噪时可能永不重置（ANYmal 的 `GaitAdaptation` 也只做"提前触地"一种）。
 
 ## 示例（demo）与运行方式
-- 示例总数 **42**，编号 **17~59**（编号不连续；1~16 已清理，**Example55 从未实现，2026-09-29 删除其声明与注释调用**；**58/59 为 2026-09-29 新增**）。
+- 示例总数 **43**，编号 **17~60**（编号不连续；1~16 已清理，**Example55 从未实现，2026-09-29 删除其声明与注释调用**；**58/59/60 为 2026-09-29 新增**）。
 - 分发机制：改 `src/app/main.cpp` 的注释 + 重新编译，**无命令行参数、无注册表**。
 - **当前激活 = `Example37_RLTeleopControl`**（`main.cpp` 结尾唯一未注释的调用）。
 
@@ -106,10 +106,32 @@
   - **Example58 `TorqueChannelCheck`**：力矩通道校验（零偏/增益/符号/线性度）。`kp=kd=0 ⇒ τ=τ_ff`，逐电机 `0→+T1→+T2→0→−T1→−T2→0`；轮子默认跳过（会转起来）。落盘 `log/sysid/torque_check_*.csv`。
   - **Example59 `GravityMassIdentify`**：重力矩系数 `G_j = m·g·d` 与质量-质心。单关节小幅慢扫 14 点 → 对 `[sinθ, cosθ, 1]` 最小二乘 ⇒ `G_j = √(a²+b²)`（与角度零点约定无关）；配合称重反推 `d`、配合 Ex47 的 `J` 得 `I_c = J − m·d²`；打印建议的 `LINK_DYNAMICS`/`BODY_MASS`。落盘 `log/sysid/gravity_summary_*.csv`。
 - ⚠️ 分工：`J/B/f_c/K_g` 由 **Example47** 辨识、腿摩擦由 **Example54** 辨识 —— 58/59 **不重复**，只补 Ex47 给不出的"大范围重力矩幅值"与"质量/质心"。
-- 文件分工：`ex_basic.cpp`（17~23，7 个）、`ex_diag.cpp`（24, 26~29, 33, 34, 39~50, 54, 57，21 个）、`ex_rl.cpp`（25, 30~32, 35~38, 51~53, 56，12 个）。
-- 关键示例：Ex25 完整 RL + 手柄；Ex30 离线链路回归（不碰 CAN）；Ex34 轮子方向核对；Ex35 轮摩擦前馈标定（历史）；Ex36 RL 站立循环；**Ex37 RL 遥操作（当前激活）**；Ex38 动作延迟辨识；Ex47 整狗 chirp 辨识；Ex49 轮 SPEED 环 kvp 扫描；Ex51 站立→趴下；Ex54 吊装摩擦辨识；Ex56 固定 yaw 遥测落盘；Ex57 单腿零位对照（验证 CONV_A/B）。
+- 文件分工：`ex_basic.cpp`（17~23，7 个）、`ex_diag.cpp`（24, 26~29, 33, 34, 39~50, 54, 57，21 个）、`ex_rl.cpp`（25, 30~32, 35~38, 51~53, 56，12 个）、**`ex_sysid.cpp`（58~59，2 个）**、**`ex_probe.cpp`（60，1 个）** = 共 **43 个**。
+- 关键示例：Ex25 完整 RL + 手柄；Ex30 离线链路回归（不碰 CAN）；Ex34 轮子方向核对；Ex35 轮摩擦前馈标定（历史）；Ex36 RL 站立循环；**Ex37 RL 遥操作（当前激活）**；Ex38 动作延迟辨识；Ex47 整狗 chirp 辨识；Ex49 轮 SPEED 环 kvp 扫描；Ex51 站立→趴下；**Ex58 力矩通道校验**；**Ex59 重力矩/质量-质心辨识**；Ex54 吊装摩擦辨识；Ex56 固定 yaw 遥测落盘；Ex57 单腿零位对照（验证 CONV_A/B）。
 - `examples_common` 只有 4 个 helper：`RawTerminal`、`poll_key`、`g_rl_stop`+`rl_signal_handler`、`EnableRlFrictionFF/DisableRlFrictionFF`。
-- ⚠️ 安全现状：装 `SIGINT` 急停（`rl_signal_handler`）的示例共 **11 个** —— Ex25/34/35/36/37/38/51/52/53/54/56；其余会使能电机的示例没有软急停，运行前须留安全距离。
+- ⚠️ 安全现状（2026-09-29 脚本复核）：42 个示例中 **29 个会使能电机**（脚本按函数体内直接调 `EnableMotor`/`PreEnableZeroTorque` 统计为 27 个；Ex58/59 经公共 helper `init_zero_torque()` 使能），其中 **13 个装了 `SIGINT` 急停** —— Ex25/34/35/36/37/38/51/52/53/54/56/**58/59**；其余 **16 个**（Ex18/19/20/21/22/23/29/32/41/44/45/46/47/48/49/57）会使能但没有软急停，运行前须留安全距离、可随时断电。
+
+### sim2real 数据回馈（专题，见 `docs/SIM2REAL_DATA_FEEDBACK.md`）
+- 原则：**数据不进训练，进训练的是仿真里的 `p(s'|s,a)` 与观测模型**。录音必须凑齐"**我命令了什么 + 实际发生了什么 + 共用一个单调时钟**"，才能把控制延迟与执行器动态分开。
+- **记录现状**：`recv_*.csv`（raw+cal、500 Hz、默认开）、`rl_*.csv` / `rlrun_*/trace.csv`（50 Hz、含 quat/gyro/τ）已有；
+  **缺口**：`LogFileSwitch::SEND`（下发的 pos/vel/kp/kd/τ_ff）**默认关** → 做 sim2real 必须打开；
+  **IMU 无独立落盘**（只有 50 Hz 进 trace）；**Vbus 从未读**（手册有 `MOTOR_OR_Vbus 0x07`，`ReadParam` 可读）；温度同理。
+- **最大的结构性 gap = 轮子**：真机是固件速度环（手册 `Dt = 50 µs`），sim2sim 是 `kd·(w_target − qd)`（`WHEEL_KD=2.0`）—— **模型结构不同，调 DR 补不上**。要么把仿真轮子建成速度伺服（主流做法），要么真机改成力矩控制，二者不可混。
+- **四条消费路径**：① 参数辨识→改仿真模型（最快，不需重训）；② 实测离散度→定 DR 区间（"少而准"）；③ **轨迹回放拟合**（真机录 30~60s 500Hz 指令+反馈 → `sim2sim --replay` → CMA-ES 拟合参数，残差谱还能分诊）；④ 真机微调/历史隐变量（最后做，且只治感知误差）。
+- 已有资产：`tool/compare_sim2real.py`（**缺 τ 对比与互相关时移**，建议先补）、`run_dual_compare.sh`、`sim2sim.py --record`。
+
+### 统一 sim2real 数据集录制（2026-09-29 新增，`include/common/s2r_dataset.h`）
+- **一行 = 一个 500 Hz 收发节拍**：`wall_ms,t_ms` + 16 电机 `(c_mode + c_pos/c_vel/c_kp/c_kd/c_tau + m_pos/m_vel/m_tau + m_temp + m_vbus)` + `gyro(3)/quat(4)` + `cmd(3)` = **188 列**。
+  产物 `log/dataset_<ts>.csv` + `.meta.txt`。索引是 **CAN 顺序**（`i = can*4 + motor_id-1`），`c_*` 语义随 `c_mode_i` 变化。
+- **实时性**：生产者（`MotorManager::SendOnce`）只做一次 ~0.6 KB 拷贝进 **8192 槽无锁环形缓冲**，队列满则丢弃并计数；格式化与写盘在独立写线程（1 MB 全缓冲，1 s flush 一次）。**绝不阻塞 500 Hz 控制环。**
+- 采集时自动以 **1 Hz** 轮询 `Vbus(0x07)`（每路 1 号电机，4 个）与 `temperature(0x0D)`（16 个）→ 共 20 帧/s（稳态 8000 帧/s 的 0.4%）。
+  ⚠ `MOTOR_OR_Vbus` 在 Ex24 参数表里**从未读过**，属首次启用；回读恒 0 就在分析里忽略该列。为此 `EleMotor` 新增 `current_vbus` 字段。
+- 离线工具（`tool/`，每个都有 `--selftest`）：`dataset_health.py`（体检：频率/丢帧/范围/"能用来做什么"）、`delay_fit.py`（延迟 T_d + 一阶 τ）、`wheel_servo_fit.py`（轮速伺服：T_d/τ/K/死区/饱和 + `kd_equiv`）；`compare_sim2real.py` 增补 τ 对比与互相关时移。
+  - 已验证：`delay_fit` 用**独立生成**的 188 列数据集（真值 T_d=26.0 ms / τ=30.0 ms）→ 输出 T_d **26.0 ms**、τ 29.0 ms、K 1.000；`wheel_servo_fit` 自测 → T_d 18.0/18.0、τ 40.0/40.0、死区 0.40/0.40、ω_max 精确。
+  - ⚠ 已知不一致：轮子 `kd` 在 `dogurdf_sim2sim_deploy/src/sim2sim.py` 是 **2.0**、在 `include/strategy/rl_controller.h`（`rl::WHEEL_KD`）是 **1.0**（注释记为"历史 2.0 → 1.0"）。改仿真前先确认用哪个。
+- 🚩 **真机操作手册：`docs/REAL_ROBOT_HANDOVER.md`**（自足：安全铁律 / T0~T8 逐步清单 / 判据 / 异常处理 / 回传报告模板）。
+- 自测：`/tmp/test_dataset`（合成 3000 行）→ 188 列、行数一致、`t_ms` 单调、0 丢弃，全部通过。
+- 详见 `docs/SIM2REAL_DATA_FEEDBACK.md`（§7 是**真机测试清单 T0~T8**）。
 
 ## 其他事实
 - 手柄：左摇杆上推=+vx 前进、右摇杆左推=+wz 左转(CCW)，vy 恒 0，量程 vx±1.0 m/s、wz±1.0 rad/s；B 键急停；Ctrl+C 急停。

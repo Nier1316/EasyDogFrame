@@ -4,7 +4,7 @@
 // =====================================================================
 //  示例切换说明
 //  = 只运行一个示例：目标示例的 3 行取消注释、其余保持注释即可。
-//  = Example1-16 已清理（早期实验），现存 17~59（共 42 个；55 从未实现，已删除）。
+//  = Example1-16 已清理（早期实验），现存 17~60（共 43 个；55 从未实现，已删除）。
 //  = 当前启用：Example37（RL 遥操作，手柄前进/后退 + 转向）。
 //
 //  ⚠ 2026-09-29：原先此处用 `signal(SIGINT, signal_handler)` 装了一个只把
@@ -187,6 +187,11 @@ int main() {
     // printf("[INFO] Running Example59_GravityMassIdentify...\n");
     // Example59_GravityMassIdentify();
     // printf("[INFO] Example59 completed.\n");
+
+    // 运行示例60 - 真机激励探针（悬空 + 500Hz 数据集录制：延迟/轮速伺服/执行器辨识）
+    // printf("[INFO] Running Example60_SysIdProbe...\n");
+    // Example60_SysIdProbe();
+    // printf("[INFO] Example60 completed.\n");
 
     // 运行示例48 - 轮子扭矩方向安全验证（单轮开环测向，无 RL 失控风险）
     // printf("[INFO] Running Example48_WheelDirectionVerify...\n");

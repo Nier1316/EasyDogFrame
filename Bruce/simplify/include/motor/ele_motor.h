@@ -28,6 +28,10 @@ public:
     float current_torque;     // 当前扭矩 (Nm)
     float current_position;   // 当前位置 (rad)
     float current_temp;       // 当前温度 (°C)
+    // 母线电压 (V)。由 MotorManager 以 1 Hz 轮询 MOTOR_OR_Vbus(0x07) 更新；
+    // 未轮询到 / 固件不支持时保持 0。用途：力矩常数随电压漂移的解释、
+    // 以及给仿真侧 DC 电机模型提供 V（见 docs/SIM2REAL_DATA_FEEDBACK.md）。
+    float current_vbus;
 
     // 轮速低通滤波状态（2026-08-28）：USB2CAN 丢帧/错帧会导致轮速解码跳变
     // （如 FR 轮瞬时 ±4~8 rad/s，物理不可能），跳变会诱导策略过激响应 + 轮控误算。

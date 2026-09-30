@@ -47,6 +47,7 @@ endif()
 set(SOURCES
     # L0.5 公共工具（RL 遥测记录器）
     src/common/s2r_recorder.cpp
+    src/common/s2r_dataset.cpp
 
     # L7 应用
     src/app/main.cpp
@@ -56,6 +57,7 @@ set(SOURCES
     src/app/examples/ex_diag.cpp
     src/app/examples/ex_rl.cpp
     src/app/examples/ex_sysid.cpp
+    src/app/examples/ex_probe.cpp
 
     # L6 运行时（线程/顶层应用/电机IO线程）
     src/runtime/thread_manager.cpp

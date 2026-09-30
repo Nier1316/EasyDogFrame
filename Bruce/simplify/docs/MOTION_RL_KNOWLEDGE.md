@@ -242,7 +242,7 @@ void leg_foot_force_to_torque(LegIndex leg, q_cmd[3], f[3], tau[3]);       // τ
 
 ---
 
-## 9. 示例索引（`src/app/examples/`，示例 17~59，共 42 个）
+## 9. 示例索引（`src/app/examples/`，示例 17~60，共 43 个）
 
 > 分发机制：改 `src/app/main.cpp` 里各示例调用的注释 + 重新编译，**无命令行参数、无注册表**。
 > ⚠️ `Example55_SingleLegLimitMeasure` 在本仓库**从未实现**（声明与被注释调用已在本次清理中删除），不要再当作可用示例。
@@ -250,6 +250,7 @@ void leg_foot_force_to_torque(LegIndex leg, q_cmd[3], f[3], tau[3]);       // τ
 > 其中 **13 个装了 `SIGINT` 急停**（Ex25/34/**35**/36/37/38/51/52/53/54/56/**58/59**）；
 > 其余 **16 个会发使能帧但无 `SIGINT` 保护**（Ex18/19/20/21/22/23/29/32/41/44/45/46/47/48/49/57）——跑这些示例务必人在现场、可随时断电。
 > 🆕 **系统辨识/通道校验（2026-09-29 新增，触地检测前提件）**：见 §9.4 与 `docs/CONTACT_PHASE_SIM2REAL.md` §7.0。
+> 🆕 **真机激励探针 Example60 + 统一 500 Hz 数据集录制（`common/s2r_dataset.h`，188 列指令+反馈同帧）**：见 §9.5 与 `docs/SIM2REAL_DATA_FEEDBACK.md` §7（真机测试清单）。
 
 ### ex_basic.cpp（17~23）
 | 示例 | 功能 |
@@ -275,6 +276,13 @@ void leg_foot_force_to_torque(LegIndex leg, q_cmd[3], f[3], tau[3]);       // τ
 |---|---|---|
 | **Example58** `TorqueChannelCheck` | 16 路**力矩通道校验**：阻抗模式 `kp=kd=0 ⇒ τ=τ_ff`，逐电机施加 `0→+T1→+T2→0→−T1→−T2→0`，检查零偏（<0.5 N·m）/增益（误差 ≤ max(0.5, 25%)）/符号/线性度。轮子默认跳过（会转起来） | 狗必须**吊起**；人工轻扶被测肢体；→ `log/sysid/torque_check_*.csv` |
 | **Example59** `GravityMassIdentify` | **重力矩系数 `G_j = m·g·d`** 与质量-质心：单关节在参考姿态附近双向慢扫 7 点（共 14 点），准静态采样 (θ, τ)，对 `[sinθ, cosθ, 1]` 做 3 参数最小二乘 → `G_j = √(a²+b²)`（**不需要扫到力臂最大处**）；配合台秤称重反推 `d`，配合 Ex47 的 `J` 得 `I_c = J − m·d²`；打印可直接填入 `LINK_DYNAMICS`/`BODY_MASS` 的建议值 | 狗必须**吊起 + 机身水平**（可选 IMU 检查倾角）；→ `log/sysid/gravity_summary_*.csv` |
+
+### 9.5 ex_probe.cpp（60）—— 真机激励探针，2026-09-29 新增
+
+`Example60_SysIdProbe`：悬空下 5 种激励（1 力矩脉冲 / 2 位置阶跃 / 3 单关节位置 chirp / 4 轮速阶跃+扫频 / 5 全部 12 关节 chirp），
+全程用 `S2RDataset` 录 500 Hz 数据集（指令与反馈同一行、共时间基准、含 IMU/Vbus/温度）。
+产物 `log/dataset_*.csv` → `tool/dataset_health.py` / `delay_fit.py` / `wheel_servo_fit.py`。
+与 `Example38` 的分工：Ex38 用相位法**在线**估延迟（只打印）；Ex60 把原始数据落盘，延迟/伺服模型**离线**拟合，可复算可回放。
 
 > **为什么需要它们**：`f = (Jᵀ)⁻¹·τ` 的力误差 ≈ 力矩误差 × 条件数。实测腿的条件数在 DEFAULT_POSE ≈ 15、
 > 膝伸直 → 1.8e7；而本项目腿摩擦 1.6~6.2 N·m、重力矩 8~20 N·m 与信号同量级。

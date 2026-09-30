@@ -9,6 +9,7 @@
 > `common`(L0) → `transport`(L1) → `motor`(L2/L3) → `runtime`(L4) → `motion`(L5) → `strategy`(L6) → `app`(L7)。
 >
 > - **现状真源**：`docs/SIM2REAL_DEPLOY.md`、`memory/FACT.md`（与之冲突时以这两个文件与当前代码为准）。
+> - 🔧 **要在真机上跑测试/采数据**：先读 **`docs/REAL_ROBOT_HANDOVER.md`**（真机交接文档：安全铁律 + T0~T8 执行清单 + 回传报告模板）。
 > - 重构前的旧路径 / 旧类名，见下方「已失效名称 → 当前实现」对照表。
 > - **仍然有效**：第 8 章「编译、运行和调试」与第 9 章「调试指南」（GDB / Valgrind / AddressSanitizer /
 >   perf / strace / 网络配置等通用内容）不随重构失效，请继续参考。
