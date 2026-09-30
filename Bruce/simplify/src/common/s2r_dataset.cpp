@@ -85,6 +85,9 @@ bool S2RDataset::Begin(const char* note) {
         fprintf(m_meta, "imu=Z_DOWN_X (gyro 机体系 rad/s; quat w,x,y,z body<-world)\n");
         fprintf(m_meta, "vbus=1Hz 轮询每路 motor1; temp=1Hz 轮询全部16个; 未轮询到记 0\n");
         fprintf(m_meta, "align=wall_ms 与 sim2sim --record / log/rl_*.csv 的 wall_ms 可直接对齐\n");
+        // 计数块：定宽（%-20llu），以便录制中途就地覆盖刷新而不留残字
+        m_meta_counter_off = ftell(m_meta);
+        fprintf(m_meta, "rows_now=%-20d\ndropped_now=%-20d\n", 0, 0);
         fflush(m_meta);
     }
 
@@ -137,6 +140,7 @@ void S2RDataset::WriterLoop() {
             m_rows.fetch_add(1, std::memory_order_relaxed);
             if (++since_flush >= 500) {        // 每秒 flush 一次
                 fflush(m_fp);
+                FlushCounters();               // 同时刷新 meta 里的 rows/dropped
                 since_flush = 0;
             }
         }
@@ -191,8 +195,21 @@ void S2RDataset::SetCmd(const float cmd[3]) {
 
 void S2RDataset::Meta(const char* key, const char* value) {
     if (!m_meta || !key) return;
+    std::lock_guard<std::mutex> lk(m_meta_mtx);
+    fseek(m_meta, 0, SEEK_END);
     fprintf(m_meta, "%s=%s\n", key, value ? value : "");
     fflush(m_meta);
+}
+
+void S2RDataset::FlushCounters() {
+    if (!m_meta) return;
+    std::lock_guard<std::mutex> lk(m_meta_mtx);
+    fseek(m_meta, m_meta_counter_off, SEEK_SET);
+    fprintf(m_meta, "rows_now=%-20llu\ndropped_now=%-20llu\n",
+            (unsigned long long)m_rows.load(std::memory_order_relaxed),
+            (unsigned long long)m_dropped.load(std::memory_order_relaxed));
+    fflush(m_meta);
+    fseek(m_meta, 0, SEEK_END);   // 复位，保证后续 Meta()/Finish() 都是追加
 }
 
 void S2RDataset::Finish() {
@@ -208,6 +225,7 @@ void S2RDataset::Finish() {
         m_fp = nullptr;
     }
     if (m_meta) {
+        fseek(m_meta, 0, SEEK_END);            // FlushCounters 可能把位置留在计数块
         fprintf(m_meta, "rows=%llu\ndropped=%llu\n",
                 (unsigned long long)m_rows.load(), (unsigned long long)m_dropped.load());
         fclose(m_meta);

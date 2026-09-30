@@ -41,8 +41,8 @@ c_tau_i=ki, m_vel_i=ω, m_tau_i=力矩）:
  9. m_pos_00 .. m_pos_15        反馈位置
 10. m_vel_00 .. m_vel_15        反馈速度
 11. m_tau_00 .. m_tau_15        反馈力矩
-12. m_temp_00 .. m_temp_15      温度 °C（未轮询到 = 0；只轮询每路 CAN 的 1 号电机）
-13. m_vbus_00 .. m_vbus_15      母线电压 V（同 temp）
+12. m_temp_00 .. m_temp_15      温度 °C（1Hz 轮询全部 16 个；未轮询到 = 0）
+13. m_vbus_00 .. m_vbus_15      母线电压 V（1Hz 只轮询每路 CAN 的 1 号电机 i%4==0）
 14. gyro_0..gyro_2              机体系角速度 rad/s
 15. quat_w,quat_x,quat_y,quat_z body←world，w 在前
 16. cmd_vx,cmd_vy,cmd_wz        上层速度命令
@@ -72,9 +72,8 @@ except ImportError:  # pragma: no cover
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
-    from delay_fit import (DatasetError, CAN_TO_POLICY, joint_name, load_dataset,
-                           detect_steps, analyze_events, post_limit_ms,
-                           write_synthetic_dataset)
+    from delay_fit import (DatasetError, POLICY_TO_CAN, joint_name, load_dataset,
+                           detect_steps, analyze_events, write_synthetic_dataset)
 except ImportError as e:  # pragma: no cover
     sys.stderr.write("[ERROR] 无法导入同目录 delay_fit.py: %s\n" % e)
     sys.exit(2)
@@ -234,7 +233,6 @@ def estimate(ds, i, use_scipy=True):
     f["td_thr"] = med("td_thr")
     f["td_fit"] = med("td_fit", need_tau=True)
     f["tau"] = med("tau_ms", need_tau=True)
-    rec = [r for r in rows if np.isfinite(r["td_med"])]
     f["td_rec"] = f["td_fit"] if f["td_fit"][2] > 0 else med("td_med")
     f["n_seg"] = len(rows)
     f["n_resp_ok"] = sum(1 for r in rows if r.get("resp_ok"))
@@ -244,7 +242,6 @@ def estimate(ds, i, use_scipy=True):
     X, Y = [], []
     if tau_all is not None and np.isfinite(tau_all).any():
         for view, sl in runs:
-            tt = view.t
             mm = view.get(fb_col)
             ta = view.get(tau_col)
             if ta is None:
@@ -540,7 +537,7 @@ def main(argv=None):
             if not (0 <= can <= 15):
                 print("[ERROR] --motor 超范围: %d（POLICY 序 0..15）" % can)
                 return 2
-            can = CAN_TO_POLICY[can]
+            can = POLICY_TO_CAN[can]
         if not (0 <= can <= 15):
             print("[ERROR] --motor 超范围: %d（CAN 索引 0..15）" % can)
             return 2

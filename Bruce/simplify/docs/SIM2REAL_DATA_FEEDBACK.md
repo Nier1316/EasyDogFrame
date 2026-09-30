@@ -205,8 +205,9 @@ Kp/Kd 因子      [0.8, 1.3] / [0.5, 1.5]
 | **`Example60_SysIdProbe`** | 5 种真机激励（力矩脉冲/位置阶跃/单关节 chirp/轮速阶跃+扫频/12 关节 chirp），全程录数据集 | `src/app/examples/ex_probe.cpp`、`include/app/examples/ex_probe.h` |
 | **`Example53` 结论增强** | 站立实测重力前馈 vs 表内 `tau_ff` 并排 + 判定（**符号相反而直接告警**）→ 专治 `thigh +5/−5` 悬案 | `src/app/examples/ex_rl.cpp` |
 | **`Example37` 录制开关** | `constexpr bool RECORD_DATASET`（默认 false）→ 打开即录遥操作数据集，用于 T6/T7 | 同上 |
-| `tool/dataset_health.py` / `delay_fit.py` / `wheel_servo_fit.py` | 体检 / 延迟 / 轮速伺服辨识 | `tool/` |
-| `compare_sim2real.py` 增强 | **τ 对比（标出符号相反）+ 互相关最佳时移（补偿前后残差）** | `tool/compare_sim2real.py` |
+| `tool/dataset_health.py` / `delay_fit.py` / `wheel_servo_fit.py` | 体检 / 延迟 / 轮速伺服辨识（均带 `--selftest`） | `tool/` |
+| `compare_sim2real.py` 增强 | **τ 对比（标出符号相反）+ 互相关最佳时移（补偿前后残差）**，新增可选 `--dataset` | `tool/compare_sim2real.py` |
+| **`sim2sim --record` 加 τ 列** | 记录末尾追加 `tau_00..15`（POLICY 序，N·m）→ T8 的 τ 对比才有 sim 侧数据。MJCF 无 actuator，力矩经 `qfrc_applied` 注入，故取 `qfrc_applied[dof_adr]` | `dogurdf_sim2sim_deploy/src/sim2sim.py` |
 
 ---
 

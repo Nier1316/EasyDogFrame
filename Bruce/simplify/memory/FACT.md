@@ -41,7 +41,11 @@
 - `world2self(q,v)` 等价 `brax rotate(v, quat_inv(q))`；`projected_gravity = world2self(quat, [0,0,-1])`。
 
 ### 关节序与真机↔URDF 转换
-- `POLICY_TO_MJX = {0,1,2,12, 3,4,5,13, 6,7,8,14, 9,10,11,15}`；`MJX_TO_POLICY = {0,1,2,4,5,6,8,9,10,12,13,14,3,7,11,15}`。POLICY 序 = 12 腿 + 4 轮；MJX/CAN 序 = 每腿 hip/thigh/calf/wheel。
+- **顺序置换（2026-09-30 更名）**：`POLICY_TO_CAN = {0,1,2,4,5,6,8,9,10,12,13,14,3,7,11,15}`（policy→can）；
+  `CAN_TO_POLICY = {0,1,2,12, 3,4,5,13, 6,7,8,14, 9,10,11,15}`（can→policy）。POLICY 序 = 12 腿 + 4 轮；CAN/MJX 序 = 每腿 hip/thigh/calf/wheel。
+  ⚠ **旧名 `POLICY_TO_MJX`/`MJX_TO_POLICY` 的字面含义与实际语义正好相反**（数组值没错、名字骗人；旧 `POLICY_TO_MJX` 实为 can→policy）。
+  已按语义重命名，旧名保留为**引用别名**（`const int (&OLD)[N] = NEW;`）故既有调用点行为不变；新代码一律用新名。
+  自检：`/tmp/perm_test`（9 项：腿/轮范围、双向互逆、双射、抽查、别名等价）全部通过。
 - `DEFAULT_POSE`（POLICY 序）：hip 0、thigh +0.20、calf −0.35、wheel 0（四腿相同），与 dogurdf `NOMINAL_*` 一致。
 - `CONV_A`：每腿 hip/thigh/calf = `+1, −1, +1`，四轮 `+1`；`CONV_B`：每腿 `+0.0297, −0.9624, −1.2832`，四轮 `0`。
 - 关系：`URDF = CONV_A*GetStatus + CONV_B`；`GetStatus = (URDF − CONV_B)/CONV_A`（`src/strategy/sim2real_conv.cpp`）。

@@ -28,13 +28,22 @@ const float JOINT_UPPER[NUM_JOINTS] = {
 // 步态相位偏移（对角步态：FL+RR 同相 0，FR+RL 同相 0.5）
 const float GAIT_OFFSET[4] = {0.0f, 0.5f, 0.5f, 0.0f};
 
-// POLICY <-> MJX/CAN 顺序置换（与 dogurdf.py 的 _policy_to_mjx_permutation 一致）
-const int POLICY_TO_MJX[NUM_JOINTS] = {
-    0, 1, 2, 12, 3, 4, 5, 13, 6, 7, 8, 14, 9, 10, 11, 15
-};
-const int MJX_TO_POLICY[NUM_JOINTS] = {
+// POLICY <-> CAN 顺序置换（与 dogurdf.py 的 _policy_to_mjx_permutation 一致）
+// 2026-09-30 更名：原名 POLICY_TO_MJX 实际语义是"CAN 索引 → policy 索引"，
+// MJX_TO_POLICY 实际是"policy 索引 → CAN 索引" —— 两个名字与语义正好相反
+// （数组值本身正确，仅名字误导，已按语义重命名 + 保留旧名别名）。
+// ⚠ 值必须与名字一致（下方自检 /tmp/perm_test 会验证语义，勿只调换数组顺序）：
+//   POLICY_TO_CAN[p] = 第 p 个 policy 关节的 CAN 索引  （policy 12..15 是轮 → can%4==3）
+//   CAN_TO_POLICY[i] = 第 i 个 CAN 电机的 policy 关节  （与上者严格互逆）
+const int POLICY_TO_CAN[NUM_JOINTS] = {
     0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 3, 7, 11, 15
 };
+const int CAN_TO_POLICY[NUM_JOINTS] = {
+    0, 1, 2, 12, 3, 4, 5, 13, 6, 7, 8, 14, 9, 10, 11, 15
+};
+// 兼容别名（旧名现在指向语义正确的数组，见头文件警告）
+const int (&POLICY_TO_MJX)[NUM_JOINTS] = CAN_TO_POLICY;
+const int (&MJX_TO_POLICY)[NUM_JOINTS] = POLICY_TO_CAN;
 
 // 轮子摩擦前馈 WHEEL_FF[4][2] 已随死代码 wheel_torque() 一并删除（2026-09-29）。
 // 历史实测值（Example35_WheelFFCalibrate，2026-08-21，轮悬空恰好起转的扭矩）：

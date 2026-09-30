@@ -157,8 +157,8 @@ void Example25_RLPolicyControl() {
         //    策略观测/动作才能与训练一致。
         float pos_policy[16], vel_policy[16];
         for (int i = 0; i < 16; i++) {
-            pos_policy[i] = rl::status_to_urdf(pos_can[rl::MJX_TO_POLICY[i]], i);
-            vel_policy[i] = rl::status_vel_to_urdf(vel_can[rl::MJX_TO_POLICY[i]], i);
+            pos_policy[i] = rl::status_to_urdf(pos_can[rl::POLICY_TO_CAN[i]], i);
+            vel_policy[i] = rl::status_vel_to_urdf(vel_can[rl::POLICY_TO_CAN[i]], i);
         }
 
         // 3) 读 IMU
@@ -193,7 +193,7 @@ void Example25_RLPolicyControl() {
         for (int cp = 0; cp < 4; cp++) {
             for (int mi = 1; mi <= 4; mi++) {
                 int mjx = cp * 4 + (mi - 1);
-                int p = rl::POLICY_TO_MJX[mjx];
+                int p = rl::CAN_TO_POLICY[mjx];
                 if (mi <= 3) {
                     // 动作目标角是 URDF 约定，转回真机 GetStatus 约定再下发
                     float q_target = rl::urdf_to_status(rl::leg_pos_target(action[p], p), p);
@@ -441,7 +441,13 @@ void Example31_RLZeroAlign() {
     printf("const float DEFAULT_POSE[16] = {\n");
     for (int p = 0; p < 16; p++) {
         float v = 0.0f;
-        if (p < 12) v = pos_can[rl::POLICY_TO_MJX[p]];
+        // p 是 **POLICY** 序号（下面 legname[p/3] 也按 policy 分组），要取它的 CAN 反馈
+        // 必须用 POLICY_TO_CAN[p]（policy→can）。
+        // ⚠ 2026-09-30 修的既有 bug：这里原写作旧名 POLICY_TO_MJX[p]（= 现 CAN_TO_POLICY，
+        //   返回的是 policy 序号），等于"用 policy 序号去索引 pos_can"，从 p=3(FR-hip) 起
+        //   读到的都是别的电机 —— 打印出的 DEFAULT_POSE 候选只有 FL 是对的。
+        //   （DEFAULT_POSE 实际由 urdf_to_status 推导、四腿对称，未被该 bug 污染。）
+        if (p < 12) v = pos_can[rl::POLICY_TO_CAN[p]];
         printf("    %.4ff,", v);
         if ((p + 1) % 3 == 0) printf("    // %s\n", legname[p / 3]);
         else if ((p + 1) % 4 == 0) printf("\n");
@@ -490,7 +496,7 @@ void Example32_RLPoseCheck() {
     // 曾用 mjx<12 误把 RR 的腿关节（mjx=12,13,14）当轮子置 0，RR 姿态全错。
     float tgt_gs[16];
     for (int mjx = 0; mjx < 16; mjx++) {
-        int p = rl::POLICY_TO_MJX[mjx];
+        int p = rl::CAN_TO_POLICY[mjx];
         if (mjx % 4 != 3)  // 腿关节
             tgt_gs[mjx] = rl::urdf_to_status(rl::DEFAULT_POSE[p], p);
         else               // 轮子：自由
@@ -990,8 +996,8 @@ void Example36_RLStandLoop() {
         // 2) CAN order -> policy order -> URDF 约定
         float pos_policy[16], vel_policy[16];
         for (int i = 0; i < 16; i++) {
-            pos_policy[i] = rl::status_to_urdf(pos_can[rl::MJX_TO_POLICY[i]], i);
-            vel_policy[i] = rl::status_vel_to_urdf(vel_can[rl::MJX_TO_POLICY[i]], i);
+            pos_policy[i] = rl::status_to_urdf(pos_can[rl::POLICY_TO_CAN[i]], i);
+            vel_policy[i] = rl::status_vel_to_urdf(vel_can[rl::POLICY_TO_CAN[i]], i);
         }
 
         // 3) 读 IMU
@@ -1014,7 +1020,7 @@ void Example36_RLStandLoop() {
         for (int cp = 0; cp < 4; cp++) {
             for (int mi = 1; mi <= 4; mi++) {
                 int mjx = cp * 4 + (mi - 1);
-                int p = rl::POLICY_TO_MJX[mjx];
+                int p = rl::CAN_TO_POLICY[mjx];
                 if (mi <= 3) {
                     float q_t_urdf = rl::leg_pos_target(action[p], p);
                     qt_p[p] = q_t_urdf;                       // S2R 捕获
@@ -1075,7 +1081,7 @@ void Example36_RLStandLoop() {
         {
             float tau_policy[16];
             for (int i = 0; i < 16; i++)
-                tau_policy[i] = rl::CONV_A[i] * tau_can[rl::MJX_TO_POLICY[i]];
+                tau_policy[i] = rl::CONV_A[i] * tau_can[rl::POLICY_TO_CAN[i]];
             S2RRecorder::inst().step(step, 0, cmd, qt_p, qtv_p,
                                      pos_policy, vel_policy, tau_policy, quat, gyro);
         }
@@ -1700,8 +1706,8 @@ void Example51_StandRLThenLieDown() {
         // CAN → URDF
         float pos_policy[16], vel_policy[16];
         for (int i = 0; i < 16; i++) {
-            pos_policy[i] = rl::status_to_urdf(pos_can[rl::MJX_TO_POLICY[i]], i);
-            vel_policy[i] = rl::status_vel_to_urdf(vel_can[rl::MJX_TO_POLICY[i]], i);
+            pos_policy[i] = rl::status_to_urdf(pos_can[rl::POLICY_TO_CAN[i]], i);
+            vel_policy[i] = rl::status_vel_to_urdf(vel_can[rl::POLICY_TO_CAN[i]], i);
         }
         float gyro[3] = {0, 0, 0}, quat[4] = {1, 0, 0, 0};
         if (imu_ok) {
@@ -1716,7 +1722,7 @@ void Example51_StandRLThenLieDown() {
         for (int cp = 0; cp < 4; cp++)
             for (int mi = 1; mi <= 4; mi++) {
                 int mjx = cp * 4 + (mi - 1);
-                int p = rl::POLICY_TO_MJX[mjx];
+                int p = rl::CAN_TO_POLICY[mjx];
                 if (mi <= 3) {
                     float q = rl::urdf_to_status(rl::leg_pos_target(action[p], p), p);
                     const JointImpedanceParam& ip = GetJointImpedance(cp, mi);
@@ -1896,8 +1902,8 @@ void Example52_FixedCmdYaw() {
             }
         float pos_policy[16], vel_policy[16];
         for (int i = 0; i < 16; i++) {
-            pos_policy[i] = rl::status_to_urdf(pos_can[rl::MJX_TO_POLICY[i]], i);
-            vel_policy[i] = rl::status_vel_to_urdf(vel_can[rl::MJX_TO_POLICY[i]], i);
+            pos_policy[i] = rl::status_to_urdf(pos_can[rl::POLICY_TO_CAN[i]], i);
+            vel_policy[i] = rl::status_vel_to_urdf(vel_can[rl::POLICY_TO_CAN[i]], i);
         }
         float gyro[3] = {0, 0, 0}, quat[4] = {1, 0, 0, 0};
         if (imu_ok) {
@@ -1911,7 +1917,7 @@ void Example52_FixedCmdYaw() {
         for (int cp = 0; cp < 4; cp++)
             for (int mi = 1; mi <= 4; mi++) {
                 int mjx = cp * 4 + (mi - 1);
-                int p = rl::POLICY_TO_MJX[mjx];
+                int p = rl::CAN_TO_POLICY[mjx];
                 if (mi <= 3) {
                     float q = rl::urdf_to_status(rl::leg_pos_target(action[p], p), p);
                     const JointImpedanceParam& ip = GetJointImpedance(cp, mi);
@@ -2109,8 +2115,8 @@ void Example56_FixedYawRecord() {
             }
         float pos_policy[16], vel_policy[16];
         for (int i = 0; i < 16; i++) {
-            pos_policy[i] = rl::status_to_urdf(pos_can[rl::MJX_TO_POLICY[i]], i);
-            vel_policy[i] = rl::status_vel_to_urdf(vel_can[rl::MJX_TO_POLICY[i]], i);
+            pos_policy[i] = rl::status_to_urdf(pos_can[rl::POLICY_TO_CAN[i]], i);
+            vel_policy[i] = rl::status_vel_to_urdf(vel_can[rl::POLICY_TO_CAN[i]], i);
         }
         float gyro[3] = {0, 0, 0}, quat[4] = {1, 0, 0, 0};
         if (imu_ok) {
@@ -2127,7 +2133,7 @@ void Example56_FixedYawRecord() {
         for (int cp = 0; cp < 4; cp++)
             for (int mi = 1; mi <= 4; mi++) {
                 int mjx = cp * 4 + (mi - 1);
-                int p = rl::POLICY_TO_MJX[mjx];
+                int p = rl::CAN_TO_POLICY[mjx];
                 if (mi <= 3) {
                     float q_t_urdf = rl::leg_pos_target(action[p], p);
                     qt[mjx] = q_t_urdf;
@@ -2151,13 +2157,13 @@ void Example56_FixedYawRecord() {
         // tau → policy 序 URDF（CONV_A；thigh=-1）；wheel 用 GetStatus 扭矩
         float tau_policy[16];
         for (int i = 0; i < 16; i++)
-            tau_policy[i] = rl::CONV_A[i] * tau_can[rl::MJX_TO_POLICY[i]];
+            tau_policy[i] = rl::CONV_A[i] * tau_can[rl::POLICY_TO_CAN[i]];
 
         // S2R 落盘一行（qt/qtv 从 mjx 序转 policy 序；欧拉在 recorder 内算）
         float qt_p[16], qtv_p[16];
         for (int i = 0; i < 16; i++) {
-            qt_p[i]  = qt[rl::MJX_TO_POLICY[i]];
-            qtv_p[i] = qtv[rl::MJX_TO_POLICY[i]];
+            qt_p[i]  = qt[rl::POLICY_TO_CAN[i]];
+            qtv_p[i] = qtv[rl::POLICY_TO_CAN[i]];
         }
         S2RRecorder::inst().step(step, phase, cmd, qt_p, qtv_p,
                                  pos_policy, vel_policy, tau_policy, quat, gyro);
@@ -2326,8 +2332,8 @@ void Example53_MeasureGravityFF() {
             }
         float pos_policy[16], vel_policy[16];
         for (int i = 0; i < 16; i++) {
-            pos_policy[i] = rl::status_to_urdf(pos_can[rl::MJX_TO_POLICY[i]], i);
-            vel_policy[i] = rl::status_vel_to_urdf(vel_can[rl::MJX_TO_POLICY[i]], i);
+            pos_policy[i] = rl::status_to_urdf(pos_can[rl::POLICY_TO_CAN[i]], i);
+            vel_policy[i] = rl::status_vel_to_urdf(vel_can[rl::POLICY_TO_CAN[i]], i);
         }
         float gyro[3] = {0, 0, 0}, quat[4] = {1, 0, 0, 0};
         if (imu_ok) {
@@ -2341,7 +2347,7 @@ void Example53_MeasureGravityFF() {
         for (int cp = 0; cp < 4; cp++)
             for (int mi = 1; mi <= 4; mi++) {
                 int mjx = cp * 4 + (mi - 1);
-                int p = rl::POLICY_TO_MJX[mjx];
+                int p = rl::CAN_TO_POLICY[mjx];
                 if (mi <= 3) {
                     float q = rl::urdf_to_status(rl::leg_pos_target(action[p], p), p);
                     const JointImpedanceParam& ip = GetJointImpedance(cp, mi);

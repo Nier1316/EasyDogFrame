@@ -231,7 +231,8 @@ void leg_foot_force_to_torque(LegIndex leg, q_cmd[3], f[3], tau[3]);       // τ
   - `gait_phase` 是**分组**布局：`obs[56..59]=sin(2πφ)×4脚`、`obs[60..63]=cos(2πφ)×4脚`（**不是** `[sin,cos]` 交错）。φ = `fmod(step·0.02/0.6 + GAIT_OFFSET[foot], 1)`，offset=`{0,0.5,0.5,0}`。2026-09-19 提交 `0ee431f` 从交错改为分组以对齐训练（`src/strategy/rl_controller.cpp` 的 `build_observation`）。
 - **动作（16 维）**：12 腿位置偏移 + 4 轮速目标；`ACTION_SCALE=0.25`、`WHEEL_VEL_SCALE=12.5`。
 - **控制律**：腿 `τ = LEG_KP(q_t−q) + LEG_KD(0−qd)`（LEG_KP/KD=250/4，经 `urdf_to_status` 下发）；轮 `SendSpeed(vel, WHEEL_KVP, WHEEL_KVI)`。
-- **关节顺序**：policy order（12 腿 + 4 轮）↔ CAN order 经 `POLICY_TO_MJX/MJX_TO_POLICY`。
+- **关节顺序**：policy order（12 腿 + 4 轮）↔ CAN order 经 `POLICY_TO_CAN`（policy→can）/ `CAN_TO_POLICY`（can→policy）。
+  ⚠ 2026-09-30 更名：旧名 `POLICY_TO_MJX`/`MJX_TO_POLICY` 的**字面含义与实际语义正好相反**（历史上的坑），现已按语义重命名并保留旧名作为引用别名（`&` 绑定）。
 - **零位转换**：`sim2real_conv` 的 `CONV_A/CONV_B`（真机 GetStatus ↔ URDF）。
 - **sim-real**：真机↔MATLAB 仿真走 `SimSync`（12 关节，度，轮不在环内）；训练权威 `RL_Train/code`（其 sim2sim 用 SIM_DT=0.002/DECIMATION=10/MOTOR_DECIMATION=1，500Hz PD 子环）。
   **本仓库自带**的 `dogurdf_sim2sim_deploy/src/sim2sim.py` 是另一套原生 MuJoCo 验证器：`SIM_DT=0.005 / DECIMATION=4`（同样 50Hz 控制），默认已与真机同权重 `weights/iteration_9754.pkl`。

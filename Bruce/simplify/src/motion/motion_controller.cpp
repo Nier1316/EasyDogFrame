@@ -139,8 +139,8 @@ bool MotionController::rlStep() {
     // 2) CAN -> policy -> URDF
     float pos_policy[16], vel_policy[16];
     for (int i = 0; i < 16; i++) {
-        pos_policy[i] = rl::status_to_urdf(pos_can[rl::MJX_TO_POLICY[i]], i);
-        vel_policy[i] = rl::status_vel_to_urdf(vel_can[rl::MJX_TO_POLICY[i]], i);
+        pos_policy[i] = rl::status_to_urdf(pos_can[rl::POLICY_TO_CAN[i]], i);
+        vel_policy[i] = rl::status_vel_to_urdf(vel_can[rl::POLICY_TO_CAN[i]], i);
     }
 
     // 3) IMU
@@ -161,7 +161,7 @@ bool MotionController::rlStep() {
     for (int cp = 0; cp < 4; cp++)
         for (int mi = 1; mi <= 4; mi++) {
             int mjx = cp * 4 + (mi - 1);
-            int p = rl::POLICY_TO_MJX[mjx];
+            int p = rl::CAN_TO_POLICY[mjx];
             if (mi <= 3) {
                 float q_t_urdf = rl::leg_pos_target(action[p], p);
                 qt_p[p] = q_t_urdf;                        // S2R 捕获
@@ -192,7 +192,7 @@ bool MotionController::rlStep() {
     if (S2RRecorder::inst().active()) {
         float tau_policy[16];
         for (int i = 0; i < 16; i++)
-            tau_policy[i] = rl::CONV_A[i] * tau_can[rl::MJX_TO_POLICY[i]];
+            tau_policy[i] = rl::CONV_A[i] * tau_can[rl::POLICY_TO_CAN[i]];
         S2RRecorder::inst().step(step_, 0, cmd_, qt_p, qtv_p,
                                  pos_policy, vel_policy, tau_policy, quat, gyro);
     }

@@ -7,7 +7,7 @@
  *
  * 关键约定：
  *  - 本模块所有数组均工作在 POLICY 顺序（12 腿关节 + 4 轮），
- *    与 CAN 顺序（per-leg: hip/thigh/calf/wheel）通过 POLICY_TO_MJX 互转。
+ *    与 CAN 顺序（per-leg: hip/thigh/calf/wheel）通过 CAN_TO_POLICY 互转。
  *  - 收发的标定由 MotorManager 自动处理（GetStatus 已标定、SendImpedance 自动逆标定），
  *    本模块只面对「标定后统一坐标系」。
  *  - 零位对齐 / 真机↔URDF 转换见 strategy/sim2real_conv.h（CONV_A/B、DEFAULT_POSE、
@@ -85,10 +85,19 @@ extern const float JOINT_LOWER[NUM_JOINTS];
 extern const float JOINT_UPPER[NUM_JOINTS];
 // 步态相位偏移（FL, FR, RL, RR）
 extern const float GAIT_OFFSET[4];
-// POLICY -> MJX/CAN 映射：can[mjx] 对应 policy[POLICY_TO_MJX[mjx]]
-extern const int POLICY_TO_MJX[NUM_JOINTS];
-// MJX/CAN -> POLICY 映射：policy[i] 对应 can[MJX_TO_POLICY[i]]
-extern const int MJX_TO_POLICY[NUM_JOINTS];
+// ---- 顺序置换（2026-09-30 更名：原 POLICY_TO_MJX / MJX_TO_POLICY 两个名字与实际语义**正好相反**）----
+//   CAN 顺序 i = can_port*4 + (motor_id-1)：00=FL-hip 01=FL-thigh 02=FL-calf 03=FL-wheel, 04=FR-…, 15=RR-wheel
+//   POLICY 顺序：0..11 = 四条腿的 hip/thigh/calf（FL,FR,RL,RR），12..15 = 四个轮。
+// 用法（按"我要什么"选名字，别凭直觉猜）：
+//   · 第 p 个 policy 关节对应哪个 CAN 索引 → `POLICY_TO_CAN[p]`
+//   · 第 i 个 CAN 电机对应哪个 policy 关节 → `CAN_TO_POLICY[i]`
+// 例：`pos_policy[p] = pos_can[rl::POLICY_TO_CAN[p]];` / `int p = rl::CAN_TO_POLICY[mjx];`
+extern const int POLICY_TO_CAN[NUM_JOINTS];
+extern const int CAN_TO_POLICY[NUM_JOINTS];
+// ⚠ 兼容别名：下面两个是**旧名**，其字面含义与所指数组相反（历史上极易踩坑），
+//   仅为不破坏既有调用点而保留；新代码一律用上面的 POLICY_TO_CAN / CAN_TO_POLICY。
+extern const int (&POLICY_TO_MJX)[NUM_JOINTS];   // == CAN_TO_POLICY（不要按名字理解！）
+extern const int (&MJX_TO_POLICY)[NUM_JOINTS];   // == POLICY_TO_CAN（不要按名字理解！）
 
 /**
  * @brief 将世界系向量 v 通过四元数 q 旋转到机体坐标系

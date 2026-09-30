@@ -192,6 +192,8 @@ void Example60_SysIdProbe() {
     snprintf(note, sizeof note, "Example60 SysIdProbe mode=%d", mode);
     if (!S2RDataset::inst().Begin(note)) { imu.Shutdown(); return; }
     S2RDataset::inst().Meta("example", "Example60_SysIdProbe");
+    // 策略权重版本（追溯"同一策略下的数据"用；换权重时同步改这里）
+    S2RDataset::inst().Meta("weight", "iteration_9754.pkl");
     S2RDataset::inst().Meta("mode", std::to_string(mode).c_str());
 
     all_free(mm);

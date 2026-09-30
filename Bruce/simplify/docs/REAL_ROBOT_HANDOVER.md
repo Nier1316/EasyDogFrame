@@ -180,6 +180,7 @@ python3 tool/compare_sim2real.py <sim_record.csv> log/rl_*.csv log/recv_*.csv   
 | ⚠ 轮子 kd | `sim2sim.py` 用 **2.0**，`rl_controller.h` 用 **1.0** —— 两者不一致，属于已知结构性差异，**不是你的 bug**，照实上报即可 |
 | 控制频率 | 策略 50 Hz；电机收发 500 Hz；IMU 100 Hz |
 | 数据集聚类 | `log/dataset_<ts>.csv` + `.meta.txt`；188 列；`wall_ms` 可与 sim2sim `--record` 直接对齐 |
+| sim2sim `--record` 列 | 原 68 列 + **末尾 16 列 `tau_00..15`（POLICY 序，N·m）** = 84 列（2026-09-30 新增，供 T8 的 τ 对比） |
 
 `c_*` 列的含义随 `c_mode_i` 变化（离线分析必须按 mode 解释）：
 - `0=IMPEDANCE`：`c_pos`=目标位置, `c_vel`=目标速度, `c_kp`=kp, `c_kd`=kd, `c_tau`=τ_ff
@@ -201,6 +202,9 @@ python3 tool/compare_sim2real.py <sim_record.csv> log/rl_*.csv log/recv_*.csv   
 8. **`Example53` 会自己趴下**，不是故障。
 9. 别用 `sudo` 改权限；`/dev/ttyACM0` 打不开通常是 USB 没插好或被别的进程占用（检查是否有上次没退干净的 `can_motor_app`）。
 10. **不要 `git commit` / `git push`**；也不要改 `weights/`、`policy_weights.h`、仿真侧文件。
+11. `rl_controller.h` 的顺序置换已更名：新名 `POLICY_TO_CAN`（policy→can）/ `CAN_TO_POLICY`（can→policy）；
+    旧名 `POLICY_TO_MJX`/`MJX_TO_POLICY` **字面含义与实际语义相反**（历史坑），仍作为别名保留。
+    **新写代码一定用新名**，别按旧名字面意思猜。
 
 ---
 

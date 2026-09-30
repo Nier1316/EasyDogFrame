@@ -99,8 +99,11 @@ gait_phase：`φ = (step·0.02/0.6 + offset) mod 1`，`offset=[0,0.5,0.5,0]`（F
 真机 CAN order（per-leg）：`FL hip/thigh/calf/wheel | FR | RL | RR`；策略 policy order：**12 腿关节（FL,FR,RL,RR × hip/thigh/calf）+ 4 轮**。
 
 ```
-POLICY_TO_MJX = (0,1,2,12, 3,4,5,13, 6,7,8,14, 9,10,11,15)   // 写：can[mjx] = policy[POLICY_TO_MJX[mjx]]
-MJX_TO_POLICY = (0,1,2,4, 5,6,8, 9,10,12, 13,14,3, 7,11,15)   // 读：policy[i] = can[MJX_TO_POLICY[i]]
+CAN_TO_POLICY = (0,1,2,12, 3,4,5,13, 6,7,8,14, 9,10,11,15)   // can 索引 → policy 索引
+POLICY_TO_CAN = (0,1,2,4, 5,6,8, 9,10,12, 13,14,3, 7,11,15)   // policy 索引 → can 索引
+// ⚠ 2026-09-30 更名：旧名 POLICY_TO_MJX/MJX_TO_POLICY 与上面两个数组**名字与语义相反**
+//   （旧 POLICY_TO_MJX == 现 CAN_TO_POLICY，旧 MJX_TO_POLICY == 现 POLICY_TO_CAN）；
+//   旧名仍保留为引用别名，既有调用点行为不变，但新代码请用新名。
 ```
 
 即：FL hip→a0/thigh→a1/calf→a2/wheel→a12；FR →a3,4,5,13；RL →a6,7,8,14；RR →a9,10,11,15。

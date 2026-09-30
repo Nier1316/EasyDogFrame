@@ -140,6 +140,17 @@ class JointIndexer:
     def joint_vel(self, data: mujoco.MjData) -> np.ndarray:
         return data.qvel[self.dof_adr]
 
+    def joint_tau(self, data: mujoco.MjData) -> np.ndarray:
+        """16 关节的执行器力矩 (POLICY order, N·m) —— 供 sim2real 的 τ 对比。
+
+        本项目的 MJCF **没有 actuator**，力矩是直接写进 ``qfrc_applied`` 注入的
+        （见文件头「Torques are injected via qfrc_applied」），因此 ``qfrc_actuator``
+        恒为 0，必须取 ``qfrc_applied`` 的关节 DOF 分量。
+        量纲与真机的 m_tau（电机实测力矩）一致，可直接对比；
+        注意 sim 侧是"施加值"、real 侧是"实测值（含摩擦）"，两者之差正是执行器模型的误差。
+        """
+        return data.qfrc_applied[self.dof_adr]
+
     def set_default_pose(self, data: mujoco.MjData, pose_policy: np.ndarray) -> None:
         data.qpos[self.qpos_adr] = pose_policy
 
@@ -645,7 +656,10 @@ def main() -> None:
 # ---- 轨迹记录（sim2real 对比，2026-08-30）----
 # 统一字段：wall_ms(系统时间戳，与真机对齐) + step + cmd +
 #           qpos_00..15(16 编码器绝对位置, POLICY order) +
-#           qrel_0..11(腿相对位) + vel_00..15(16 关节速) + act_00..15 + pgr_x/y/z
+#           qrel_0..11(腿相对位) + vel_00..15(16 关节速) + act_00..15 +
+#           pgr_x/y/z + tau_00..15(16 关节执行器力矩 N·m, POLICY order, 2026-09-30 新增)
+#   tau 列用途：与真机 log/recv_*.csv 的 cal_torque / dataset 的 m_tau_* 对比，
+#   直接暴露执行器模型误差；tool/compare_sim2real.py 会按名字自动识别 tau_00..15。
 def _open_record(path):
     import csv
     fields = (["wall_ms", "step", "cmd_vx", "cmd_vy", "cmd_wz"] +
@@ -653,7 +667,8 @@ def _open_record(path):
               [f"qrel_{i}" for i in range(12)] +
               [f"vel_{i:02d}" for i in range(16)] +
               [f"act_{i:02d}" for i in range(16)] +
-              ["pgr_x", "pgr_y", "pgr_z"])
+              ["pgr_x", "pgr_y", "pgr_z"] +
+              [f"tau_{i:02d}" for i in range(16)])
     f = open(path, "w", newline="")
     w = csv.writer(f)
     w.writerow(fields)
@@ -668,7 +683,8 @@ def _record_row(w, mj_data, indexer, obs, action, command, step):
                [f"{x:.4f}" for x in obs[9:21]] +
                [f"{x:.4f}" for x in obs[21:37]] +
                [f"{x:.4f}" for x in action] +
-               [f"{x:.4f}" for x in obs[6:9]])
+               [f"{x:.4f}" for x in obs[6:9]] +
+               [f"{x:.4f}" for x in indexer.joint_tau(mj_data)])
 
 
 def _run_viewer(

@@ -30,8 +30,8 @@ dataset_health.py —— 统一数据集 CSV 的中文体检报告
  9. m_pos_00 .. m_pos_15        反馈位置
 10. m_vel_00 .. m_vel_15        反馈速度
 11. m_tau_00 .. m_tau_15        反馈力矩
-12. m_temp_00 .. m_temp_15      电机温度 °C（未轮询到 = 0；只轮询每路 CAN 的 1 号电机）
-13. m_vbus_00 .. m_vbus_15      母线电压 V（未轮询到 = 0/保持上次值；同上）
+12. m_temp_00 .. m_temp_15      电机温度 °C（1Hz 轮询全部 16 个；未轮询到 = 0）
+13. m_vbus_00 .. m_vbus_15      母线电压 V（1Hz 只轮询每路 CAN 的 1 号电机 i%4==0；其余 0/保持）
 14. gyro_0, gyro_1, gyro_2      机体系角速度 rad/s
 15. quat_w, quat_x, quat_y, quat_z   body←world，w 在前
 16. cmd_vx, cmd_vy, cmd_wz      上层速度命令（站立即 0）
@@ -51,7 +51,6 @@ c_* 语义（按行内 c_mode_i 解释）:
 import argparse
 import os
 import sys
-import statistics as st
 
 try:
     import numpy as np
@@ -61,9 +60,8 @@ except ImportError:  # pragma: no cover
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
-    from delay_fit import (DatasetError, EXPECTED_HEADER, EXPECTED_NCOL, CAN_TO_POLICY,
-                           joint_name, load_dataset, detect_steps, pick_signal,
-                           write_synthetic_dataset, build_synthetic_dataset)
+    from delay_fit import (DatasetError, EXPECTED_NCOL, joint_name, load_dataset,
+                           detect_steps, pick_signal, write_synthetic_dataset)
 except ImportError as e:  # pragma: no cover
     sys.stderr.write("[ERROR] 无法导入同目录 delay_fit.py: %s\n" % e)
     sys.exit(2)
@@ -239,7 +237,9 @@ def report(path, do_plot=True, quiet=False):
             print("  gyro 范围: %.3f ~ %.3f rad/s" % (gs["min"], gs["max"]))
 
     # ---- 3b) temp / vbus：恒 0 vs 有效 ----
-    print("\n[4] 温度 / 母线电压（未轮询时 =0 属正常；只轮询每路 CAN 的 1 号电机 i%4==0）")
+    print("\n[4] 温度 / 母线电压（未轮询时 =0 属正常）")
+    print("    m_temp: 1Hz 轮询全部 16 个 → 全 0 说明轮询没生效；"
+          "m_vbus: 1Hz 只轮询每路 CAN 的 1 号电机(i%4==0) → 其余 12 路 ==0 属正常")
     for base, unit in (("m_temp", "°C"), ("m_vbus", "V")):
         const0, valid, other = [], [], []
         for i in range(16):
@@ -265,7 +265,9 @@ def report(path, do_plot=True, quiet=False):
             polled = [i for i in range(16) if i % 4 == 0]
             miss = [i for i in polled if i in const0]
             if miss:
-                print("      [警告] 本应轮询的 CAN 1 号电机通道却恒 0: %s" % miss)
+                print("      [警告] 本应轮询的 CAN 1 号电机通道却恒 0: %s（固件可能不支持 Vbus 回读）" % miss)
+        if base == "m_temp" and len(const0) == 16:
+            print("      [警告] m_temp 16 路全恒 0 → 温度轮询(PollSlowTelemetry)没生效或未使能电机")
         f["%s_const0" % base] = len(const0)
         f["%s_valid" % base] = len(valid)
 
@@ -274,16 +276,24 @@ def report(path, do_plot=True, quiet=False):
     for base in ("m_pos", "m_tau"):
         sec[0] += 1
         print("\n[%d] %s 逐关节统计（CAN 顺序）" % (sec[0], base))
-        print("  idx 关节         min        max        mean       std")
-        for i in range(16):
-            v = ds.get("%s_%02d" % (base, i))
-            s = _nan_stats(v) if v is not None else None
-            if s is None:
-                print("  %2d %-11s (无数据)" % (i, joint_name(i).split("(")[0]))
-                continue
-            print("  %2d %-11s %10.4f %10.4f %10.4f %9.4f"
-                  % (i, joint_name(i).split("(")[0], s["min"], s["max"],
-                     s["mean"], s["std"]))
+        if quiet:
+            stats = [_nan_stats(ds.get("%s_%02d" % (base, i))) for i in range(16)]
+            ok = [s for s in stats if s]
+            if ok:
+                print("  (quiet) 16 关节 min %.4f~%.4f, max|std| %.4f"
+                      % (min(s["min"] for s in ok), max(s["max"] for s in ok),
+                         max(s["std"] for s in ok)))
+        else:
+            print("  idx 关节         min        max        mean       std")
+            for i in range(16):
+                v = ds.get("%s_%02d" % (base, i))
+                s = _nan_stats(v) if v is not None else None
+                if s is None:
+                    print("  %2d %-11s (无数据)" % (i, joint_name(i).split("(")[0]))
+                    continue
+                print("  %2d %-11s %10.4f %10.4f %10.4f %9.4f"
+                      % (i, joint_name(i).split("(")[0], s["min"], s["max"],
+                         s["mean"], s["std"]))
         if base == "m_tau":
             dead = [i for i in range(16)
                     if (lambda s: s is None or s["std"] < 1e-9)(_nan_stats(ds.get("%s_%02d" % (base, i))))]
@@ -322,7 +332,8 @@ def report(path, do_plot=True, quiet=False):
     # ---- 6) 命令活跃度 ----
     sec[0] += 1
     print("\n[%d] 命令活跃度（长期不变 ⇒ 该段对辨识无用）" % sec[0])
-    print("  idx 关节         c_pos变化   c_vel变化  判定        可用阶跃段")
+    if not quiet:
+        print("  idx 关节         c_pos变化   c_vel变化  判定        可用阶跃段")
     active, static = [], []
     step_joints = {}
     for i in range(16):
@@ -340,9 +351,10 @@ def report(path, do_plot=True, quiet=False):
                 step_joints[i] = ev
         is_active = (ncp > 2 or ncv > 2)
         (active if is_active else static).append(i)
-        print("  %2d %-11s %9d %11d  %-10s %d"
-              % (i, joint_name(i).split("(")[0], ncp, ncv,
-                 "活跃" if is_active else "长期不变", nev))
+        if not quiet:
+            print("  %2d %-11s %9d %11d  %-10s %d"
+                  % (i, joint_name(i).split("(")[0], ncp, ncv,
+                     "活跃" if is_active else "长期不变", nev))
     f["static_joints"] = static
     f["step_joints"] = sorted(step_joints.keys())
     print("  活跃关节 %d 个: %s" % (len(active), active))
@@ -511,8 +523,9 @@ def selftest(tmpdir="/tmp"):
         ("t_ms 严格单调", f.get("t_mono") is True),
         ("wall_ms 单调", f.get("wall_mono") is True),
         ("无 NaN 列", f["nan_cols"] == 0),
-        ("temp 恒 0 通道 = 12（未轮询）", f.get("m_temp_const0") == 12),
+        ("temp 恒 0 通道 = 0（16 路都轮询）", f.get("m_temp_const0") == 0),
         ("vbus 有效通道 = 4（每路 CAN 1 号电机）", f.get("m_vbus_valid") == 4),
+        ("vbus 恒 0 通道 = 12（未轮询）", f.get("m_vbus_const0") == 12),
         ("检出阶跃关节 >= 16", len(f.get("step_joints", [])) >= 16),
         ("可做延迟辨识的关节 >= 4", len(f.get("delay_joints", [])) >= 4),
         ("可拟合轮速环", len(f.get("wheel_speed_rows", [])) >= 4),
@@ -555,8 +568,7 @@ def main(argv=None):
         try:
             report(path, do_plot=not args.no_plot, quiet=args.quiet)
         except DatasetError as e:
-            print("=" * 78)
-            print("数据集体检 (dataset_health.py): %s" % path)
+            # report() 已经打印过文件/标题，这里只补错误行，避免重复标题
             print("[ERROR] %s" % e)
             rc = 2
     return rc

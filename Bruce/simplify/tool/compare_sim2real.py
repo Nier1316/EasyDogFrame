@@ -178,9 +178,10 @@ def main():
 # ============================================================================
 # [新增] 以下均为追加章节的实现（stdlib + numpy；numpy 缺失时优雅跳过）
 # ============================================================================
-# CAN -> POLICY 关节置换（POLICY_TO_MJX，见 include/strategy/rl_controller.h）
-CAN_TO_POLICY = [0, 1, 2, 12, 3, 4, 5, 13, 6, 7, 8, 14, 9, 10, 11, 15]
-_POLICY_TO_CAN = CAN_TO_POLICY          # can = POLICY_TO_MJX[policy]
+# CAN <-> POLICY 关节置换（见 include/strategy/rl_controller.h）:
+#   MJX_TO_POLICY 按 POLICY 索引给出 CAN；POLICY_TO_MJX 按 CAN 索引给出 POLICY（互为逆）。
+_POLICY_TO_CAN = [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 3, 7, 11, 15]   # = MJX_TO_POLICY
+CAN_TO_POLICY = [0, 1, 2, 12, 3, 4, 5, 13, 6, 7, 8, 14, 9, 10, 11, 15]   # = POLICY_TO_MJX
 _LEG = ("FL", "FR", "RL", "RR")
 _PART = ("hip", "thigh", "calf", "wheel")
 
@@ -260,7 +261,7 @@ def tau_section(pairs, sim, real, recv_rows, dataset_path, np):
     if dataset_path:
         try:
             sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-            from delay_fit import load_dataset, DatasetError, joint_name as _jn  # noqa
+            from delay_fit import load_dataset
             ds = load_dataset(dataset_path)
             real_walls, real_arrs = _dataset_tau(ds)
             real_src = "dataset m_tau_*（CAN 序）: %s" % dataset_path
@@ -305,7 +306,7 @@ def tau_section(pairs, sim, real, recv_rows, dataset_path, np):
     # sim 无 τ 但有 act_* 时，用 act 作代理做同号性检查
     proxy = None
     if sim_fn is None and all("act_%02d" % i in sim[0] for i in range(12)):
-        proxy = np.full((n, 12), np.nan)
+        proxy = np.full((n, 16), np.nan)          # CAN 序 16 通道（轮子留 NaN）
         for k, (r, _, _) in enumerate(pairs):
             for p in range(12):
                 proxy[k, _POLICY_TO_CAN[p]] = col(r, "act_%02d" % p)
@@ -464,7 +465,8 @@ def shift_section(pairs, sim, real, np, tau_pack=None):
             continue
         sh, cpeak = res
         b_pct, b_corr, npts = _resid(sg, rg)
-        r_shift = np.interp(grid, grid + sh, rg, left=np.nan, right=np.nan)
+        # 峰值 lag>0 = real 滞后 sim → 补偿时「借用更晚的 real 样本」(下标 +lag) 对齐
+        r_shift = np.interp(grid, grid - sh, rg, left=np.nan, right=np.nan)
         a_pct, a_corr, _ = _resid(sg, r_shift)
         drop = (100.0 * (b_pct - a_pct) / b_pct) if (np.isfinite(b_pct) and b_pct > 0) else float("nan")
         print("  %-19s %+10.2f  %11.2f  %11.2f  %5.1f%% %+10.3f  %+10.3f"

@@ -106,6 +106,8 @@ private:
     void WriterLoop();
     void WriteRow(const DatasetSample& s);
     void WriteHeader();
+    /** 把 rows/dropped 就地刷新进 .meta.txt（定宽覆盖，进程被 kill 也能看到计数） */
+    void FlushCounters();
     static int64_t WallMsNow();
 
     static constexpr size_t kCap = 8192;   // 8192 × ~0.6 KB ≈ 5 MB 环形缓冲
@@ -123,6 +125,8 @@ private:
 
     FILE* m_fp = nullptr;
     FILE* m_meta = nullptr;
+    long  m_meta_counter_off = 0;   // .meta.txt 里计数块的起始偏移（定宽覆盖用）
+    std::mutex m_meta_mtx;          // Meta() 与 FlushCounters() 可能来自不同线程
     char m_path[256] = {0};
     char m_metapath[256] = {0};
     std::atomic<int64_t> m_t0_us{0};       // Begin() 时刻（steady_clock 微秒）

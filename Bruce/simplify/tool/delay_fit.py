@@ -46,8 +46,8 @@ delay_fit.py —— 从阶跃/脉冲数据估计「端到端纯延迟 T_d」与�
  9. m_pos_00 .. m_pos_15        反馈位置
 10. m_vel_00 .. m_vel_15        反馈速度
 11. m_tau_00 .. m_tau_15        反馈力矩
-12. m_temp_00 .. m_temp_15      电机温度 °C（未轮询到 = 0；只轮询每路 CAN 的 1 号电机）
-13. m_vbus_00 .. m_vbus_15      母线电压 V（未轮询到 = 0/保持上次值；同上）
+12. m_temp_00 .. m_temp_15      电机温度 °C（1Hz 轮询全部 16 个；未轮询到 = 0）
+13. m_vbus_00 .. m_vbus_15      母线电压 V（1Hz 只轮询每路 CAN 的 1 号电机 i%4==0；其余 0/保持）
 14. gyro_0, gyro_1, gyro_2      机体系角速度 rad/s
 15. quat_w, quat_x, quat_y, quat_z   body←world，w 在前
 16. cmd_vx, cmd_vy, cmd_wz      上层速度命令（站立即 0）
@@ -75,7 +75,6 @@ import csv
 import math
 import os
 import sys
-import statistics as st
 
 try:
     import numpy as np
@@ -91,8 +90,12 @@ _BLOCK16 = ("c_mode", "c_pos", "c_vel", "c_kp", "c_kd", "c_tau",
 _SCALARS = ("wall_ms", "t_ms", "gyro_0", "gyro_1", "gyro_2",
             "quat_w", "quat_x", "quat_y", "quat_z", "cmd_vx", "cmd_vy", "cmd_wz")
 
-# CAN -> POLICY 关节索引置换（POLICY_TO_MJX，见 include/strategy/rl_controller.h）
-CAN_TO_POLICY = [0, 1, 2, 12, 3, 4, 5, 13, 6, 7, 8, 14, 9, 10, 11, 15]
+# CAN <-> POLICY 关节索引置换（见 include/strategy/rl_controller.h / rl_controller.cpp）:
+#   pos_policy[i] = pos_can[MJX_TO_POLICY[i]]  → MJX_TO_POLICY 是按 POLICY 索引、给出 CAN
+#   can[mjx] ↔ policy[POLICY_TO_MJX[mjx]]      → POLICY_TO_MJX 是按 CAN 索引、给出 POLICY
+# 两者互为逆置换，命名与直觉相反，这里按「语义」重新命名避免踩坑。
+POLICY_TO_CAN = [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 3, 7, 11, 15]   # = MJX_TO_POLICY
+CAN_TO_POLICY = [0, 1, 2, 12, 3, 4, 5, 13, 6, 7, 8, 14, 9, 10, 11, 15]   # = POLICY_TO_MJX
 _LEG = ("FL", "FR", "RL", "RR")
 _PART = ("hip", "thigh", "calf", "wheel")
 
@@ -103,7 +106,10 @@ def joint_name(i):
 
 
 def policy_name(i):
-    return "%s-%s(policy%02d)" % (_LEG[i // 4], _PART[i % 4], i)
+    """POLICY 序 0..11 = 12 腿关节(FL/FR/RL/RR × hip/thigh/calf)，12..15 = 4 轮。"""
+    if i < 12:
+        return "%s-%s(policy%02d)" % (_LEG[i // 3], _PART[i % 3], i)
+    return "%s-wheel(policy%02d)" % (_LEG[i - 12], i)
 
 
 def expected_header():
@@ -858,14 +864,15 @@ def build_synthetic_dataset(duration_s=9.0, fs=500.0, td_ms=18.0, tau_ms=40.0,
                                      - 4.0 * np.gradient(pos, dt / 1000.0)
                                      + rng.normal(0.0, 0.05, n))
 
-    # ---- temp / vbus：只轮询每路 CAN 的 1 号电机（i%4==0），其余 0 ----
+    # ---- temp / vbus（与 s2r_dataset.cpp 的 PollSlowTelemetry 一致）----
+    #   m_temp: 1Hz 轮询**全部 16 个**电机 → 16 路都非 0
+    #   m_vbus: 1Hz 只轮询**每路 CAN 的 1 号电机**（i%4==0）→ 其余 12 路恒 0（或保持上次值）
     for i in range(16):
         tag = "%02d" % i
+        cols["m_temp_%s" % tag][:] = temp + 2.0 * (i % 4) + rng.normal(0.0, 0.05, n)
         if i % 4 == 0:
-            cols["m_temp_%s" % tag][:] = temp + rng.normal(0.0, 0.05, n)
             cols["m_vbus_%s" % tag][:] = vbus + rng.normal(0.0, 0.02, n)
         else:
-            cols["m_temp_%s" % tag][:] = 0.0
             cols["m_vbus_%s" % tag][:] = 0.0
 
     # ---- IMU / 命令 ----
@@ -1143,7 +1150,7 @@ def main(argv=None):
             if not (0 <= motor <= 15):
                 print("[ERROR] --motor 超范围: %d（POLICY 序 0..15）" % motor)
                 return 2
-            can = CAN_TO_POLICY[motor]
+            can = POLICY_TO_CAN[motor]
             print("[INFO] POLICY%02d (%s) → CAN%02d (%s)"
                   % (motor, policy_name(motor), can, joint_name(can)))
             motor = can
