@@ -2597,11 +2597,12 @@ void Example61_RLStandTurnTeleop() {
     }
 
     printf("[INFO] RL 循环启动：右摇杆水平=原地转向（左=+wz），松手=A/回中=站立\n");
-    printf("[INFO]            B=急停，START=趴下，q=退出，s=跑标准对比序列，x=中止序列\n");
+    printf("[INFO]            B=急停，START=趴下，Y=跑标准对比序列（推摇杆即中止序列）\n");
+    printf("[INFO]            键盘（需终端有焦点）：q=退出，x=中止序列\n");
     printf("[INFO] 死区 %.2f，满推 wz=%.2f rad/s，模式=%s\n",
            STAND_DEAD, TURN_MAX_WZ, TURN_LATCH ? "latch(满幅)" : "proportional(线性)");
 
-    // 标准对比序列（可复现的 sim↔real 命令串）：
+    // 标准对比序列（可复现的 sim↔real 命令串）：**手柄 Y 键**触发，推摇杆中止
     //   stand 5s → +wz 8s → stand 3s → −wz 8s → stand 3s
     // 选 5/8/3 秒是为了让"站立→转向"的过渡段足够长，便于在 sim/real 上都看清
     // 起动/停止的瞬态（这正是 gap 最明显的地方）。
@@ -2617,27 +2618,47 @@ void Example61_RLStandTurnTeleop() {
 
     RawTerminal term;
     bool graceful = false, do_lie_down = false;
+    bool prev_y = false;          // 手柄 Y 的上升沿检测（防按住连触发序列）
     int  tick = 0;
     while (!g_rl_stop) {
-        // 1) 键盘：q = 优雅退出；s = 跑标准对比序列；x = 中止序列
+        // 0) 手柄轮询（每拍一次）：序列的启动/中止与手动映射共用同一份状态
+        XboxState st{};
+        const bool have_pad = pad_ok;
+        if (have_pad) { controller.Poll(); st = controller.GetState(); }
+        const float stick_raw = have_pad ? -st.right_stick_x : 0.0f;   // 左推 = +wz
+
+        // 1) 键盘：q = 优雅退出；x = 中止对比序列（手柄侧用摇杆中止，见第 3 步）
         if (term.ok) {
             unsigned char key;
             while (read(STDIN_FILENO, &key, 1) == 1) {
                 if (key == 'q' || key == 'Q') { graceful = true; g_rl_stop = 1; }
-                else if (key == 's' || key == 'S') {
-                    seq_idx = 0; seq_tick = 0;
-                    printf("\n[SEQ] 开始标准对比序列：站立 5s → 左转 8s → 站立 3s → 右转 8s → 站立 3s（共 27s）\n");
-                    printf("[SEQ] 期间摇杆被忽略；按 x 中止序列，按 q 退出程序。\n");
-                }
                 else if (key == 'x' || key == 'X') {
-                    if (seq_idx >= 0) printf("\n[SEQ] 序列已中止（回站立）\n");
+                    if (seq_idx >= 0) printf("\n[SEQ] 序列已中止（键盘 x）→ 回手动\n");
                     seq_idx = -1;
                 }
             }
         }
 
-        // 1.5) 标准对比序列：固定命令串 ⇒ 真机与仿真可以跑**同一条命令序列**，
-        //      命令本身会写进数据集的 cmd_wz 列，离线按命令分段即可严格对齐。
+        // 2) **手柄 Y 键 = 启动标准对比序列**（现场不用碰终端：RawTerminal 读的是终端 stdin，
+        //    键盘必须终端有焦点；手柄则不受影响）
+        //    ⚠ 必须做**上升沿**检测：否则按住 Y 会在序列跑完后立刻重启下一轮。
+        const bool y_pressed = have_pad && st.y && !prev_y;
+        prev_y = have_pad && st.y;
+        if (y_pressed && seq_idx < 0) {
+            seq_idx = 0; seq_tick = 0;
+            printf("\n[SEQ] 手柄 Y：开始标准对比序列 —— 站立 5s → 左转(%+.2f) 8s → 站立 3s → 右转(%+.2f) 8s → 站立 3s（共 27s）\n",
+                   (double)TURN_SEQ_WZ, -(double)TURN_SEQ_WZ);
+            printf("[SEQ] 中止方式：推一下摇杆（或手柄 B 硬急停 / 键盘 x）\n");
+        }
+
+        // 3) 摇杆推过死区 = 中止序列，立刻交回手动（最直觉的"抢控制权"动作）
+        if (seq_idx >= 0 && fabsf(stick_raw) > STAND_DEAD) {
+            seq_idx = -1;
+            printf("\n[SEQ] 检测到摇杆输入 → 序列中止，回手动控制\n");
+        }
+
+        // 4) 标准对比序列：固定命令串 ⇒ 真机与仿真可以跑**同一条命令序列**，
+        //    命令本身会写进数据集的 cmd_wz 列，离线按命令分段即可严格对齐。
         if (seq_idx >= 0) {
             const float dur_tick = kSeq[seq_idx].sec * HZ;
             if (seq_tick == 0)
@@ -2655,20 +2676,17 @@ void Example61_RLStandTurnTeleop() {
             }
         }
 
-        // 2) 手柄 → 三通道命令（vx/vy 恒 0；只有 wz 可变）；跑序列时忽略摇杆
-        if (pad_ok && seq_idx < 0) {
-            controller.Poll();
-            const XboxState& st = controller.GetState();
-            float raw = -st.right_stick_x;          // 左推 = +wz（与 sim2sim gamepad 一致）
+        // 5) 手动映射（手柄 → 三通道命令；vx/vy 恒 0，只有 wz 可变）
+        else if (have_pad) {
             float wz = 0.0f;
             if (st.a) {
                 wz = 0.0f;                          // A：强制站立
-            } else if (fabsf(raw) <= STAND_DEAD) {
-                wz = 0.0f;                          // 死区内 = 精确 [0,0,0]
+            } else if (fabsf(stick_raw) <= STAND_DEAD) {
+                wz = 0.0f;                          // 死区内 = 精确 [0,0,0]（站立）
             } else if (TURN_LATCH) {
-                wz = (raw > 0.0f ? 1.0f : -1.0f) * TURN_MAX_WZ;
+                wz = (stick_raw > 0.0f ? 1.0f : -1.0f) * TURN_MAX_WZ;
             } else {
-                wz = raw * TURN_MAX_WZ;
+                wz = stick_raw * TURN_MAX_WZ;       // 死区外线性映射（与 sim2sim gamepad 一致）
             }
             cmd[0] = 0.0f;
             cmd[1] = 0.0f;
