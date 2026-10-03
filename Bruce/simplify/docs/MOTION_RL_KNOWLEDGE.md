@@ -243,7 +243,7 @@ void leg_foot_force_to_torque(LegIndex leg, q_cmd[3], f[3], tau[3]);       // τ
 
 ---
 
-## 9. 示例索引（`src/app/examples/`，示例 17~60，共 43 个）
+## 9. 示例索引（`src/app/examples/`，示例 17~61，共 44 个）
 
 > 分发机制：改 `src/app/main.cpp` 里各示例调用的注释 + 重新编译，**无命令行参数、无注册表**。
 > ⚠️ `Example55_SingleLegLimitMeasure` 在本仓库**从未实现**（声明与被注释调用已在本次清理中删除），不要再当作可用示例。
@@ -277,6 +277,17 @@ void leg_foot_force_to_torque(LegIndex leg, q_cmd[3], f[3], tau[3]);       // τ
 |---|---|---|
 | **Example58** `TorqueChannelCheck` | 16 路**力矩通道校验**：阻抗模式 `kp=kd=0 ⇒ τ=τ_ff`，逐电机施加 `0→+T1→+T2→0→−T1→−T2→0`，检查零偏（<0.5 N·m）/增益（误差 ≤ max(0.5, 25%)）/符号/线性度。轮子默认跳过（会转起来） | 狗必须**吊起**；人工轻扶被测肢体；→ `log/sysid/torque_check_*.csv` |
 | **Example59** `GravityMassIdentify` | **重力矩系数 `G_j = m·g·d`** 与质量-质心：单关节在参考姿态附近双向慢扫 7 点（共 14 点），准静态采样 (θ, τ)，对 `[sinθ, cosθ, 1]` 做 3 参数最小二乘 → `G_j = √(a²+b²)`（**不需要扫到力臂最大处**）；配合台秤称重反推 `d`，配合 Ex47 的 `J` 得 `I_c = J − m·d²`；打印可直接填入 `LINK_DYNAMICS`/`BODY_MASS` 的建议值 | 狗必须**吊起 + 机身水平**（可选 IMU 检查倾角）；→ `log/sysid/gravity_summary_*.csv` |
+
+### 9.6 ex_rl.cpp（61）—— 站立/原地转向 专精策略遥操作，2026-10-02 新增
+
+`Example61_RLStandTurnTeleop`：针对 **standstep_s4 / iteration_10000** 策略（`POLICY_VARIANT==1`）的手柄遥操作。
+该策略训练时**只有两类命令**：`[0,0,0]`（站立）与 `[0,0,wz]`（原地迈步转向），vx 恒 0、不支持前进。
+- 手柄：右摇杆水平=原地转向（死区内 = 精确 `[0,0,0]`）、A=强制站立、B=急停、START=趴下、q=退出。
+- **s=标准对比序列**（站立 5s → 左转 8s → 站立 3s → 右转 8s → 站立 3s，共 27s）：给真机与仿真一条
+  **完全相同的命令串**，命令写进数据集 `cmd_wz` 列，离线按命令分段即可严格对齐 —— 这是做 sim/real gap
+  对比时排除"人手不一致"的关键。
+- 默认开 500 Hz 统一数据集录制；每秒打印 `cmd` vs `gyro_z`（现场就能看出跟不跟得上）。
+- 权重变体见 `include/strategy/policy_variant.h`（旧策略 = 变体 0，改一个数字重编即可切回）。
 
 ### 9.5 ex_probe.cpp（60）—— 真机激励探针，2026-09-29 新增
 

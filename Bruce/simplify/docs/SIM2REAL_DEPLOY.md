@@ -4,7 +4,13 @@
 > 数值唯一真值来源：`include/strategy/rl_controller.h`(.cpp)、`include/strategy/sim2real_conv.h`(.cpp)、`include/strategy/imu_device.h`(.cpp)。
 > 训练侧权威参考：`/home/sysu/Desktop/Project/Bruce/RL_Train/code`（`src/sim2sim.py`、`src/cfg/dogurdf_config.py`）。
 >
-> ✅ **最新（2026-09-29 核对）**：权重 `weights/iteration_9754.pkl`（sim2sim 已同步同一份）；`main.cpp` 激活 **Example37_RLTeleopControl**；
+> 🆕 **2026-10-02 更新**：新增**策略变体开关** `include/strategy/policy_variant.h`（`POLICY_VARIANT`）。
+> **当前 = 1 → standstep_s4 / iteration_10000**（只有静止站立 `[0,0,0]` 与原地转向 `[0,0,wz]`，不支持前进），
+> 权重导出到 `include/strategy/policy_weights_standturn.h`；变体 0 仍是本节描述的 smalllift_s45/iteration_9754。
+> `main.cpp` 激活 **Example61_RLStandTurnTeleop**。下面 §3 的"策略规格"描述的是**变体 0**，接口（obs 64/action 16/
+> 网络结构/gait 时钟/动作尺度）两个变体完全一致，差异只在**命令分布**与权重本身。
+>
+> ✅ **（2026-09-29 核对，变体 0）**：权重 `weights/iteration_9754.pkl`（sim2sim 已同步同一份）；
 > `gait_phase` 观测为**分组**布局（`obs[56..59]=sin×4脚`、`obs[60..63]=cos×4脚`）；真机扭矩命令限幅为 `TORQUE_CMD_LIMIT` 120/120/200/52。
 > 🗄️ 历史存档：`dogurdf_sim2sim_deploy/checkpoints/dogurdf_velocity/iteration_450.pkl`、`iteration_3000.pkl`（已不与真机同步）。
 
@@ -36,7 +42,8 @@ HWT606 IMU ─(115200 串口, Z朝下绕X翻)─► imu_device
 | 文件 | 作用 |
 |---|---|
 | `mlp.h` | 手写 MLP 前向（64→512→256→128→16，ELU） |
-| `policy_weights.h` | 导出的 actor 权重（**生成物，勿手改**） |
+| `policy_weights.h` | 导出的 actor 权重（**生成物，勿手改**）；变体 1 用 `policy_weights_standturn.h` |
+| `policy_variant.h` | **策略变体开关**（两套权重二选一编译进来） |
 | `policy_test_ref.h` | MLP 数值校验参考（**生成物**） |
 | `rl_controller.h/.cpp` | 观测构建 / PD 控制律 / 常量 / 关节顺序映射 |
 | `sim2real_conv.h/.cpp` | 真机 GetStatus 角 ↔ URDF 角转换（CONV_A/CONV_B） |

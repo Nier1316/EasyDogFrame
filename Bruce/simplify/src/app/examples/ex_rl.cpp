@@ -30,7 +30,7 @@
 using logctl::LogCat;
 #include "strategy/rl_controller.h"
 #include "strategy/mlp.h"
-#include "strategy/policy_test_ref.h"
+#include "strategy/policy_variant.h"    // 权重 + 参考 obs/action（随变体切换）
 #include "strategy/imu_device.h"
 #include "strategy/xbox_controller.h"
 #include <termios.h>
@@ -2467,4 +2467,276 @@ void Example53_MeasureGravityFF() {
     thread_mgr.stop_thread("motor_send");
     motor_mgr.Stop();
     printf("[INFO] 示例53 完成\n");
+}
+
+// =====================================================================
+//  示例 61：站立 / 原地转向 专精策略的手柄遥操作（sim2real 对比用）
+//
+//  策略：POLICY_VARIANT == 1（standstep_s4 / iteration_10000，2026-10-02 最新）
+//        训练命令分布**只有两类**：静止站立 [0,0,0] 与原地迈步转向 [0,0,wz]
+//        （notes 原文："stop [0,0,0] and turn [0,0,wz] commands only"，
+//          对角轻抬腿 + 轮差速偏航，平地）。**不支持 vx 前进**。
+//  目的：用同一套手柄操作在真机上做这两个动作，全程录 500 Hz 统一数据集，
+//        与 sim2sim（RL_Train/code/src/sim2sim.py --gamepad，或
+//        dogurdf_sim2sim_deploy --record）跑同一串命令对比，定位 gap。
+//
+//  手柄映射（与我方 sim2sim 的 gamepad 约定一致）：
+//    右摇杆水平 (right_stick_x) → cmd_wz（左推 = +wz），死区内 → 严格 [0,0,0]
+//    A 键按住                    → 强制站立（屏蔽转向，等于命令 [0,0,0]）
+//    B 键                        → 硬急停（置 g_rl_stop，立即退出循环）
+//    START                        → 优雅趴下（12s 缓降）
+//    q 键                         → 优雅退出（失能轮 + 腿回位）
+//    左摇杆**不参与**（该策略未见过 vx≠0，喂了属分布外）
+// =====================================================================
+void Example61_RLStandTurnTeleop() {
+    printf("\n========== 示例 61：站立 / 原地转向 手柄遥操作（sim2real 对比）==========\n");
+    printf("[策略] %s\n", POLICY_VARIANT_NAME);
+
+#if POLICY_HAS_FORWARD_VX
+    printf("[ERROR] 当前编译的是 %s（支持 vx 前进），本示例专为 standstep_s4 而写。\n",
+           POLICY_VARIANT_NAME);
+    printf("        请把 include/strategy/policy_variant.h 的 POLICY_VARIANT 改成 1 后重新编译；\n");
+    printf("        若要用旧策略走遥操作，请用 Example37_RLTeleopControl。\n");
+    return;
+#endif
+
+    // ---- 参数（都在训练分布内；要更激进/更保守只改这里）----
+    constexpr float TURN_MAX_WZ  = 0.7f;   // 满推转向命令 rad/s（训练范围 ±1.0，这里保守取 0.7）
+    constexpr float STAND_DEAD    = 0.15f; // 摇杆死区：小于它 ⇒ 命令严格 [0,0,0] = 站立
+    // TURN_LATCH: true ⇒ 一旦越过死区就输出满幅 ±TURN_MAX_WZ（最贴近"只有两个动作"的字面语义）；
+    //             false ⇒ 死区外线性映射（策略训练时 wz 是连续采样的，两者都在分布内）。
+    constexpr bool TURN_LATCH = false;
+    // 数据集默认**开**（本示例的目的就是 gap 对比）；约 420 KB/s，注意磁盘。
+    constexpr bool RECORD_DATASET = true;
+    constexpr int  HZ = 50;
+
+    // ---- 电机使能：腿阻抗 + 轮速度环（0 速弱增益软启动）----
+    MotorManager& motor_mgr = MotorManager::GetInstance();
+    ThreadManager thread_mgr;
+    motor_mgr.SetTransport(&Usb2CanTransport::GetInstance());
+    if (!motor_mgr.Initialize(thread_mgr)) {
+        printf("[ERROR] MotorManager 初始化失败\n");
+        return;
+    }
+    thread_mgr.start_thread("motor_receive");
+    thread_mgr.start_thread("motor_send");
+    sleep(1);
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++) motor_mgr.SetControlMode(cp, mi, IMPEDANCE);
+    for (int cp = 0; cp < 4; cp++) motor_mgr.SetControlMode(cp, 4, SPEED);
+    usleep(100000);
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 4; mi++) motor_mgr.PreEnableZeroTorque(cp, mi);
+    usleep(100000);
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 3; mi++) motor_mgr.SendImpedance(cp, mi, 0, 0, 0, 0, 0);
+    for (int cp = 0; cp < 4; cp++)
+        motor_mgr.SendSpeed(cp, 4, 0.0f, rl::WHEEL_SOFT_KVP, 0.0f);
+    usleep(100000);
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 4; mi++) motor_mgr.EnableMotor(cp, mi);
+    usleep(200000);
+
+    // ---- IMU（必需：姿态参与观测，且我们要记 gyro 看真实偏航率）----
+    ImuDevice imu;
+    imu.SetMount(ImuMount::Z_DOWN_X);
+    bool imu_ok = imu.Initialize("/dev/ttyUSB0", 115200);
+    if (!imu_ok)
+        printf("[WARN] IMU 打开失败，gyro/quat 用默认值（机器人会失控，务必急停）\n");
+
+    // ---- 手柄 ----
+    XboxController controller;
+    bool pad_ok = controller.Initialize();
+    if (!pad_ok)
+        printf("[WARN] 手柄未连接，命令将恒为站立 [0,0,0]；接入后需重启生效\n");
+
+    // ---- 运控层 ----
+    MotionController motion;
+    MotionController::Config mcfg;
+    mcfg.hz          = HZ;
+    mcfg.max_vx      = 0.0f;          // 该策略不支持 vx，必须恒 0
+    mcfg.max_wz      = TURN_MAX_WZ;
+    mcfg.cmd_bias_vx = 0.0f;          // ⚠ 不要用 Ex37 的 -0.05：那是给前进策略抵轮子偏置的，
+                                      //   对"只见过 [0,0,0] / [0,0,wz]"的策略属于分布外输入。
+    motion.setConfig(mcfg);
+    motion.init(motor_mgr, imu_ok ? &imu : nullptr);
+
+    printf("[INFO] 起立中（10s 到 DEFAULT_POSE）...\n");
+    if (!motion.standTo(rl::DEFAULT_POSE, 10.0f, []() { return g_rl_stop != 0; })) {
+        printf("[WARN] 起立被中止，直接失能退出\n");
+        signal(SIGINT, SIG_DFL);
+        DisableRlFrictionFF(motor_mgr);
+        motion.emergencyStop();
+        imu.Shutdown();
+        controller.Shutdown();
+        thread_mgr.stop_thread("motor_receive");
+        thread_mgr.stop_thread("motor_send");
+        motor_mgr.Stop();
+        printf("[INFO] Example61 完成（起立中止）\n");
+        return;
+    }
+    printf("[INFO] 起立完成，进入 RL 循环\n");
+
+    // ---- RL 主循环 ----
+    g_rl_stop = 0;
+    signal(SIGINT, rl_signal_handler);
+    EnableRlFrictionFF(motor_mgr);
+
+    float cmd[3] = {0.0f, 0.0f, 0.0f};
+    motion.beginRL(cmd);
+
+    S2RRecorder::inst().begin("Example61 站立/原地转向（手柄）");
+    if (RECORD_DATASET) {
+        S2RDataset::inst().Begin("Example61 standturn teleop");
+        S2RDataset::inst().Meta("weight", POLICY_VARIANT_NAME);
+        S2RDataset::inst().Meta("ckpt", POLICY_VARIANT_CKPT);
+        S2RDataset::inst().Meta("example", "Example61_RLStandTurnTeleop");
+        S2RDataset::inst().Meta("cmd_kind", "stand [0,0,0] / turn-in-place [0,0,wz]");
+        printf("[DATA] 统一数据集已开启 → %s（约 420 KB/s；记得填 ground/负载 meta）\n",
+               S2RDataset::inst().path());
+    }
+
+    printf("[INFO] RL 循环启动：右摇杆水平=原地转向（左=+wz），松手=A/回中=站立\n");
+    printf("[INFO]            B=急停，START=趴下，q=退出，s=跑标准对比序列，x=中止序列\n");
+    printf("[INFO] 死区 %.2f，满推 wz=%.2f rad/s，模式=%s\n",
+           STAND_DEAD, TURN_MAX_WZ, TURN_LATCH ? "latch(满幅)" : "proportional(线性)");
+
+    // 标准对比序列（可复现的 sim↔real 命令串）：
+    //   stand 5s → +wz 8s → stand 3s → −wz 8s → stand 3s
+    // 选 5/8/3 秒是为了让"站立→转向"的过渡段足够长，便于在 sim/real 上都看清
+    // 起动/停止的瞬态（这正是 gap 最明显的地方）。
+    constexpr float TURN_SEQ_WZ = 0.5f;   // 序列用的转向命令（保守，训练范围 ±1.0 内）
+    static const struct { float wz; float sec; const char* tag; } kSeq[] = {
+        { 0.0f,        5.0f, "站立 stand"   },
+        { +TURN_SEQ_WZ, 8.0f, "左转 turn +" },
+        { 0.0f,        3.0f, "站立 stand"   },
+        { -TURN_SEQ_WZ, 8.0f, "右转 turn −" },
+        { 0.0f,        3.0f, "站立 stand"   },
+    };
+    int seq_idx = -1, seq_tick = 0;
+
+    RawTerminal term;
+    bool graceful = false, do_lie_down = false;
+    int  tick = 0;
+    while (!g_rl_stop) {
+        // 1) 键盘：q = 优雅退出；s = 跑标准对比序列；x = 中止序列
+        if (term.ok) {
+            unsigned char key;
+            while (read(STDIN_FILENO, &key, 1) == 1) {
+                if (key == 'q' || key == 'Q') { graceful = true; g_rl_stop = 1; }
+                else if (key == 's' || key == 'S') {
+                    seq_idx = 0; seq_tick = 0;
+                    printf("\n[SEQ] 开始标准对比序列：站立 5s → 左转 8s → 站立 3s → 右转 8s → 站立 3s（共 27s）\n");
+                    printf("[SEQ] 期间摇杆被忽略；按 x 中止序列，按 q 退出程序。\n");
+                }
+                else if (key == 'x' || key == 'X') {
+                    if (seq_idx >= 0) printf("\n[SEQ] 序列已中止（回站立）\n");
+                    seq_idx = -1;
+                }
+            }
+        }
+
+        // 1.5) 标准对比序列：固定命令串 ⇒ 真机与仿真可以跑**同一条命令序列**，
+        //      命令本身会写进数据集的 cmd_wz 列，离线按命令分段即可严格对齐。
+        if (seq_idx >= 0) {
+            const float dur_tick = kSeq[seq_idx].sec * HZ;
+            if (seq_tick == 0)
+                printf("[SEQ] 第 %d/%d 段：%s  wz=%+.2f（%.0fs）\n",
+                       seq_idx + 1, (int)(sizeof(kSeq)/sizeof(kSeq[0])),
+                       kSeq[seq_idx].tag, kSeq[seq_idx].wz, kSeq[seq_idx].sec);
+            cmd[0] = 0.0f; cmd[1] = 0.0f; cmd[2] = kSeq[seq_idx].wz;
+            motion.setCmd(cmd);
+            if (++seq_tick >= (int)dur_tick) {
+                seq_tick = 0;
+                if (++seq_idx >= (int)(sizeof(kSeq)/sizeof(kSeq[0]))) {
+                    seq_idx = -1;
+                    printf("[SEQ] 序列结束（回站立 [0,0,0]）\n");
+                }
+            }
+        }
+
+        // 2) 手柄 → 三通道命令（vx/vy 恒 0；只有 wz 可变）；跑序列时忽略摇杆
+        if (pad_ok && seq_idx < 0) {
+            controller.Poll();
+            const XboxState& st = controller.GetState();
+            float raw = -st.right_stick_x;          // 左推 = +wz（与 sim2sim gamepad 一致）
+            float wz = 0.0f;
+            if (st.a) {
+                wz = 0.0f;                          // A：强制站立
+            } else if (fabsf(raw) <= STAND_DEAD) {
+                wz = 0.0f;                          // 死区内 = 精确 [0,0,0]
+            } else if (TURN_LATCH) {
+                wz = (raw > 0.0f ? 1.0f : -1.0f) * TURN_MAX_WZ;
+            } else {
+                wz = raw * TURN_MAX_WZ;
+            }
+            cmd[0] = 0.0f;
+            cmd[1] = 0.0f;
+            cmd[2] = wz;
+            if (st.b) {
+                printf("\n[INFO] 手柄 B 键：硬急停\n");
+                g_rl_stop = 1;
+            } else if (st.start) {
+                printf("\n[INFO] 手柄 START 键：优雅趴下\n");
+                do_lie_down = true;
+                g_rl_stop = 1;
+            }
+            motion.setCmd(cmd);
+        }
+
+        // 3) 注入数据集（命令 + IMU），供 sim2real 对齐
+        if (S2RDataset::inst().active()) {
+            float g[3], qd[4];
+            if (imu_ok) { imu.GetGyro(g[0], g[1], g[2]); imu.GetQuat(qd[0], qd[1], qd[2], qd[3]); }
+            else { g[0] = g[1] = g[2] = 0.0f; qd[0] = 1.0f; qd[1] = qd[2] = qd[3] = 0.0f; }
+            S2RDataset::inst().SetImu(g, qd);
+            S2RDataset::inst().SetCmd(cmd);
+        }
+
+        // 4) RL 一步
+        if (!motion.rlStep()) {
+            printf("[WARN] 跌倒检测触发 (proj_grav_z=%.2f)，急停\n", motion.lastGravZ());
+            break;
+        }
+
+        // 5) 每秒打印：命令 vs 实测偏航率（现场就能看出"跟不跟得上"）
+        if (++tick % HZ == 0) {
+            float gz = 0.0f;
+            if (imu_ok) { float g[3]; imu.GetGyro(g[0], g[1], g[2]); gz = g[2]; }
+            printf("  cmd=[%+.2f %+.2f %+.2f]  gyro_z=%+.3f rad/s  proj_gz=%+.3f\n",
+                   cmd[0], cmd[1], cmd[2], gz, motion.lastGravZ());
+        }
+
+        usleep(1000000 / HZ);
+    }
+
+    // ---- 收尾 ----
+    if (do_lie_down) {
+        printf("[INFO] 优雅趴下（12s 身体缓降）...\n");
+        g_rl_stop = 0;
+        motion.lieDown(12.0f, []() { return g_rl_stop != 0; });
+        sleep(2);
+    } else if (graceful) {
+        printf("[INFO] 优雅退出：失能轮电机，腿回初始姿态（10s）...\n");
+        g_rl_stop = 0;
+        motion.returnToStart(10.0f, []() { return g_rl_stop != 0; });
+    }
+
+    signal(SIGINT, SIG_DFL);
+    DisableRlFrictionFF(motor_mgr);
+    S2RRecorder::inst().finish();
+    if (S2RDataset::inst().active()) {
+        S2RDataset::inst().Finish();
+        printf("[DATA] 分析： python3 tool/dataset_health.py %s\n", S2RDataset::inst().path());
+        printf("[DATA] 对比： 与 sim2sim 跑同一串命令后 python3 tool/compare_sim2real.py <sim.csv> <real.csv>\n");
+    }
+
+    printf("[INFO] 正在失能...\n");
+    motion.emergencyStop();
+    imu.Shutdown();
+    controller.Shutdown();
+    thread_mgr.stop_thread("motor_receive");
+    thread_mgr.stop_thread("motor_send");
+    motor_mgr.Stop();
+    printf("[INFO] Example61 完成\n");
 }

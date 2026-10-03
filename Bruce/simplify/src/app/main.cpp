@@ -4,8 +4,8 @@
 // =====================================================================
 //  示例切换说明
 //  = 只运行一个示例：目标示例的 3 行取消注释、其余保持注释即可。
-//  = Example1-16 已清理（早期实验），现存 17~60（共 43 个；55 从未实现，已删除）。
-//  = 当前启用：Example37（RL 遥操作，手柄前进/后退 + 转向）。
+//  = Example1-16 已清理（早期实验），现存 17~61（共 44 个；55 从未实现，已删除）。
+//  = 当前启用：Example61（站立/原地转向 专精策略手柄遥操作；策略变体见 include/strategy/policy_variant.h）。
 //
 //  ⚠ 2026-09-29：原先此处用 `signal(SIGINT, signal_handler)` 装了一个只把
 //    `static volatile bool g_running` 置 false 的处理器，而该变量**从未被读取**：
@@ -193,6 +193,11 @@ int main() {
     // Example60_SysIdProbe();
     // printf("[INFO] Example60 completed.\n");
 
+    // 运行示例61 - 站立/原地转向 专精策略手柄遥操作（右摇杆转向、A站立、B急停、START趴下；默认录 500Hz 数据集）
+    printf("[INFO] Running Example61_RLStandTurnTeleop...\n");
+    Example61_RLStandTurnTeleop();
+    printf("[INFO] Example61 completed.\n");
+
     // 运行示例48 - 轮子扭矩方向安全验证（单轮开环测向，无 RL 失控风险）
     // printf("[INFO] Running Example48_WheelDirectionVerify...\n");
     // Example48_WheelDirectionVerify();
@@ -226,9 +231,9 @@ int main() {
     // printf("[INFO] Example49 completed.\n");
 
     // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，USB2CAN 4 路）
-    printf("[INFO] Running Example37_RLTeleopControl...\n");
-    Example37_RLTeleopControl();
-    printf("[INFO] Example37 completed.\n");
+    // printf("[INFO] Running Example37_RLTeleopControl...\n");
+    // Example37_RLTeleopControl();
+    // printf("[INFO] Example37 completed.\n");
 
     // 运行示例56 - 固定 yaw 转向真机遥测录制（sim2real 原地转向对比，落盘 log/s2r_fixedyaw_*.csv）
     // printf("[INFO] Running Example56_FixedYawRecord...\n");

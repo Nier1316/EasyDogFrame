@@ -33,6 +33,12 @@ cd .. && ./run.sh
 ```
 
 - 硬件：达妙 USB2CAN，设备 `/dev/ttyACM0`；IMU `/dev/ttyUSB0`（115200）。
+- **当前激活的示例 = `Example61_RLStandTurnTeleop`**（站立/原地转向 手柄遥操作）。
+- **策略由 `include/strategy/policy_variant.h` 的 `#define POLICY_VARIANT` 决定**（编译期）：
+  `1` = standstep_s4/iteration_10000（最新，**只有站立与原地转向，不支持前进**）；
+  `0` = smalllift_s45/iteration_9754（旧，可前进）。
+  ⚠ 变体 1 下，**除 Ex61 以外的 RL 示例（Ex36/37/52/53/56 等）语义已变**：它们会发 vx≠0 或依赖前进能力，
+  属于该策略的训练分布之外 —— 要跑它们请先切到变体 0 并重新编译。
 - 本仓库**没有命令行参数分发**：一次只能跑一个示例。
 - **切换示例的固定流程**（务必按此做，否则会同时跑两个示例）：
   1. 打开 `src/app/main.cpp`（示例调用都在文件末尾）；
@@ -154,6 +160,27 @@ cd .. && ./run.sh
   每次运行前把 `S2RDataset::inst().Meta("ground","concrete")` 之类改成对应值。
 - **耗时**：T6 约 20 min；T7 约 1 h（含场地与加载）。
 
+### T9 —— 站立 / 原地转向 的 sim↔real 对比（当前最新策略，优先级高）
+
+- **目的**：用**完全相同的命令串**在真机与仿真上各跑一遍，定位 gap。这是目前最直接的 vs-gap 手段。
+- **前置**：`POLICY_VARIANT == 1`（默认）；场地够原地转圈（约 1 m 见方）；手柄已连接。
+- **步骤**：
+  1. 启用 `Example61_RLStandTurnTeleop` → 构建 → 运行（会先起立 10s，再进 RL 循环）。
+  2. 数据集体默认**已开**（`RECORD_DATASET=true`，约 420 KB/s）→ 记下打印的 `log/dataset_*.csv` 路径。
+  3. 按 **`s`** 跑标准对比序列：**站立 5s → 左转 8s → 站立 3s → 右转 8s → 站立 3s**（共 27s）。
+     期间摇杆被忽略；`x` 中止序列；`q` 优雅退出；`B` 硬急停；`START` 优雅趴下。
+  4. 想手动体验两个动作时：**右摇杆水平**推一下 = 原地转向（左推为 `+wz`），**松手/回中 = 静止站立**；
+     **A 键按住 = 强制站立**。
+  5. 仿真侧用同一串命令跑一遍（`RL_Train/code/src/sim2sim.py --gamepad` 或
+     `dogurdf_sim2sim_deploy` 的 `--record`），命令序列保持一致（分段时长可近似，`wall_ms` + 互相关会兜住）。
+- **期望输出**：终端每秒一行 `cmd=[...] gyro_z=... proj_gz=...`（现场就能看出"跟不跟得上"）。
+- **判据**：
+  - 站立段：`gyro_z` 应 ≈ 0，身体无明显漂移/下塌；
+  - 转向段：`gyro_z` 应与 `cmd_wz` **同号**且量级接近（明显偏小 ⇒ 转向不足；符号相反 ⇒ 映射反了）；
+  - 两段切换的**瞬态**（起动/停止）是 gap 最集中的地方 —— 录制里最容易看出来。
+- **⚠ 注意**：该策略**不支持前进**，不要用左摇杆试图走；喂 vx≠0 属分布外，行为不可预期。
+- **耗时**：约 1 分钟/轮（含起立与收尾）。
+
 ### T8 —— sim↔real 与离线分析（有数据后）
 
 ```bash
@@ -177,6 +204,8 @@ python3 tool/compare_sim2real.py <sim_record.csv> log/rl_*.csv log/recv_*.csv   
 | 力矩量程 | hip 120 / thigh 120 / calf 200 / wheel 52 N·m |
 | 参照量级 | 腿库仑摩擦 **1.6~6.2 N·m**；重力矩 **8~20 N·m**；端到端延迟 **≈24 ms**（历史 18~30） |
 | 轮速环参数 | 真机 `WHEEL_KVP=3.0`、`WHEEL_KVI=0.05`（固件速度环，内环 50 µs） |
+| 策略变体 | `include/strategy/policy_variant.h` 的 `POLICY_VARIANT`：`1`=standstep_s4（站立/原地转向，当前）、`0`=smalllift_s45（可前进） |
+| 站立/转向命令 | `[0,0,0]`（站立）与 `[0,0,wz]`，`wz ∈ ±1.0`（示例里满推取 0.7 保守值，序列用 0.5） |
 | ⚠ 轮子 kd | `sim2sim.py` 用 **2.0**，`rl_controller.h` 用 **1.0** —— 两者不一致，属于已知结构性差异，**不是你的 bug**，照实上报即可 |
 | 控制频率 | 策略 50 Hz；电机收发 500 Hz；IMU 100 Hz |
 | 数据集聚类 | `log/dataset_<ts>.csv` + `.meta.txt`；188 列；`wall_ms` 可与 sim2sim `--record` 直接对齐 |

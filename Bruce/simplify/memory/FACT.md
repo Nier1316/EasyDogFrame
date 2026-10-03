@@ -115,6 +115,26 @@
 - `examples_common` 只有 4 个 helper：`RawTerminal`、`poll_key`、`g_rl_stop`+`rl_signal_handler`、`EnableRlFrictionFF/DisableRlFrictionFF`。
 - ⚠️ 安全现状（2026-09-29 脚本复核）：42 个示例中 **29 个会使能电机**（脚本按函数体内直接调 `EnableMotor`/`PreEnableZeroTorque` 统计为 27 个；Ex58/59 经公共 helper `init_zero_torque()` 使能），其中 **13 个装了 `SIGINT` 急停** —— Ex25/34/35/36/37/38/51/52/53/54/56/**58/59**；其余 **16 个**（Ex18/19/20/21/22/23/29/32/41/44/45/46/47/48/49/57）会使能但没有软急停，运行前须留安全距离、可随时断电。
 
+### 策略变体与权重（2026-10-02）
+- **唯一开关**：`include/strategy/policy_variant.h` 的 `#define POLICY_VARIANT`。
+  - `1` = **standstep_s4 / iteration_10000**（2026-10-02，当前最新）：只有**静止站立 `[0,0,0]`** 与
+    **原地迈步转向 `[0,0,wz]`**（vx 恒 0），对角轻抬腿 + 轮差速偏航，平地。**不支持前进**。
+  - `0` = smalllift_s45 / iteration_9754（2026-09-19）：可 vx 前进 + 转向（Ex37 等基于它）。
+- 两套权重都在仓库里：`policy_weights.h`（旧）+ `policy_weights_standturn.h`（新，2026-10-02 导出）；
+  参考对 `policy_test_ref.h` / `policy_test_ref_standturn.h`。改一个数字后**重新编译**即可切换。
+- `tool/export_policy.py` 新增 `--out-weights/--out-ref`（可导出到变体文件，不覆盖旧权重）。
+- **接口不变**：obs 仍是 64 维、action 16 维、MLP 512/256/128 + ELU；
+  `GAIT_CYCLE=0.6` 与 `GAIT_OFFSET=(0,0.5,0.5,0)` 与训练侧 `GAIT_CYCLE_TIME=0.6`/`GAIT_PHASE_OFFSETS` 一致；
+  `ACTION_SCALE=0.25`、`LEG_KP/KD=250/4`、`WHEEL_VEL_SCALE=12.5` 均与 `RL_Train/code/src/sim2sim.py` 对齐。
+- 新权重导出验证：kernel shapes 一致、flax-vs-numpy 最大误差 1.43e-6；
+  **C++ 侧 Ex30 离线回归 `mlp_forward(REF_OBS)` vs `REF_ACTION` 最大绝对误差 4.29e-6（通过）**。
+- 训练命令范围（standturn）：`wz ∈ ±1.0`（"turn [0,0,wz] commands only"，见 standturn 实验的 notes），
+  `vx` 不在分布内 ⇒ **新示例把 `mcfg.cmd_bias_vx` 设为 0**（Ex37 的 `-0.05` 是给前进策略抵轮子偏置的）。
+- 新示例 **Example61_RLStandTurnTeleop**（`ex_rl.cpp`，main.cpp 当前激活）：
+  右摇杆水平=原地转向（死区内=精确 `[0,0,0]`=站立）、A=强制站立、B=急停、START=趴下、q=退出、
+  **s=跑标准对比序列**（站立 5s → 左转 8s → 站立 3s → 右转 8s → 站立 3s）、x=中止序列；
+  默认开 500 Hz 统一数据集录制（`cmd_wz` 列即为命令串，离线可直接按命令分段对齐 sim/real）。
+
 ### sim2real 数据回馈（专题，见 `docs/SIM2REAL_DATA_FEEDBACK.md`）
 - 原则：**数据不进训练，进训练的是仿真里的 `p(s'|s,a)` 与观测模型**。录音必须凑齐"**我命令了什么 + 实际发生了什么 + 共用一个单调时钟**"，才能把控制延迟与执行器动态分开。
 - **记录现状**：`recv_*.csv`（raw+cal、500 Hz、默认开）、`rl_*.csv` / `rlrun_*/trace.csv`（50 Hz、含 quat/gyro/τ）已有；

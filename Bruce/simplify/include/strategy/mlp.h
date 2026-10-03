@@ -13,7 +13,7 @@
 #pragma once
 
 #include <cmath>
-#include "strategy/policy_weights.h"
+#include "strategy/policy_variant.h"   // 权重变体开关（内部再 include 具体权重）
 
 namespace rl {
 
