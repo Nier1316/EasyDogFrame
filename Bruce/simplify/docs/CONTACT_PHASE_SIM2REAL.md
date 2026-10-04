@@ -304,7 +304,7 @@ p_contact ∈ [0,1]（连续置信度，不要只给 0/1）
 τ_min(q̇) = clip(τ_stall·(−1 − q̇/q̇_max), −τ_con, ∞)
 τ_applied = clip(τ_computed, τ_min(q̇), τ_max(q̇))
 ```
-外加总功率上限 `|τ|ᵀ|q̇| ≤ P_max`（UAN 论文明确说这是为避免触发厂商**功率保护**而必须加的项）。
+外加总功率上限 `|τ|ᵀ|q̇| ≤ P_max`（UAN 论文明确说这是为避免触发厂商**功率保护**而必须加的项）。（⚠ 2026-10-02 核实修正：**总功率上限在 Isaac Lab / legged_gym / unitree_rl_gym / unitree_rl_mjlab 里都没有实现**——开源栈只做了 τ–ω 曲线裁剪；功率上限是 UAN 论文的建议项，要加必须自己写）
 
 **可直接抄的参数**：
 - Go2：`effort_limit=23.5, saturation_effort=23.5, velocity_limit=30.0, stiffness=25, damping=0.5`
@@ -415,7 +415,7 @@ p_contact ∈ [0,1]（连续置信度，不要只给 0/1）
   - ⚠️ ERFI 的关键工程细节：**只对旋转关节注入，不要对基座注入**（ANYmal C 上基座力 >5 N 或力矩 >3 N·m 就会训出 pronking 等低效步态）。
 - **课程**：Rudin 游戏式课程（楼梯 5→20 cm、坡 0→25°，平地 <4 min、崎岖 <20 min 训完）；Lee 2020 粒子滤波自适应课程（可通行性判据 = 能否以 >0.2 m/s 沿指令前进）。
 - **真机在线微调**：Smith 2022 用 REDQ + 自动 reset + 板载速度估计，草坪 **<2 h**、室内 **<2.5 h** 从频繁摔到稳定；Ha 2020 用 cMDP + 拉格朗日松弛做安全约束，平地 1.5 h。**代价高，需要自动 reset 与安全约束。**
-- **安全/退化（必须做）**：力矩裁剪（四象限）+ 功率上限；动作二阶差分惩罚 `R_action_curvature = Σ|ä|/(1+ȧ²)^{3/2}`；观测低通（ANYmal-on-wheels 用 5 Hz）；摔倒检测（roll>0.4 rad / pitch>0.2 rad）；**负载均衡** `R_leg_effort_std`（EMA w=0.975 平地 / 0.7 崎岖）—— 这一项对轮足尤其重要（Go2-W 的髋关节热集中）。
+- **安全/退化（必须做）**：力矩裁剪（四象限）+ 功率上限（后者开源栈未实现，需自己写）；动作二阶差分惩罚 `R_action_curvature = Σ|ä|/(1+ȧ²)^{3/2}`；观测低通（ANYmal-on-wheels 用 5 Hz）；摔倒检测（roll>0.4 rad / pitch>0.2 rad）；**负载均衡** `R_leg_effort_std`（EMA w=0.975 平地 / 0.7 崎岖）—— 这一项对轮足尤其重要（Go2-W 的髋关节热集中）。
 
 ---
 
@@ -511,7 +511,7 @@ p_contact ∈ [0,1]（连续置信度，不要只给 0/1）
 
 | 优先级 | 动作 | 建议参数 | 理由 |
 |---|---|---|---|
-| **P0** | **执行器/摩擦参数进仿真**：给关节补 `frictionloss / damping / armature`，用 `DCMotor` 四象限裁剪替代理想 PD，加功率上限 `\|τ\|ᵀ\|q̇\| ≤ P_max` | 参照 Barkour `damping=0.024, frictionloss=0.13, armature=0.011`；力矩上限用本项目 `TORQUE_CMD_LIMIT`（120/120/200/52） | 本项目 sim2sim 目前是纯 PD + 无摩擦，**这是最便宜的确定性收益** |
+| **P0** | **执行器/摩擦参数进仿真**：给关节补 `frictionloss / damping / armature`，用 `DCMotor` 四象限裁剪替代理想 PD，**自己实现**功率上限 `\|τ\|ᵀ\|q̇\| ≤ P_max`（开源栈均无此实现） | 参照 Barkour `damping=0.024, frictionloss=0.13, armature=0.011`；力矩上限用本项目 `TORQUE_CMD_LIMIT`（120/120/200/52） | 本项目 sim2sim 目前是纯 PD + 无摩擦，**这是最便宜的确定性收益** |
 | **P0** | **`action_delay_steps` 落地** | 已实测 ≈24 ms ⇒ 至少 1 步（20 ms）；建议随机化 **[0, 2] 步** | `docs/ACTION_DELAY_MEASURE.md` 已有结论，但训练侧是否启用待确认 |
 | **P0** | **观测侧删不可观测量**（本项目已合规） | `base_lin_vel` 已恒 0 ✅ | 保持，不要"顺手"把估出来的线速度塞进 actor |
 | **P1** | **"20 秒空中数据"辨识**（含 T_d） | 0.1–2 Hz 位置 chirp + CMA-ES；复用 Ex47 链路 | 一次覆盖 Gap1 + Gap2 的一部分；不需要力矩传感器 |

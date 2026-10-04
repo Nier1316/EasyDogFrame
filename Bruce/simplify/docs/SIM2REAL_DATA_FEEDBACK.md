@@ -156,7 +156,8 @@
 ### 路径 1：参数辨识 → 直接改仿真模型（最快见效，不需重训策略）
 把 §3 的产物写成仿真的**物理/执行器参数**：
 - 关节：`frictionloss`（库仑）、`damping`（粘性）、`armature`（转子折算惯量）—— 参照 Barkour `damping=0.024, frictionloss=0.13, armature=0.011`；MuJoCo Menagerie Go2 `damping=2, armature=0.01, frictionloss=0.2`
-- 执行器：DC 电机四象限曲线 `τ_max(q̇) = clip(τ_stall·(1 − q̇/q̇_max), −∞, τ_con)`（Isaac Lab `DCMotor`），并加总功率上限 `|τ|ᵀ|q̇| ≤ P_max`
+- 执行器：DC 电机四象限曲线 `τ_max(q̇) = clip(τ_stall·(1 − q̇/q̇_max), −∞, τ_con)`（Isaac Lab `DCMotor` 有，逐字核实过）
+  （⚠ 2026-10-02 核实修正：**总功率上限在 Isaac Lab / legged_gym / unitree_rl_gym / unitree_rl_mjlab 里都没有实现**——开源栈只做了 τ–ω 曲线裁剪；功率上限是 UAN 论文的建议项，要加必须自己写）
 - 延迟：`action_delay_steps`（本项目实测 ≈24 ms ⇒ ≥1 步）
 - 轮子：**换成速度伺服模型**（见 D）
 - 电压：把 Vbus 作为力矩上限的缩放因子（Tan 2018 用 `V_pwm = V·(kp·e + kd·ė)`）

@@ -403,3 +403,228 @@ joint_pos_scale: 1.0; joint_vel_scale: 0.05; last_action_scale: 1.0
  8. **UAN 的投掷距离具体数值**（[arXiv 2502.10894](https://arxiv.org/abs/2502.10894) Fig.4 为柱状图，正文未给数字）。
  9. **2503.01255 的 `f/τ_max` 单位**：Table III 标 `(%)` 但数值为 0.13/0.98，量纲表述可能有误 → 按原文照抄、不做换算。
  10. **本项目轮速环 kvp/ki 与仿真 kd 的定量对应关系** → 需你侧实测，公开资料无法给出。
+
+
+---
+
+## 附录 B：子代理检索汇总 —— 学习式 RL 路线（RMA / HIM / DreamWaQ / 执行器建模 / 延迟）
+
+> 由检索子代理汇总（67 个可点击出处），它**逐个 curl/git clone 原仓库代码、pdftotext 抓 arXiv 原文后 grep 核实**，
+> 并区分【原文】/【推断】/【未核实】。下列内容我**未逐条复核**（我复核了其中与轮足直接相关的少数几条，见正文 §2.3/§3）。
+> ⚠️ **它同时纠正了我文档里的两处错误**（已在正文修掉）：①「总功率上限」在开源栈里**没有实现**；
+> ②`legged_gym` 里没有 `action_delay_steps`/`ACTION_DELAY`，也没有我 prompt 里误写的 "legged-robots" 分支。
+
+# 学习式（RL）四足/轮足运控框架：sim2real gap 技术简报
+
+> 读者约束：16 电机（4×hip/thigh/calf/wheel）、策略 50 Hz、电机收发 500 Hz、**轮子为固件速度环**、**无足端力传感器**、MuJoCo 仿真。
+> 阅读约定：**【原文】**＝论文/仓库里能直接指到的文字或代码；**【推断】**＝我基于代码结构做的推理；**【未核实】**＝没查到原文，宁缺勿编。
+> 所有数值都尽量给到文件/行。仓库链接用 GitHub blob + `#L` 行号；arXiv 链接给 abs 页。
+
+---
+
+## 0. 一句话结论（给"抄谁"用）
+
+| 你关心的 gap | 最值得抄的对象 | 需要足端力传感器？ | 需要重训策略？ |
+|---|---|---|---|
+| 执行器不真实（力矩-转速、连续力矩、armature） | Isaac Lab `DCMotor` + mjlab `DcMotorActuator` | 否 | 否（只改仿真/部署一致性）；若要吃到收益需重训 |
+| 通信/计算延迟 | mjlab 的 actuator delay + obs delay（现成字段）；WTW 常数延迟 | 否 | 是（但只加随机化，不改网络） |
+| 接触缺失/地形未知 | HIM（history encoder + 对比学习）、DreamWaQ（β-VAE 隐变量） | 否 | 是（架构级） |
+| RMA 的 30 维状态含 4 个接触位 | 不要直接抄 RMA 的观测定义（见 §5） | **RMA 原文要用足端"foot sensors"** | — |
+| 轮子（固件速度环） | DreamWaQ_Go2W 的 16 电机配置（Kp=0, Kd=0.5, 速度参考） | 否 | 是 |
+
+## 1. legged_gym / Isaac Lab
+
+### 1.1 legged_gym（Isaac Gym，ETH）【原文】
+
+| 项 | 值 | 出处 |
+|---|---|---|
+| 摩擦随机化 | `friction_range = [0.5, 1.25]`，先抽 64 个 bucket 再按 env 分配（减少 env 数量带来的显存/时间开销） | [legged_robot_config.py#L121-L123](https://github.com/leggedrobotics/legged_gym/blob/master/legged_gym/envs/base/legged_robot_config.py#L121-L123)、[legged_robot.py#L266-L276](https://github.com/leggedrobotics/legged_gym/blob/master/legged_gym/envs/base/legged_robot.py#L266-L276) |
+| 基座质量 | `randomize_base_mass` 默认 **False**；范围 `added_mass_range = [-1., 1.]`（kg，直接加到 base link） | [#L124-L125](https://github.com/leggedrobotics/legged_gym/blob/master/legged_gym/envs/base/legged_robot_config.py#L124-L125) |
+| 推力扰动 | 每 `push_interval_s = 15` s 给基座 xy 速度赋 `±max_push_vel_xy = ±1.0 m/s`（**不是力**，是直接改 root state） | [#L126-L128](https://github.com/leggedrobotics/legged_gym/blob/master/legged_gym/envs/base/legged_robot_config.py#L126-L128)、[legged_robot.py#L414-L419](https://github.com/leggedrobotics/legged_gym/blob/master/legged_gym/envs/base/legged_robot.py#L414-L419) |
+| 观测噪声 | `noise_scales`: dof_pos 0.01、dof_vel 1.5、lin_vel 0.1、ang_vel 0.2、gravity 0.05、height 0.1；`noise_level=1.0`；实现是 **均匀分布** `(2*rand-1)*noise_scale_vec`，且噪声乘了 `obs_scales` | [#L166-L175](https://github.com/leggedrobotics/legged_gym/blob/master/legged_gym/envs/base/legged_robot_config.py#L166-L175)、[legged_robot.py#L226](https://github.com/leggedrobotics/legged_gym/blob/master/legged_gym/envs/base/legged_robot.py#L226)、[#L455-L478](https://github.com/leggedrobotics/legged_gym/blob/master/legged_gym/envs/base/legged_robot.py#L455-L478) |
+| 地形课程 | `move_up = 走够 env_length/2 就升 1 级；没走到"指令速度×episode×0.5"就降 1 级` | [legged_robot.py#L421-L438](https://github.com/leggedrobotics/legged_gym/blob/master/legged_gym/envs/base/legged_robot.py#L421-L438) |
+| 控制频率 | `sim.dt=0.005`，`decimation=4` → 50 Hz | [#L186-L188](https://github.com/leggedrobotics/legged_gym/blob/master/legged_gym/envs/base/legged_robot_config.py#L186-L188) |
+
+**重要负面结论【原文】**：legged_gym **没有** `action_delay_steps` / `DCMotor` / 功率上限。全仓没有"动作延迟"实现；执行器就是 `τ = Kp(θ_target−θ) − Kd·θ̇` 再 clip 到 URDF effort（[legged_robot.py#L353-L365](https://github.com/leggedrobotics/legged_gym/blob/master/legged_gym/envs/base/legged_robot.py#L353-L365)）。
+**关于"legged-robots 分支"【未核实】**：`leggedrobotics/legged_gym` 的分支只有 `algorithms / dev/pe / gh-pages / master`（GitHub API 查询），**没有** `legged-robots` 分支。你要找的大概是 Isaac Lab。
+
+### 1.2 Isaac Lab
+
+**DCMotor（你给的那条公式，逐字对上了）**【原文】[actuator_pd.py#L203-L310](https://github.com/isaac-sim/IsaacLab/blob/main/source/isaaclab/isaaclab/actuators/actuator_pd.py#L203-L310)：
+
+```
+τ_j,max(q̇) = clip( τ_stall·(1 − q̇/q̇_max),  −∞, τ_con )
+τ_j,min(q̇) = clip( τ_stall·(−1 − q̇/q̇_max), −τ_con, ∞ )
+τ_applied  = clip(τ_computed, τ_min, τ_max)
+```
+- 代码里 `τ_con = effort_limit`，`τ_stall = saturation_effort`，`q̇_max = velocity_limit`；
+- 先把 `q̇` clip 到 `vel_at_effort_lim = velocity_limit·(1 + effort_limit/saturation_effort)`（即曲线与连续力矩交点），再算上下界；
+- 配置项只有 `saturation_effort`（[actuator_pd_cfg.py#L42-L49](https://github.com/isaac-sim/IsaacLab/blob/main/source/isaaclab/isaaclab/actuators/actuator_pd_cfg.py#L42-L49)）。**没有总功率上限**（`grep power` 在整个 actuator 模块无命中）。
+- 实例数值（可直接对照你的电机）[unitree.py#L32-L45](https://github.com/isaac-sim/IsaacLab/blob/main/source/isaaclab_assets/isaaclab_assets/robots/unitree.py#L32-L45)、[#L161-L177](https://github.com/isaac-sim/IsaacLab/blob/main/source/isaaclab_assets/isaaclab_assets/robots/unitree.py#L161-L177)：Go1 `effort_limit=23.7, velocity_limit=30.0, saturation_effort=23.7`；Go2 `effort_limit=23.5, saturation_effort=23.5, velocity_limit=30.0, stiffness=25.0, damping=0.5, friction=0.0`；G1 关节 `saturation_effort=180.0`、足 `80.0`。
+
+**"总功率上限"【未核实】**：Isaac Lab / legged_gym / unitree_rl_gym / unitree_rl_mjlab 里都**没有** `Σ|τ·q̇| ≤ P_max` 的实现。我唯一核到的功率相关代码是 Parkour 里**记录**功率（`max_power_per_timestep`，[parkour legged_robot.py#L662-L664](https://github.com/ZiwenZhuang/parkour/blob/main/legged_gym/legged_gym/envs/base/legged_robot.py#L662-L664)），不是限幅。想做电功率限幅，得自己加（【推断】在 MuJoCo 里可作为 clip 层加在力矩输出后）。
+
+**动作延迟（现成 API）**【原文】[actuator_pd_cfg.py#L52-L62](https://github.com/isaac-sim/IsaacLab/blob/main/source/isaaclab/isaaclab/actuators/actuator_pd_cfg.py#L52-L62)、[actuator_pd.py#L310-L365](https://github.com/isaac-sim/IsaacLab/blob/main/source/isaaclab/isaaclab/actuators/actuator_pd.py#L310-L365)：
+- `DelayedPDActuatorCfg(min_delay: int, max_delay: int)`，单位是 **physics steps**；`reset()` 时按 env 抽 `torch.randint(low=min_delay, high=max_delay+1)`，对 position/velocity/effort 三个 `DelayBuffer` 设 lag。
+- 还有 `ActuatorNetMLPCfg`：Isaac Lab 的 Go1 直接引用了 walk-these-ways 的 actuator net（`network_file=.../unitree_go1.pt, pos_scale=-1.0, vel_scale=1.0, input_order="pos_vel", input_idx=[0,1,2]`，注释写明 "taken from https://github.com/Improbable-AI/walk-these-ways"）。
+
+**官方 velocity 任务的默认 DR（比想象中保守）**【原文】[velocity_env_cfg.py#L150-L226](https://github.com/isaac-sim/IsaacLab/blob/main/source/isaaclab_tasks/isaaclab_tasks/manager_based/locomotion/velocity/velocity_env_cfg.py#L150-L226)：
+- 地面材质：`static_friction_range=(0.8,0.8)`、`dynamic_friction_range=(0.6,0.6)`、`restitution_range=(0.0,0.0)`、`num_buckets=64` → **默认根本没随机摩擦**（是点值）；
+- `add_base_mass` 操作 `add`，`(-5.0, 5.0)` kg（Go2 rough 覆盖为 `(-1.0, 3.0)`，[go2/rough_env_cfg.py#L33-L35](https://github.com/isaac-sim/IsaacLab/blob/main/source/isaaclab_tasks/isaaclab_tasks/manager_based/locomotion/velocity/config/go2/rough_env_cfg.py#L30-L35)）；
+- `base_com`：x/y ±0.05 m、z ±0.01 m；`reset_joints_by_scale`：joint pos `(0.5,1.5)`；`reset_base`：pose ±0.5 m / yaw ±3.14，速度 ±0.5；
+- `push_robot`：`interval_range_s=(10.0,15.0)`，xy 各 ±0.5 m/s。
+
+**DR 工具箱（按需开）**【原文】[events.py](https://github.com/isaac-sim/IsaacLab/blob/main/source/isaaclab/isaaclab/envs/mdp/events.py)：`randomize_rigid_body_material`(#L155)、`randomize_rigid_body_mass`(#L286)、`randomize_rigid_body_com`(#L400)、`randomize_rigid_body_collider_offsets`(#L441)、`randomize_physics_scene_gravity`(#L498，重力三轴)、`randomize_actuator_gains`(#L541，stiffness/damping)、`randomize_joint_parameters`(#L652，**joint friction + armature**)、`randomize_fixed_tendon_parameters`(#L838)。
+> 对轮足很关键：轮子的 `armature`（折算转子惯量）会直接改"固件速度环"的响应，属于必须打对的量（见 §3.3）。
+
+## 2. walk-these-ways（MIT Imitate Dogs / Margolis）
+
+论文：[arXiv:2212.03238](https://arxiv.org/abs/2212.03238)；代码：[Improbable-AI/walk-these-ways](https://github.com/Improbable-AI/walk-these-ways)。
+
+### 2.1 Actuator network【原文】
+- 结构：MLP `in_dim=6 → 2 层 ×32 → out_dim=1`，激活 **softsign**；输入 `joint_pos_err(t,t-1,t-2)` + `joint_vel(t,t-1,t-2)`，输出力矩；Adam `lr=8e-4, eps=1e-8`，batch 128，**100 epochs**，4:1 训练/验证，导出 TorchScript 到 `resources/actuator_nets/unitree_go1.pt`。[utils.py#L78-L110](https://github.com/Improbable-AI/walk-these-ways/blob/master/scripts/actuator_net/utils.py#L78-L110)
+- 仿真里替代 PD：`joint_pos_err = dof_pos − (action_scale·action + default) + motor_offsets`（[legged_robot.py#L930-L938](https://github.com/Improbable-AI/walk-these-ways/blob/master/go1_gym/envs/base/legged_robot.py#L930-L938)）；注意 `_compute_torques` 在 decimation 循环**内**每个物理步都调用（[#L74-L75](https://github.com/Improbable-AI/walk-these-ways/blob/master/go1_gym/envs/base/legged_robot.py#L74-L75)）。
+- **采集方式/时长/激励信号【未核实】**：仓库只有 `train/eval/utils.py`，数据来自 `go1_gym_deploy` 真机跑次落盘的 `log.pkl`（[deployment_runner.py#L37](https://github.com/Improbable-AI/walk-these-ways/blob/main/go1_gym_deploy/utils/deployment_runner.py#L37)）；**没找到** chirp/sine sweep 专用激励脚本，论文只说"following [22] 训练 actuator network 捕捉 PD 误差与实现力矩的非理想关系"，未给采集分钟数。
+
+### 2.2 延迟【原文 + 推断】
+- 【原文】"we identify a latency of around **20 ms** in our system and model this as a **constant action delay** during simulation"（论文 §3.3，PDF 文本 L372-L373）。
+- 【原文】代码里是可配的动作延迟缓冲：`lag_timesteps = 6`、`randomize_lag_timesteps = True`（[train.py#L30-L31](https://github.com/Improbable-AI/walk-these-ways/blob/master/scripts/train.py#L30-L31)、[legged_robot_config.py#L269-L270](https://github.com/Improbable-AI/walk-these-ways/blob/master/go1_gym/envs/base/legged_robot_config.py#L269-L270)），`target = lag_buffer[0] + default`（[legged_robot.py#L922-L924](https://github.com/Improbable-AI/walk-these-ways/blob/master/go1_gym/envs/base/legged_robot.py#L922-L924)）。
+- 【推断】因为 `_compute_torques` 在 decimation 循环内，`lag_timesteps=6` × `sim.dt=0.005` = **约 30 ms** 动作延迟；与论文写的 20 ms 同量级但不等，两者别混着引。注意这是**固定延迟**（缓冲长度固定），不是随机化延迟。
+
+### 2.3 观测噪声 / DR / 策略【原文】
+- 噪声 scales：dof_pos 0.01、dof_vel 1.5、lin_vel 0.1、ang_vel 0.2、imu 0.1、gravity 0.05、contact_states 0.05、height 0.1（[#L382-L393](https://github.com/Improbable-AI/walk-these-ways/blob/master/go1_gym/envs/base/legged_robot_config.py#L382-L393)）。
+- 代码 DR（[go1_config.py#L89-L104](https://github.com/Improbable-AI/walk-these-ways/blob/master/go1_gym/envs/go1/go1_config.py#L89-L104)）：base mass `[-1,3]` kg、friction `[0.05,4.5]`、restitution `[0,1]`、CoM `[-0.1,0.1]`、motor strength `[0.9,1.1]`；`Kp/Kd factor` **关掉**（范围备着 `[0.8,1.3]`/`[0.5,1.5]`，[#L258-L262](https://github.com/Improbable-AI/walk-these-ways/blob/master/go1_gym/envs/base/legged_robot_config.py#L258-L262)）；`motor_offset_range=[-0.05,0.05]`（[#L344](https://github.com/Improbable-AI/walk-these-ways/blob/master/go1_gym/envs/base/legged_robot_config.py#L344)）。
+- 论文 Table 6：Payload `−1.0~3.0 kg`、Motor Strength `90~110 %`、**Joint Calibration `−0.02~0.02 rad`**、Ground Friction `0.40~1.00`、Restitution `0.00~1.00`、Gravity Offset `±1.0 m/s²`；**只在平地训练、不做地形随机化**（作者明说为让 MoB 研究成立）。
+- 策略/估计器：policy `512-256-128` ELU，输入 **30 步历史**（obs、commands、behaviors、previous actions、4 足相位 sin 计时参考）；另有 `256-128` ELU 估计器监督学习预测**机体速度与地面摩擦**，论文自述"没分析这个估计的影响，但可视化有用"（PDF L314-L320）；控制 50 Hz，`kp=20, kd=0.5`。
+
+**可抄点**：① "先做系统辨识再随机化"的取舍哲学（论文原话：直接辨识不变性质可以避免过度保守的 DR）；② 固定 20–30 ms 动作延迟；③ 用 30 步历史 + 监督估计速度/摩擦（不需要足端力）。
+
+## 3. Unitree 官方：unitree_rl_gym / unitree_rl_mjlab
+
+### 3.1 unitree_rl_gym（Isaac Gym）【原文】
+- [go2_config.py](https://github.com/unitreerobotics/unitree_rl_gym/blob/main/legged_gym/envs/go2/go2_config.py)：`decimation=4`、`action_scale=0.25`、`stiffness=20`、`damping=0.5`、`soft_dof_pos_limit=0.9`、`base_height_target=0.25`、`torques=-0.0002`、`dof_pos_limits=-10.0`；DR 继承 legged_gym（friction 0.5–1.25、15 s 推一次 ±1 m/s）。
+- **全仓 `grep DCMotor` 无命中**（29 个 .py 全查）→ Unitree 的 Isaac Gym 版用的是理想 PD + URDF effort 限幅，**没有力矩-转速曲线**。
+- sim2sim→sim2real 一致性做法：`deploy/deploy_mujoco/`（MuJoCo）与 `deploy/deploy_real/` 共用同一份 `config.py` + 同一段 obs 拼装代码，obs 顺序 `[ang_vel*0.25, gravity, cmd*cmd_scale, (qj−default)*dof_pos_scale, dqj*dof_vel_scale, last_action, sin_phase, cos_phase]`（[deploy_real.py#L188-L196](https://github.com/unitreerobotics/unitree_rl_gym/blob/main/deploy/deploy_real/deploy_real.py#L188-L196)、[deploy_mujoco.py#L114-L115](https://github.com/unitreerobotics/unitree_rl_gym/blob/main/deploy/deploy_mujoco/deploy_mujoco.py#L114-L115)）；yaml 里显式列 `control_dt=0.02 / leg_joint2motor_idx / kps / kds / default_angles / action_scale / cmd_scale / max_cmd / num_obs`（例：[configs/g1.yaml](https://github.com/unitreerobotics/unitree_rl_gym/blob/main/deploy/deploy_real/configs/g1.yaml)；注意仓库只带 h1/g1/h1_2 的 yaml）。**没有**滤波、动作延迟、观测延迟的处理。
+
+### 3.2 unitree_rl_mjlab（MuJoCo + mjlab）【原文】
+[velocity_env_cfg.py](https://github.com/unitreerobotics/unitree_rl_mjlab/blob/main/src/tasks/velocity/velocity_env_cfg.py)：`timestep=0.005`、`decimation=4`（50 Hz）。
+- 观测噪声（逐项 `UniformNoise`）：base_ang_vel `±0.2`、projected_gravity `±0.05`、joint_pos `±0.01`、joint_vel `±1.5`、height_scan `±0.1`（再 `scale=1/5.0`）；critic 额外有 base_lin_vel `±0.5`、foot_height、foot_air_time（L59-L105）。
+- DR 事件（L209-L252）：`push_robot` 每 `(5.0, 6.0)` s，x/y `±0.5 m/s`、z `±0.4`、roll/pitch `±0.52 rad`、yaw `±0.78 rad`；`foot_friction` 足底 geom 摩擦 `(0.3, 1.6)` 且四足共享同值；**`encoder_bias` 编码器零位偏差 `±0.015 rad`**；`base_com` 三轴各 `±0.05 m`。
+- 执行器（[go2_constants.py#L40-L66](https://github.com/unitreerobotics/unitree_rl_mjlab/blob/main/src/assets/robots/unitree_go2/go2_constants.py#L40-L66)）：hip/thigh `stiffness=20, damping=1.0, effort_limit=23.5, armature=0.01`；calf `stiffness=40, damping=2.0, effort_limit=45, armature=0.02`。G1 用 `ElectricActuator(reflected_inertia=..., velocity_limit=37/32/20/22, effort_limit=25/88/139/5)`，Kp 由 `armature·(2π·10)²`、Kd 由阻尼比 2.0 推出来（[g1_constants.py#L100-L126](https://github.com/unitreerobotics/unitree_rl_mjlab/blob/main/src/assets/robots/unitree_g1/g1_constants.py#L100-L126)）——**这套"由反射惯量 + 10 Hz 固有频率 + 阻尼比 2.0 反推 PD"的做法，对轮子的速度环特别值得抄**。
+- **默认没开延迟**：`grep delay_min_lag|delay_max_lag` 在 `unitree_rl_mjlab/src` 无命中——即官方 mjlab 任务默认不做延迟随机化，但**框架支持**（见 §3.3）。
+
+### 3.3 mjlab 框架的延迟工具（最现成、最省事）【原文】
+- **执行器延迟（动作延迟）**：任何 actuator cfg 都能加 `delay_min_lag / delay_max_lag / delay_hold_prob / delay_update_period`（单位 **physics steps**，每 env 每 step 从 `[min,max]` 抽 lag）。文档原文："板载 PD 以 kHz 跑并有编码器直读，但来自策略的位置目标因推理时间与总线周期**到得晚**；actuator delay 建模这一点——**命令目标被延迟，但控制律仍看到新鲜关节状态**"，与"观测延迟（旧状态进策略）"是往返的两条腿。示例超参：`delay_min_lag=2, delay_max_lag=5, delay_hold_prob=0.3, delay_update_period=10`；换算例子"500 Hz 物理（2 ms/step）时 `delay_min_lag=2` 即 4 ms"（[docs/source/actuators.rst](https://github.com/mujocolab/mjlab/blob/main/docs/source/actuators.rst)）。
+- **观测延迟**：按 obs term 配 `delay_min_lag/delay_max_lag/delay_per_env/delay_hold_prob/delay_update_period/delay_per_env_phase`（[observation_manager.py#L35-L55](https://github.com/mujocolab/mjlab/blob/main/src/mjlab/managers/observation_manager.py#L35-L55)）；底层 `DelayBuffer` 支持"均匀抽 lag / 周期重抽 / 每 env 相位错开 / hold 概率制造时间相关性"（[delay_buffer.py](https://github.com/mujocolab/mjlab/blob/main/src/mjlab/utils/buffers/delay_buffer.py)）；处理管线顺序 `compute → noise → clip → scale → delay → history`（L21）。
+
+## 4. HIM/HIMLoco 与 DreamWaQ（纯本体感受补偿状态估计误差与地形）
+
+### 4.1 HIM/HIMLoco
+论文：[arXiv:2312.11460](https://arxiv.org/abs/2312.11460)；代码：[InternRobotics/HIMLoco](https://github.com/InternRobotics/HIMLoco)。
+- 【原文】观测只有本体感受（关节编码器 + IMU）：`o_t = [指令速度, 关节位置, 关节速度, 角速度, 重力方向, 上一动作]`；**value/critic 才用特权信息**（外加力 + 地面高度）（PDF L240-L250、L406）。
+- 【原文】history **H = 5**；extractor 是 3 层 MLP `512-256-128`；embedding = 显式速度 `v̂_t` + 隐式响应 `l̂_t`，`l̂_t ∈ R^16`，用 **SwAV 式对比学习**（同轨迹为正样本）对齐后继观测 `o_{t+1}`，同时用 ground truth 回归 `v̂_t`（PDF L293-L320）。
+- 【原文】训练：4096 envs、rollout 100 steps、1000 rollouts ≈ 单卡 4090 **1 小时**（2000 rollouts 更好）；Table 1 里自报 200 M samples（RMA 1,280 M）。
+- 【原文】DR 表（PDF Table 6）：body/link mass `0.8–1.2×`、CoM `±0.1 m`、payload `−1~3 kg`、地面摩擦 `0.2–2.75`、restitution `0–1`、motor strength `0.8–1.2×`、Kp `0.8–1.2 × 20`、Kd `0.8–1.2 × 0.5`、初始关节位置 `0.5–1.5×`、**System Delay `[0, 3Δt]`**、外力 `±30 N` 三轴。
+- 【原文】地形课程：走到线性跟踪奖励的 **80%** 升级；楼梯 `5 + 18·level/9` cm、离散步高 `5 + 10·level/9` cm，比例 0.1/0.2/0.6/0.1。
+- 【原文】真机对比（Table 2，各 20 次试验）：楼梯短程成功率 **100% vs RMA 60%**；长程楼梯数 **176.5±7.81 vs 75.35±19.98**；未见地形 **85% vs 45%**；可变形斜坡 **55% vs 10%**；缺台阶 **100% vs 0%**。
+- 【原文】HIMLoco 代码里的延迟实现（**与论文的 [0,3Δt] 不同**）：每个策略步、每个 env 抽 `delay_steps = randint(0, decimation)`，`delayed_actions[:, i] = last_actions + (actions − last_actions)·(i >= delay_steps)`，即延迟量化到 physics step（dt=5 ms → **0~15 ms**）（[legged_robot.py#L91-L99](https://github.com/InternRobotics/HIMLoco/blob/main/legged_gym/legged_gym/envs/base/legged_robot.py#L91-L99)）；DR 代码（[legged_robot_config.py#L124-L160](https://github.com/InternRobotics/HIMLoco/blob/main/legged_gym/legged_gym/envs/base/legged_robot_config.py#L124-L160)）：payload `[-1,2]`、CoM `±0.05`、link mass `[0.9,1.1]`、friction `[0.2,1.25]`、motor strength `[0.9,1.1]`、Kp/Kd `[0.9,1.1]`、初始关节 `[0.5,1.5]`、外力 `±30 N` 每 8 s、push 每 16 s、`delay = True`。
+
+### 4.2 DreamWaQ
+论文：[arXiv:2301.10602](https://arxiv.org/abs/2301.10602)；轮足版代码：[ShengqianChen/DreamWaQ_Go2W](https://github.com/ShengqianChen/DreamWaQ_Go2W)（另有 [DreamWaQ++](https://arxiv.org/abs/2409.19709)，**未读，未核实**）。
+- 【原文】CENet = context-aided estimator：从观测历史 `o_{t−H:t}`（**H = 5**）**同时**估计机体速度 `v_t`(3 维) 与隐地形上下文 `z_t`（latent）；`L_CE = L_est + L_VAE`，`L_est = MSE(ṽ,v)`，`L_VAE = MSE(õ_{t+1}, o_{t+1}) + β·D_KL`（β-VAE，[PDF L192-L220](https://arxiv.org/pdf/2301.10602)）。
+- 【原文】策略输入 `o_t + v_t + z_t`，**不需要特权信息**；critic 用 `s_t = [o_t, v_t, d_t(扰动力), h_t(高度扫描)]`——即"地形想象力"只在训练时通过 VAE 重建/隐变量进入 actor。
+- 【原文】DR 表（Table II）：payload `[−1,2] kg`、Kp factor `[0.9,1.1]`、Kd factor `[0.9,1.1]`、motor strength `[0.9,1.1]`、CoM shift `[−50,50] mm`、friction `[0.2,1.25]`、**System delay `[0.0,15.0] ms`**。
+- 【原文】部署：CENet 与策略**同步 50 Hz** 跑在板上 Intel NUC；PD 200 Hz `Kp=28, Kd=0.7`；训练 4096 envs × 1000 iterations。
+- 【原文】鲁棒性量化：最大推力 `0.714±0.096 m/s`、存活率 `82.37±2.49%`，对比 EstimatorNet 基线 `0.511±0.053` / `20.51±6.44%`（Table III）。Fig.5 给了 CENet vs EstimatorNet 的估计误差曲线（**具体数值在图里，未核实**）。
+- 【原文】官方实现细节（Go2W 仓库）：actor `512-256-128`，actor 输入维 = `num_obs + 16(latent) + 3(vel)`；VAE encoder 用 history encoder，输出 `num_latent*4=64` 再分出 `latent_mu/var(16)` 与 `vel_mu/var(3)`，decoder `[64,128] → num_obs`（[actor_critic_DWAQ.py#L1-L40](https://github.com/ShengqianChen/DreamWaQ_Go2W/blob/main/rsl_rl-1.0.2/rsl_rl/modules/actor_critic_DWAQ.py#L20-L40)、[estimator.py#L8-L45](https://github.com/ShengqianChen/DreamWaQ_Go2W/blob/main/rsl_rl-1.0.2/rsl_rl/modules/estimator.py#L8-L45)、[on_policy_runner.py#L61-L70](https://github.com/ShengqianChen/DreamWaQ_Go2W/blob/main/rsl_rl-1.0.2/rsl_rl/runners/on_policy_runner.py#L61-L70)）。
+
+### 4.3 DreamWaQ_Go2W：**16 电机 + 轮子**，最贴近你们（强烈建议细读）【原文】
+- [go2w_config.py](https://github.com/ShengqianChen/DreamWaQ_Go2W/blob/main/legged_gym/legged_gym/envs/go2w/go2w_config.py)：`num_actions=16`、`num_observations=73`、`num_obs_hist=5`、`num_privileged_obs=320`、`decimation=4`；`stiffness={'hip':40,'thigh':40,'calf':40,'foot':0}`、`damping={... 'foot':0.5}`、`action_scale=0.25`、`vel_scale=10.0`、`wheel_armature_add`、reward `wheel_acc = -1e-7`；DR：payload `[-1,2]`、CoM `±0.05`、friction `[0.25,1.25]`、motor strength `[0.9,1.1]`、Kp/Kd `[0.9,1.1]`、初始关节 `[0.5,1.5]`、外力 `±30 N`。
+- **轮子怎么变成速度环**（正是你们的固件速度环）：`actions_scaled[wheel]=0`、`dof_err[wheel]=0`、`vel_ref[wheel] = actions*vel_scale`，力矩 `τ = Kp·(...) + Kd·(vel_ref − q̇)`（[go2w_robot.py#L470-L490](https://github.com/ShengqianChen/DreamWaQ_Go2W/blob/main/legged_gym/legged_gym/envs/go2w/go2w_robot.py#L470-L490)）；真机 yaml 里轮子 `kps=0, kds=0.5`（[configs/g2w.yaml](https://github.com/ShengqianChen/DreamWaQ_Go2W/blob/main/deploy/deploy_real/configs/g2w.yaml)）。
+- **部署一致性措施（很具体，建议照抄）**：yaml 同时给 `default_sim_angles` 与 `default_real_angles`（仿真/真机零位差异显式映射）、`joint2motor_idx`、`wheel_real_indices / wheel_sim_indices`（左右轮序不同）、`wheel_speed`、逐项 obs scale（`lin_vel_scale=2.0, ang_vel_scale=0.25, cmd_scale=[2,2,0.25], dof_err_scale=1.0, dof_vel_scale=0.05`）、`control_dt: 0.02`。
+- 真机 obs 拼装与仿真一致的顺序：`[ang_vel*0.25(3), gravity(3), cmd*cmd_scale(3), (qj−default_sim_angles)(16, 轮子置 0), dqj*0.05(16), qj(16, 轮子置 0), last_action(16)] = 73`（[deploy_real_go2w_DWAQ.py#L244-L265](https://github.com/ShengqianChen/DreamWaQ_Go2W/blob/main/deploy/deploy_real/deploy_real_go2w_DWAQ.py#L244-L265)）。
+
+## 5. RMA（Rapid Motor Adaptation）— 关键：它**依赖**足端接触
+
+论文：[arXiv:2107.04034](https://arxiv.org/abs/2107.04034)。
+- 【原文】两阶段：① base policy `π(x_t ∈ R^30, a_{t−1} ∈ R^12, z_t ∈ R^8)` 跑 100 Hz，`z_t = μ(e_t)`，`e_t ∈ R^17`（质量 3 + 电机强度 12 + 摩擦 1 + 局部地形高度 1），π 与 μ 端到端用 model-free RL 联合训；② adaptation `φ` 用 **k=50（0.5 s）** 的 `(x, a)` 历史预测 `ẑ_t`，1-D CNN，MSE 损失，**on-policy**（随机初始化 φ 后自我 rollout 采数据，类似 DAgger）。
+- 【原文】异步部署：φ 约 **10 Hz** 更新 `ẑ`，π 100 Hz 消费最新 `ẑ`；论文说这个异步"对无缝部署至关重要"（并说直接吃历史的单体策略 (a) 步态不自然 (b) 板上只能跑 10 Hz）。
+- ⚠️ **足端力传感器的坑（对你们最关键的一条）**【原文】：`x_t ∈ R^30` = 12 关节位置 + 12 关节速度 + roll/pitch + **4 个二值足端接触指示**；硬件段明确写 "roll and pitch from the IMU sensor and the **binarized foot contact indicators from the foot sensors**"（PDF L248-L250、L269）。→ **RMA 论文没有给出"无足端力传感器"时的替代方案**，接触位是输入的一部分；【未核实】A1 上这 4 个接触位具体如何取得（论文只写 foot sensors，我没找到"A1 是否原生带足力传感器"的权威说明）。→ 可行替代（【推断】，非原文）：用 HIM/DreamWaQ 的 history encoder 从本体感受**估计**接触概率，或去掉 4 个接触位改由速度估计器 + 隐变量承担；但**不能拿 RMA 论文的参数直接宣称等价**。
+- 【原文】DR 训练/测试范围（Table I）：friction `[0.05,4.5]`/`[0.04,6.0]`；Kp `[50,60]`/`[45,65]`；Kd `[0.4,0.8]`/`[0.3,0.9]`；payload `[0,6]`/`[0,7]` kg；CoM `±0.15`/`±0.18` cm；motor strength `[0.90,1.10]`/`[0.88,1.22]`；re-sample probability `0.004`/`0.01`。
+- 【原文】奖励 10 项与权重：Forward `min(vx,0.35)`、Lateral/Rotation `−‖vy‖²−‖ω_yaw‖²`、Work `−|τ·(q−q_{t−1})|`、Ground Impact `−‖f_t−f_{t−1}‖²`、Smoothness、Action Magnitude、Joint Speed、Orientation、Z Accel、Foot Slip `−‖diag(g_t)·v_f‖²`；权重 `20, 21, 0.002, 0.02, 0.001, 0.07, 0.002, 1.5, 2.0, 0.8`；惩罚系数与扰动难度用固定课程加大；**地形不设课程**（fractal octaves=2, lacunarity=2.0, gain=0.25, z-scale=0.27）；终止：高度 <0.28 m、roll >0.4 rad、pitch >0.2 rad。
+- 【原文】真机结果（Fig.3）：Uneven Foam 80%（A1 自带控制器 20%，去掉 adaptation 0%）、Upward Incline 100%、Mattress 100%、Step Down-15 100%、Step Up-6 100%、Step Up-8 60%；负载扫描到 12 kg。
+
+## 6. Parkour / Barkour / DeepMind 风格
+
+### 6.1 Extreme Parkour【原文】[arXiv:2309.14341](https://arxiv.org/abs/2309.14341)
+- **ROA（regularized online adaptation）** 单阶段自适应 + **MTS（mixture of teacher and student）** 缓解模仿学习的分布漂移；学生用 convnet-GRU 吃深度图替代 privileged scandots；`θ_obs = θ_pred if |θ_pred − d̂_w| < 0.6 else d̂_w`。
+- 延迟：深度相机 `10 ± 2 Hz`，**强制常数深度延迟 0.08 s**（t_p < 0.08 就 sleep 补齐），**本体感受延迟固定 0.016 s**；深度 backbone 10 Hz + base policy 50 Hz，UDP；单卡 3090 < 20 h。
+- 真机验证：每种地形每难度 **5 次试验**记录成功率，最难地形比基线高 20–80%；Table 3：本方法 `MXD 0.92±0.19`、Oracle `0.94±0.19`、Both `0.12±0.07`、Mask `0.05±0.07`。**DR 细节正文未展开、附录未核到 →【未核实】**。用仿真足端接触计数做 `r_clearance` 惩罚防踩边缘（[PDF L264](https://arxiv.org/pdf/2309.14341)），与力传感器无关。
+
+### 6.2 Robot Parkour Learning【原文】[arXiv:2309.05665](https://arxiv.org/abs/2309.05665)
+- **软/硬动力学约束地形课程**：先在可穿透（soft dynamics）约束下预训练每个技能，再用硬约束微调；特权物理信息 `e_t` 用 RMA/ROA 式采样（地形摩擦、基座 CoM、电机强度等）。
+- DR 表（PDF Table 9）：Added Mass `[1.0,3.0] kg`、CoM x `[−0.05,0.15]`/y `[−0.1,0.1]`/z `[−0.05,0.05]` m、Friction `[0.5,1.0]`、Motor Strength `[0.9,1.1]`、**Forward Depth Latency `[0.2,0.26] s`**、相机位置 `0.27±0.01/0.0075±0.0025/0.033±0.0005 m`、pitch `[0,5]°`、FOV `[85,88]°`、**Proprioception Latency `[0.0375,0.0475] s`**；每技能 100 次试验 × 3 seeds 报成功率，蒸馏用 GRU + DAgger。
+
+### 6.3 Barkour（Google DeepMind）【原文】[arXiv:2305.14654](https://arxiv.org/abs/2305.14654)
+- DR 表（Table II）：Torso mass `[2.0,6.5] kg`、**Torso inertia `[40%,165%]`**、Torso 线速度扰动 `[0,1] m/s` **每 10 s**、Ground friction `[0.5,1.25]`、**Position gain `[15,20] N·m/rad`**、Damping gain `[0.5,0.75] N·m·s/rad`、**Joint static friction `[0,0.7]`**。
+- **最有价值的一条经验结论**【原文】：Rudin 那套默认 DR 在 <1 m/s 够用，但**敏捷动作（跳、爬坡，>2 m/s）会出现明显 sim2real gap**；补上 **torso inertia + motor modeling + joint static friction** 才成功迁移，作者说这些"对真机迁移是 critical 的"。
+- 真机：T-Motor **AK80-6**（Elmo G-SOLTWIR50/100SE2S、24 V、峰值 **12 N·m/关节**）；专家策略每障碍 70 次试验、generalist Transformer 19 次；Weave Poles **100%**（9.27±0.87 s）、A-Frame **100%**（7.95±0.73 s）、Broad Jump **38%**（2.45±0.54 s / 1.7±0.24 m/s）；蒸馏数据集 **17,636 episodes ≈ 57.58 h**。
+
+## 7. 多模态延迟随机化 MMDR（arXiv 2109.14549）【原文】
+
+论文：[Vision-Guided Quadrupedal Locomotion in the Wild with Multi-Modal Delay Randomization](https://arxiv.org/abs/2109.14549)（Imai, Zhang, Zhang, ... Xiaolong Wang）。
+
+**真机测得的延迟（Table I/II，最能直接抄的量）**
+
+| 环节 | 延迟 |
+|---|---|
+| 深度相机 sensor | `0.033 ± 0.004 s` |
+| 关节状态 / IMU sensor（同一 SDK 进程，与执行延迟同频） | `0.0025 ± 0.001 s` |
+| 网络推理（state only） | `0.004 ± 0.026 s` |
+| 网络推理（state + vision，用作随机化依据） | `0.040 ± 0.009 s` |
+
+**做法**
+- 本体感受：**每个 episode 抽一个延迟**，用两个相邻状态的**线性插值**得到延迟观测（本体感受平滑），全 episode 使用 → 与真机同样的状态转移。视觉：深度相机只有 30 Hz（本体感受 ~1 kHz），帧间不连续，所以**离散**随机化——维护长度 **4k** 的深度图缓冲、切成 4 个子缓冲、**每子缓冲随机取 1 帧**堆成 4 帧输入；k=4 最好（消融 4/8/16 → 0.64/1.28/2.56 s 历史）。仿真 400 Hz、控制 25 Hz。
+- 其他 DR（Table III）：Mass `[0.8,1.2]×`、Motor Friction `[0,0.05] Nms/rad`、Motor Strength `[0.8,1.2]×`、Lateral Friction `[0.5,1.25] Ns/m`、Inertia `[0.5,1.5]×`、**Proprioception Latency `[0,0.04] s`**、Kp `[40,90]`、Kd `[0.4,0.8]`；深度图随机挑 3–30 像素置为最大深度（10 m）模拟缺失。
+
+**量化收益**
+- 测试延迟 0.04–0.12 s：Moving Distance `MMDR 28.7±7.7` > `No-Delay 26.5±5.0` > `Frame-Extract 24.9±3.1` > `Interpolation 21.4±2.7` > `Fixed-Delayed 18.5±0.8` > `State-Only 2.9±0.5`（Fig.7）。
+- 动态障碍环境：Moving Distance 比 No-Delay 提升近 **100%**，Collision Steps 降低 **475%**（对 Frame-Extract 340%）；训练样本效率与 No-Delay 持平（"随机化延迟几乎不损性能"）。
+
+## 8. 真机在线自适应/微调代表工作
+
+### 8.1 Smith et al., "Learning to Walk in the Real World with Minimal Human Effort"【原文】[arXiv:2002.08550](https://arxiv.org/abs/2002.08550)
+- 机器人 Minitaur（8 个直驱电机），**观测 = 电机角度 + IMU + 前 6 个时间步的上一动作**；从非实时 Linux 工作站（Xeon E5-1650 V4）以 **约 50 Hz** 直接控制；每个控制步做 **2 次梯度更新**。
+- PD 增益极低：`0.5 / 0.005`；动作额外过 **5 Hz 一阶 Butterworth 低通**（论文明确理由是"减少随机探索造成的电机磨损"）。
+- 算法：**安全约束 MDP + SAC**，对熵与安全约束各用一个拉格朗日乘子做对偶梯度下降；网络 2×256 ReLU，Adam lr `3e-4`。
+- 自动化 reset：多任务（前进/后退/转向）+ 学习 reset 控制器 + 工作空间边界处理；论文报"平地 **零人工 reset**"（对比先前工作 100+ 次人工 reset），挑战地形（床垫 200k steps 5.5 h / 150k steps 4.5 h）仍需 20–30 次人工 reset；两组策略 1.5 h ≈ 60k steps。
+- **注意**：这是纯真机 RL（仿真只用于分析），和你们"MuJoCo 里训好再上真机"是不同的路线；但它给的"50 Hz + 5 Hz 动作低通 + 低 PD 增益 + 板载奖励"是可借鉴的安全措施。
+
+### 8.2 其它
+- RMA / HIM / DreamWaQ / Extreme Parkour 都是 **sim 训练、零样本迁移、真机不微调**（RMA 原话："deploy it in the real world without any modification or fine-tuning"）。
+- 【未核实】我**没有**找到"针对轮足、在真机上做在线自适应/微调"的代表工作（只核到仿真侧的 Go2W）。
+
+## 9. 优先级建议（针对"16 电机 + 固件速度环轮子 + 无足端力 + MuJoCo"）
+
+**先做（不需要足端力传感器、不需要重训策略）**
+1. **执行器模型**：把 Isaac Lab `DCMotor` 的 τ–ω 曲线 + 连续力矩 clamp 搬进 MuJoCo 的力矩输出层（[公式与代码](https://github.com/isaac-sim/IsaacLab/blob/main/source/isaaclab/isaaclab/actuators/actuator_pd.py#L203-L310)）；用 `saturation_effort(τ_stall)/velocity_limit(q̇_max)/effort_limit(τ_con)` 三个数标定你的 hip/thigh/calf/wheel。**Sim2sim 与 sim2real 都用同一份参数**，这一步不需要重训。
+2. **轮子的反射惯量**：mjlab 的 `armature`（Go2 hip `0.01`、calf `0.02`）+ DreamWaQ_Go2W 的 `wheel_armature_add`；轮子是固件速度环，仿真里若不给 armature，轮速响应会过快、策略会学到假的速度环。**这是最容易漏、代价最大的一条**（【推断】）。
+3. **部署一致性清单**：照抄 Go2W yaml 的 `joint2motor_idx / default_sim_angles vs default_real_angles / wheel_sim_indices / 逐项 obs scale / control_dt`，并把 obs 拼装代码在 sim2sim(MuJoCo) 与真机之间**共用同一份**（unitree_rl_gym 的 deploy_mujoco/deploy_real 就是这么做的）。
+
+**再重训一次就能吃到的收益（仍不需要足端力）**
+4. **延迟随机化**（mjlab 现成字段）：`actuator delay_min_lag/delay_max_lag`（单位=物理步）+ obs delay `delay_min_lag/max_lag/hold_prob/update_period`。数值起点：DreamWaQ `0–15 ms`、HIM 论文 `[0, 3Δt]`（50 Hz → 0–60 ms）、WTW 固定 20–30 ms、EP 深度 80 ms/本体 16 ms、Robot Parkour 本体 `37.5–47.5 ms`。你们 500 Hz 电机 → 1 物理步 = 2 ms，`delay_min_lag=0, max_lag=15` 覆盖 0–30 ms。
+5. **DR 组合**（跨论文共识）：`encoder_bias ±0.015 rad`（mjlab）、motor strength `0.9–1.1`、Kp/Kd `0.9–1.1`、payload `−1~3 kg`、CoM `±0.05 m`、friction `0.2–1.25`、base mass `±1~5 kg`、外力 `±30 N`、每 5–15 s 推一次 `±0.5 m/s`。Barkour 的教训：高速/敏捷动作要额外加 **torso inertia、motor modeling、joint static friction**。
+6. **估计器路线选一个**：HIM（H=5，MLP 512-256-128，latent 16 + 对比学习）或 DreamWaQ（H=5，β-VAE，latent 16 + 显式速度回归，50 Hz 板上同步跑）。两者都**只要本体感受**、都**不需要接触传感器**；HIM 的真机对比数字最全（§4.1）。
+
+**不要直接抄**
+7. RMA 的观测定义（含 4 个足端接触位 + 论文明确写了 foot sensors）；若要 RMA 式自适应，必须把接触位换成估计量并重新验证（论文未给该替代方案）。
+
+## 10. 未核实清单（按"缺失的原文"列）
+
+1. `leggedrobotics/legged_gym` 的 **"legged-robots 分支"不存在**（分支只有 algorithms/dev/pe/gh-pages/master，GitHub API 查询）。你需要的应是 Isaac Lab。
+2. **"总功率上限"**（Σ|τ·q̇| ≤ P_max）在 Isaac Lab / legged_gym / unitree_rl_gym / unitree_rl_mjlab **都没找到实现**；legged_gym 也没有 `action_delay_steps` / `ACTION_DELAY`。我只核到 Parkour 的功率**记录**。若你手上有具体某个仓库带这个公式，需要再给线索。
+3. **walk-these-ways actuator net 的数据采集时长与激励方式**（chirp/sine sweep/随机走动）在论文正文与仓库里都没写；仓库只有 `train.py/eval.py/utils.py`，数据来自真机部署落盘的 `log.pkl`。采集分钟数：未核实。
+4. **RMA 在 A1 上如何取得 4 个二值接触位**：论文文字写 "foot sensors"，但没有说明传感器型号/是否原生；我无法确认 A1 是否自带足端力传感器。**这条直接决定你们能不能"照抄 RMA 观测定义"——目前判定为不能。**
+5. Extreme Parkour 的 **DR 细节/附录**未核到（正文没有 DR 表）；DreamWaQ Fig.5 的**具体估计误差数值**只在图里，未核实；DreamWaQ++（2409.19709）只有标题/链接，未读。
+6. Isaac Lab 的 `DelayedPDActuatorCfg` 我只确认了 API 存在与实现机制；**官方 velocity 任务是否默认启用**，我只检查了 `unitree.py / go1 / go2 / anymal_d` 的配置（未命中），**没有做全仓搜索**。
+7. 我**没有**找到"轮足机器人在真机上做在线自适应/微调"的代表工作（只核到仿真侧 Go2W）。
