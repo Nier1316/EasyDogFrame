@@ -152,3 +152,64 @@ app.close()
 1. 跑 §2.3 的 Isaac 侧资产脚本 → 补齐资产 diff 表（**含 `art.joint_names` 与 `joint_order` 的比对**）；
 2. 依 §3 表选资产统一方案（建议 (i)：URDF importer 统一到简化 URDF）；
 3. 然后才进 Phase 0 的 P0.1/P0.2（先用 `--duration 0.1 --max_iterations 1` 跑通 smoke test，再上正式拟合）。
+
+
+---
+
+## 5. 追加核对（2026-10-02 第二批）：资产来源已锁定，但发现一个 **P0 阻塞项**
+
+### 5.1 仓库改为持久位置（`/tmp` 会被系统清理）
+
+⚠️ 本次核对中 `/tmp/pace_repo`、`/tmp/pace_mjlab` **被系统清理掉了**（`/tmp` 是易失的）。
+已改克隆到**持久目录**，后续请一律用这里：
+
+| 仓库 | 路径 | commit |
+|---|---|---|
+| 官方 PACE | `/home/sysu/pace/refs/pace-sim2real` | `f07259c` |
+| mjlab 移植版 | `/home/sysu/pace/refs/pace-sim2real-mjlab` | `f860aac` |
+| **上游 ANYbotics 描述** | `/home/sysu/pace/refs/anymal_d_simple_description` | `d5bf4dc` |
+
+### 5.2 ✅ 资产来源锁定：两边看的是**同一份上游模型**
+
+- Isaac Lab 的 `ANYMAL_D_CFG` 文档串明确列出上游为
+  **`ANYbotics/anymal_d_simple_description`**（`isaaclab_assets/robots/anymal.py:18`），
+  USD 位于 `ISAACLAB_NUCLEUS_DIR/Robots/ANYbotics/ANYmal-D/anymal_d.usd` —— **在 NVIDIA Nucleus 云端，本地没有**。
+- **mjlab 打包的那份 URDF 与上游 ANYbotics URDF 字节完全相同**：
+  `diff -q` 零差异，两者都是 **59405 B**。
+- ⇒ 「统一到 Isaac 的 USD」与「统一到简化 URDF」在**源头**上是同一件事，**前提是 NVIDIA 的 USD 转换忠实**
+  （这条仍需 Isaac 侧实测确认，见 §5.4）。**因此很可能不需要做 USD→MJCF 转换**。
+- ⚠️ 附带注意：Isaac 的 ANYmal 配置还引用一个 **ActuatorNet LSTM**（`ActuatorNets/ANYbotics/anydrive_3_lstm_jit.pt`，云端）。
+  PACE 用 `PaceDCMotorCfg` 覆盖了执行器，理论上不加载它；但这是**隐藏的网络依赖**，首次 Isaac 运行要留意日志。
+
+### 5.3 🚨 P0 阻塞项：编译出来的模型**丢了 26.6 kg**
+
+用 `unitree_rl_mjlab` 环境把该 URDF 编译成 MuJoCo 模型，结果与 URDF 声明值严重不符：
+
+| 量 | URDF 声明 | MuJoCo 编译后 |
+|---|---|---|
+| link / body 数 | 96 links（其中 **64 个有 inertial**） | **15 bodies**（fixed 关节被焊合，符合预期） |
+| **总质量** | **57.0279 kg** | **30.4490 kg** ← **少了 26.58 kg** |
+| 有 inertial 但未出现在编译模型里的 link | — | **50 个**（`base_inertia`、`top_shell`、`battery`、`base_LF_HAA_drive`、各类相机…） |
+| 抽查焊合是否正确 | — | `LF_THIGH = 5.1322 kg` = `thigh_fixed 1.1010 + HFE_drive 2.0151 + KFE_drive 2.0151` ✅ **焊合本身是对的** |
+
+**缺失的质量集中在"基座侧"**：`base_inertia 8.28 kg`、4×`HAA_drive 2.015 kg`、`battery 5.51 kg`、
+shells/lidar/相机等（合计 ≈26.6 kg）。而**运动链上的质量（thigh/shank/pan/tilt）都在**。
+
+**影响判断（关键）**：
+- 对 **PACE 辨识（基座焊死）**：基座质量/惯量**不参与**关节动力学 ⇒ 可能**不影响**辨识结果；
+- 对 **RL 训练（浮动基座）**：基座质量/惯量直接决定动力学 ⇒ **30.4 kg vs 57.0 kg 是完全不同的机器人**。
+- ⇒ 在把它用于**任何浮动基座**用途之前，必须查清这是"MuJoCo URDF 解析行为"还是"模型本身的问题"。
+
+**尚未定位根因**，下一步诊断方向（按序）：
+1. 打印 MuJoCo 的 **body 1（基座）质量**，确认是否确实≈0；
+2. 检查 URDF 里 `base` link 是否**没有 `<inertial>`**、以及 `base_inertia` 等是否通过 fixed 关节挂在 `base` 下；
+3. 对照 mjlab 的 `get_spec()`：它是否额外做了"剔除 base 侧质量"的处理（目前看**没有**，只是删 `<visual>`）；
+4. 用 MuJoCo 官方 `mj_spec` 的 URDF 解析日志/警告（编译时是否打印过 "link ... has no inertia" 之类）；
+5. 若确认是解析行为，考虑改为"显式给基座写入合并后的质量惯量"或走 **MJCF 原生资产**。
+
+### 5.4 更新后的下一步
+
+1. **先解决 §5.3**（P0）：不改的话，mjlab 侧的一切结论都不能采信（尤其"误差对比"会被质量差异主导）；
+2. 再跑 Isaac 侧资产脚本（**这次要联网下载 USD**），把 Isaac 的 body 质量/限位/关节名与上游 URDF 逐项对比
+   —— 若 NVIDIA 的 USD 转换忠实，则 §5.2 的"同源"成立，两边可直接用各自原生格式；
+3. 然后才进 Phase 0 的 P0.1/P0.2。
