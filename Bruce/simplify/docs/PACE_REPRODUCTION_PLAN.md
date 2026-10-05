@@ -222,14 +222,100 @@ p*  = argmin_p E[ ℓ_e ]                                       (Eq. 4)
 
 ---
 
-## 8. 论文**未给**、必须从官方代码仓补齐的项
+## 8. 论文未给、已从官方代码仓查到的实现细节（2026-10-02 补齐）
 
-1. `I_a, d, τ_f, q̃_b, T_d` 各自的**上下界数值**（§3.1.2 只说归一化到 [−1,1]）。
-2. CMA-ES 的 **population size** 与**终止准则/最大迭代数**（只有 Figure 7 的 100 次横轴与"10~24 h"）。
-3. 仿真 **dt** 与策略控制频率（只说"the simulation rate used later for RL"）。
-4. `T_d` 在仿真中的**时域实现方式**（只有频域 `e^{−sT_d}`）。
-5. 每条轨迹的**样本数**。
-6. 全机器人 RL 训练用的**具体仿真器**（只有单驱动明确写 Isaac Gym）。
+> 来源：`git clone --depth 1 https://github.com/leggedrobotics/pace-sim2real`（在 `/tmp/pace_repo`，**未污染本仓库**）。
+> 行号对应当次克隆的 master。
 
-> 建议：把这 6 项作为"读官方代码仓"的清单，直接去 `pace-sim2real` 的配置与 `fit.py`/`data_collection.py` 里找，
-> 找到后回填本文件 §5 的待决项。
+### 8.1 参数上下界（**item 1 已解决**）
+
+`source/pace_sim2real/pace_sim2real/tasks/manager_based/pace/anymal_pace_env_cfg.py:35-59`
+（`bounds_params = torch.zeros((49, 2))`，注释写明 `12+12+12+12+1 = 49`，顺序与 Eq.(2) 一致）：
+
+| 参数 | 下界 | 上界 | 单位 | 行 |
+|---|---|---|---|---|
+| `I_a`（armature，12 个） | `1e-5` | `1.0` | kg·m² | :53-54 |
+| `d`（dof_damping，12 个） | `0.0`（默认） | `7.0` | Nm·s/rad | :55 |
+| `τ_f`（friction，12 个） | `0.0`（默认） | `0.5` | — | :56 |
+| `q̃_b`（bias，12 个） | `-0.1` | `0.1` | rad | :57-58 |
+| `T_d`（delay，1 个） | `0.0`（默认） | `10.0` | **仿真步（整数）** | :59 |
+
+⚠️ **注意延迟单位是"仿真步"不是秒**：10 步 × `dt=0.0025` = **上限 25 ms**。
+我们实测延迟 ≈24 ms —— 在 400 Hz 下约 **9.6 步**，正好卡在这个上界附近。
+**若我们用 500 Hz（dt=0.002）则 24 ms ≈ 12 步 > 10 步上界**，必须自行放宽上界或改用 400 Hz 时间基。
+
+### 8.2 CMA-ES 配置与终止准则（**item 2 已解决**）
+
+| 项 | 值 | 出处 |
+|---|---|---|
+| population size | **= `num_envs`**（论文用 4096） | `scripts/pace/fit.py:73` |
+| `max_iteration` | **200** | `pace_sim2real_env_cfg.py:99` |
+| `sigma` | **0.5** | 同上 :101 |
+| `save_interval` | **10** | 同上 :102 |
+| 终止准则 | **仅硬上限**：`finished = self.max_iteration <= self.iteration_counter`（无早停/无收敛判据） | `optim/cma_es.py:98` |
+| 库 | `cmaes.CMA(mean=零, sigma, bounds=[-1,1], seed=0, population_size)` | `optim/cma_es.py:40-44` |
+
+（注意别与 `agents/rsl_rl_ppo_cfg.py` 的 `max_iterations = 150` 混淆——那是 **PPO 训练**的配置，不是 CMA-ES。）
+
+### 8.3 仿真步长与控制频率（**item 3 已解决**）
+
+`anymal_pace_env_cfg.py:80-81`：
+```python
+self.sim.dt = 0.0025      # 400 Hz simulation
+self.decimation = 1       # 400 Hz control
+```
+⇒ **辨识时仿真与控制都是 400 Hz**（chirp 位置目标每个物理步都更新），
+`episode_length_s = 99999.0`（超长 episode）；
+`PaceSim2realEnvCfg.__post_init__` 里还设了 **`articulation_props.fix_root_link = True`**（基座刚性固定）、
+`render_interval = 4`（100 Hz 渲染），并注明 **action = 关节位置目标、scale = 1.0 ⇒ impedance control**。
+
+### 8.4 `T_d` 的时域实现（**item 4 已解决**）
+
+`utils/pace_actuator.py`（`PaceDCMotor(DCMotor)`，类文档明说 "inspired by DelayedPDActuator"）：
+
+```python
+self.torques_delay_buffer = DelayBuffer(cfg.max_delay + 1, self._num_envs, ...)
+self.torques_delay_buffer.set_time_lag(cfg.max_delay, ...)
+...
+def compute(self, control_action, joint_pos, joint_vel):
+    # ① 编码器偏置：内环看到的是"带偏置的编码器位置"
+    control_action_sim = super().compute(control_action, joint_pos - self.encoder_bias, joint_vel)
+    # ② 延迟作用在算出来的**力矩**上
+    control_action_sim.joint_efforts = self.torques_delay_buffer.compute(control_action_sim.joint_efforts)
+    return control_action_sim
+```
+
+两条关键实现细节（论文正文没写）：
+1. **延迟是整数仿真步的离散缓冲，作用在"PD/电机模型算出的力矩"上**，不是作用在位置/速度目标上；
+2. **`q̃_b` 的实现方式是"从送入内环的 `joint_pos` 里减去偏差"**（即控制器看到编码器帧的位置），
+   而不是加到目标上。复现时必须照这个方向做，否则偏差的符号会反。
+
+### 8.5 每条轨迹的样本数（**item 5 已解决**）
+
+`scripts/pace/data_collection.py`：
+| 项 | 值 | 行 |
+|---|---|---|
+| `--duration` 默认 | **20.0 s** | :19 |
+| `--min_frequency` / `--max_frequency` | **0.1 / 10.0 Hz** | :17-18 |
+| `sample_rate` | `1 / sim.get_physics_dt()` = **400 Hz** | :93 |
+| `num_steps` | `int(duration × sample_rate)` = **8000** | :94 |
+| chirp 相位 | `2π(f0·t + (f1−f0)/(2T)·t²)`（**线性 chirp**，与论文 Eq. 一致） | :99-100 |
+| 记录的两个缓冲 | `dof_pos_buffer` / `dof_target_pos_buffer`，形状 `num_steps × n_joints` | :124-125 |
+| 动作 | `actions = trajectory[counter % num_steps]`（**位置目标即 action**） | :133 |
+| sim 侧自测用值 | `armature = 0.1`（全关节）、`time_lag = 5`（步） | :60, :64 |
+
+⇒ `.pt` 里就是 **`time` / `dof_pos` / `dof_target_pos` 三个长度 8000 的张量**（20 s @400 Hz）。
+这与我们数据集里的 `t_ms` / `m_pos_*` / `c_pos_*` **一一对应**。
+
+### 8.6 RL 训练用的仿真器（**item 6 已解决**）
+
+`scripts/rsl_rl/train.py:13` → `from isaaclab.app import AppLauncher`，
+整仓依赖 `isaaclab`（`setup.py` / 各 cfg 均 `from isaaclab...` import）。
+⇒ **辨认与训练都在 Isaac Lab（+ rsl_rl）**，与 §4 路线 A 的描述一致；
+论文正文只说了单驱动辨识在 Isaac Gym，仓库实际是 Isaac Lab。
+
+### 8.7 因此 §4 的路线选择依据更清楚了
+
+官方仓库给出的**全部**可复用资产（参数化、上下界、目标、CMA-ES 配置、`PaceDCMotor` 的延迟/偏置实现、
+数据格式）**都是与仿真器解耦的"规范"**，只有负责并行的仿真回放依赖 Isaac Lab。
+⇒ 走路线 B 时，上面 8.1~8.5 每一项都可以**逐字照搬**，工作集中在"把回放接到我们的 MuJoCo/MJX 上"。
