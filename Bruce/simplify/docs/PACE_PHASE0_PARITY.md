@@ -213,3 +213,81 @@ shells/lidar/相机等（合计 ≈26.6 kg）。而**运动链上的质量（thi
 2. 再跑 Isaac 侧资产脚本（**这次要联网下载 USD**），把 Isaac 的 body 质量/限位/关节名与上游 URDF 逐项对比
    —— 若 NVIDIA 的 USD 转换忠实，则 §5.2 的"同源"成立，两边可直接用各自原生格式；
 3. 然后才进 Phase 0 的 P0.1/P0.2。
+
+
+---
+
+## 6. Isaac USD 实测结果（2026-10-05，脚本 `tool/pace_inspect_anymal_asset.py`）
+
+运行环境：`env_isaaclab`（Isaac Sim 5.1），headless，日志 `/home/sysu/pace/logs/isaac_asset.log`。
+USD 从 NVIDIA Nucleus **成功下载**（无本地副本）。
+
+### 6.1 三份"总质量"终于对上了
+
+| 侧 | 关节数 | body 数 | 总质量 | 说明 |
+|---|---|---|---|---|
+| 上游 ANYbotics URDF（声明求和） | 14 revolute + 81 fixed | 96 links | **57.0279 kg** | 含 inspection payload pan/tilt |
+| **Isaac USD（NVIDIA 转换）** | **12** | **17** | **51.6357 kg** | = 57.03 − **5.39**（pan 3.19 + tilt 2.08 的关节与质量被移除） |
+| mjlab（MuJoCo 编译同一 URDF） | **14** | **15** | **30.4490 kg** | = 57.03 − **26.58**（基座自身的壳/电池/HAA 驱动等被丢弃，见 §5.3） |
+
+### 6.2 ⭐ 决定性发现：**运动链质量逐项吻合，差异全在被焊死的基座上**
+
+| body | Isaac USD | mjlab(MuJoCo) | 判定 |
+|---|---|---|---|
+| `THIGH` ×4 | **5.1322** kg | **5.1322** kg | ✅ **完全相同** |
+| `SHANK` ×4 | 0.4995 | 0.7960 | ✅ 等价：MuJoCo 把 fixed 的 FOOT 焊进了 SHANK（0.4995 + 0.2964 = 0.7959） |
+| `FOOT` ×4 | 0.2964 | （已并入 SHANK） | ✅ 同上 |
+| `HIP` ×4 | 0.3659 | 已焊入 base（4×0.3659 = 1.4636） | ✅ 质量在场 |
+| **`base`** | **26.4596** | **1.4636**（只剩 4 个 HIP） | ❌ **差 25.0 kg**（Isaac 多了 base_inertia/battery/4×HAA_drive/shells） |
+| `inspection_payload_pan/tilt` | **不存在**（USD 只有 12 关节） | 3.1889 / 2.0840 | ⚠️ mjlab 多出 2 个**未致动**关节 |
+| 合计 | 51.6357 | 30.4490 | — |
+
+**对 PACE 辨识的影响：可以认为两者等价 ✅**
+- PACE 的基座是**焊死**的 ⇒ 基座质量/惯量**不参与关节动力学**，那 25 kg 差异与 pan/tilt 那一支（同样挂在焊死的基座上、且未被致动）**都不影响 12 个腿关节的动力学**；
+- 而**真正影响关节动力学的 THIGH / SHANK+FOOT / HIP 质量在两侧逐项吻合**。
+
+**对浮动基座用途（RL 训练）的影响：** ⚠️ mjlab 侧基座轻了 25 kg ⇒ **那是另一台机器人**，训练前必须修（§5.3）。
+
+### 6.3 Isaac 侧实测细节（供回填与复查）
+
+- `fix_root_link`：脚本第 [基座] 段已打印（另见 §1.3）。
+- 关节限位（与上游一致）：`HAA = [-0.7854, +0.6109]`（左）/`[-0.6109, +0.7854]`（右，镜像 ✓）；
+  `HFE/KFE = [-9.4248, +9.4248]`（±540°，等于不约束）。
+- `base` 惯量对角 = `[0.25324, 0.00512, 0.02138]`（Isaac 侧，供与上游 URDF 的 base 惯量对照）。
+- body 列表（17 个）：`base, {LF,LH,RF,RH}_HIP, {…}_THIGH, {…}_SHANK, {…}_FOOT`。
+
+### 6.4 ⚠️ 新发现：**关节顺序不同**（但集合相同）
+
+| | 顺序 |
+|---|---|
+| **Isaac USD**（`robot.joint_names`） | `LF_HAA, LH_HAA, RF_HAA, RH_HAA, LF_HFE, LH_HFE, RF_HFE, RH_HFE, LF_KFE, LH_KFE, RF_KFE, RH_KFE`（**按关节类型分组**） |
+| **PACE `joint_order`** | `LF_HAA, LF_HFE, LF_KFE, RF_HAA, RF_HFE, RF_KFE, LH_…, RH_…`（**按腿分组**） |
+| mjlab `JOINT_ORDER` | 与 PACE `joint_order` **逐字相同** ✅ |
+
+集合相同（缺失/多余均为空），但**排列不同**。
+⇒ 只要 PACE 的代码一切按 `joint_order` 解析 `joint_ids`，就不会出问题；
+**但任何"假定资产顺序 == joint_order"的写法都会静默错位**。
+**必须核实**：官方 `fit.py` / env 里把参数与关节对应起来的那段（`joint_ids` 的解析方式）。
+→ 已加入 §7 待办。
+
+### 6.5 脚本侧小问题（不影响结论）
+
+`[5] ANYMAL_D_CFG.actuators` 那段只打印出 `(class = str)` —— `replace()` 之后 `actuators` 的形态与预期不同，
+未能打印出 Isaac 默认的 stiffness/damping 等。PACE 会用 `PaceDCMotorCfg` 覆盖执行器，故不阻塞；
+如需，可改为从 `ANYMAL_D_CFG.__dict__` 直接取。
+
+---
+
+## 7. 待办（按优先级）
+
+| # | 事项 | 依据 |
+|---|---|---|
+| 1 | **核实 PACE 如何把参数对应到关节**（`joint_ids` 解析），确认"Isaac 资产顺序 ≠ `joint_order`"不会导致错位 | §6.4 |
+| 2 | **若要把 mjlab 用于浮动基座（RL 训练）**：修掉基座少 25 kg（补齐 base_inertia/battery/HAA_drive/shells 的合并质量），或改用与 Isaac 一致的资产 | §5.3, §6.2 |
+| 3 | 决定 pan/tilt 这 2 个未致动关节如何处理（Isaac 无、mjlab 有；对辨识无影响，但会让"DoF 数"不一致） | §6.2 |
+| 4 | 补跑 `[5]` 执行器默认参数（可选） | §6.5 |
+| 5 | 然后进 Phase 0 的 P0.1/P0.2（先 `--duration 0.1 --max_iterations 1` 跑 smoke test） | §9.3 |
+
+> **对"用哪个仿真器"的初步影响**：既然两侧**腿链质量逐项吻合**、且 PACE 是**固定基座**辨识，
+> 那么"资产差异"对 Phase 0 的**辨识误差对比**基本不构成干扰 —— 前提是把 §7 的第 1 条（关节顺序）核实掉。
+> 若最终要用 mjlab 做**训练**，则第 2 条（基座 25 kg）必须先修。
