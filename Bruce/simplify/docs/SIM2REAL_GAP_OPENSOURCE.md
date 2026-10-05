@@ -103,6 +103,38 @@ joint_pos_scale: 1.0; joint_vel_scale: 0.05; last_action_scale: 1.0
 **【推断】** 这条告诉我们：**别把仿真里的接触力当真值**去标定阈值 —— 与我们在
 `docs/CONTACT_PHASE_SIM2REAL.md` 里"接触几乎只进奖励"的结论一致。
 
+### 1.6 PACE 的代码仓库（2026-10-02 核实）
+
+| | 官方（论文作者） | mjlab / MuJoCo-Warp 移植 |
+|---|---|---|
+| 地址 | <https://github.com/leggedrobotics/pace-sim2real> | <https://github.com/fan-ziqi/pace-sim2real-mjlab> |
+| 作者/维护 | ETH Zurich RSL：Filip Bjelonic、René Zurbrügg、Oliver Fischer | Ziqi Fan（社区移植） |
+| 许可/状态 | Apache-2.0；**active development**（API 可能变） | Apache-2.0；**experimental，作者自标"未完全测试"** |
+| 仿真依赖 | **Isaac Lab**（Isaac Sim **5.0+**；<5.0 缺少 joint viscous friction 支持，会**降低 sim2real 精度**并打 warning） | **mjlab / MuJoCo-Warp**（`uv sync`；Python 3.10–3.13；CUDA 推荐，需 ~8–10 GB 磁盘） |
+| 文档 | <https://pace.filipbjelonic.com> | <https://fan-ziqi.github.io/pace-sim2real-mjlab/> |
+| 用法 | `scripts/pace/data_collection.py` → `data/anymal_d_sim/chirp_data.pt`；`scripts/pace/fit.py` → `logs/pace/anymal_d_sim/` | 同脚本同名同数据格式；`uv run python scripts/pace/fit.py --task Isaac-Pace-Anymal-D-v0 --num_envs 256` |
+| API | `from pace_sim2real import PaceCfg, PaceSim2realEnvCfg, CMAESOptimizer`；`from pace_sim2real.utils import PaceDCMotorCfg, PaceDCMotor` | **完全相同**（保留包名与 import） |
+
+**每关节拟合的参数**（移植版 README 原文）：**armature、passive viscous damping、Coulomb friction、
+encoder bias、fixed command delay**。
+
+#### ⭐ 对我们最关键的一点：PACE 的数据格式极简，我们**现在就能产出**
+
+`chirp_data.pt` 只含三个张量：**`time` / `dof_pos` / `des_dof_pos`**
+（即"**时间 + 实测关节角 + 我们下发的关节角目标**"，纯编码器数据，不需要力矩、不需要接触力）。
+
+⇒ 我们的 500 Hz 统一数据集里**已经有这两列**：`c_pos_*`（下发目标）与 `m_pos_*`（实测），
+外加 `t_ms`。所以接入 PACE 的主要工作不是采集，而是：
+1. **一个导出脚本**：`log/dataset_*.csv` → `chirp_data.pt`（`c_pos_*`→`des_dof_pos`、`m_pos_*`→`dof_pos`、`t_ms`/1000→`time`）；
+2. **一次"全关节同时位置 chirp"** 实验（我们现在 Ex60 模式 5 是**单关节逐个**，需改成同时激励，时长 20~60 s）；
+3. **重采样/对齐时间基**：移植版明确要求输入时间戳按**仿真速率推进（0.0025 s = 400 Hz）**，
+   且"**不匹配的真实数据会被拒绝，而不是悄悄改 delay/damping 估计**"⇒ 我们的 500 Hz 需重采样到 400 Hz（或让仿真跑 400 Hz）。
+   它是 tensor-only `.pt` + `weights_only=True` 加载。
+
+⚠️ **未核实**：论文摘要称 "All code, models, and datasets are publicly available"，但**我在这两个 README 里都没找到
+数据集/预训练模型的下载入口**（官方 README 只说 "place your own real-world data in `data/`"）；
+模型/数据集可能在文档站或另处发布，需要再查。
+
 ---
 
 ## 2. 按技术手段归类（含其它框架，待补）
@@ -212,8 +244,7 @@ joint_pos_scale: 1.0; joint_vel_scale: 0.05; last_action_scale: 1.0
 
 ## 4. 未核实 / 存疑
 
-- §1.1 我只抓了 arXiv **摘要页**，PMSM 能量模型的具体公式、四项奖励的定义、辨识用的激励信号与优化器
-  尚未逐条核对（论文有 HTML 版：https://arxiv.org/html/2509.06342v2 ，代码与数据集公开）。
+- §1.1 的细节已由子代理从论文正文核实（见 §2.1）与代码仓库核实（见 §1.6）；**数据集/模型下载入口仍未找到**。
 - §1.3 的 `num_obs: 57` 与 `history_length: 6` 我只按 yaml 原样引用，**未推断其观测分组**。
 - Go2W 轮子的实际控制模式（是 `τ=action` 还是 `τ=kd·(ω_des−ω)`）需看其 `deploy_real.py` 源码确认，目前是【推断】。
 
