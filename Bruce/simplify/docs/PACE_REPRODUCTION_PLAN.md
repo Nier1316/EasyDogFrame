@@ -94,7 +94,7 @@ p*  = argmin_p E[ ℓ_e ]                                       (Eq. 4)
 | 编码器位置 + 下发目标位置（同时间基） | ✅ `S2RDataset`：500 Hz、`m_pos_*` / `c_pos_*`、`t_ms`/`wall_ms` | **已在 400~10 000 Hz 区间内** |
 | 位置目标层 PD 跟踪（IMPEDANCE） | ✅ 腿就是 IMPEDANCE + kp/kd | 直接可用 |
 | 全关节**同时** chirp 20~60 s | ❌ `Example60` 模式 5 是**逐关节**、8 s | 需改成"同时激励 + 20~60 s" |
-| base **刚性**固定、无基座运动 | 🟡 我们是**吊带悬吊** | ⚠️ **吊带会摆 ⇒ 必须做刚性夹具**（否则基座运动违反前提） |
+| base **刚性**固定、无基座运动 | ✅ **刚性夹具真机侧已实现**（2026-10-02 用户确认）；需在 meta 里记录固定方式与 base 姿态 | 已具备（论文要求"每个并行环境用真机实验的 base 位姿"） |
 | 避免一切接触（含腿间） | ✅ 吊起即可 | 轮子离地后**无重力负载**，见 §3.4 |
 | 低 PD 增益 | 🟡 我们腿 kp=250/kd=4 | 论文明确"**故意低增益**" ⇒ 辨识时应降到 ~50/1（与 Go2W 部署值一致） |
 | CMA-ES + 4096 并行回放 | ❌ 没有 | 需自建（MJX 可上千并行，我们训练就用 16384 envs） |
@@ -157,7 +157,7 @@ p*  = argmin_p E[ ℓ_e ]                                       (Eq. 4)
 ## 5. 分阶段执行计划（路线 B）
 
 ### S0：前置与决策（0.5 天，不碰狗）
-- [ ] **做刚性夹具**：把机身**固连**到支架（吊带会摆，违反"fixed base, no base motion"）。这是**唯一必须新增的硬件**。
+- [x] ~~做刚性夹具~~ ⇒ **真机侧已实现**（2026-10-02 确认）。改为：记录固定方式、base 姿态、以及夹具的刚度（要保证辨识频段内不振）。
 - [ ] 决定回放的仿真步长（候选：物理步 0.002 s / 控制步 0.02 s）+ `T_d` 时域实现（建议 `N = round(T_d/dt)` 步缓冲）。
 - [ ] 从官方代码仓补齐 **`I_a/d/τ_f/q̃_b/T_d` 的上下界**、population size、终止准则（论文均未给）。
 - [ ] 测**步态/转向动作的频率含量**，定 chirp 上限。
@@ -319,3 +319,100 @@ def compute(self, control_action, joint_pos, joint_vel):
 官方仓库给出的**全部**可复用资产（参数化、上下界、目标、CMA-ES 配置、`PaceDCMotor` 的延迟/偏置实现、
 数据格式）**都是与仿真器解耦的"规范"**，只有负责并行的仿真回放依赖 Isaac Lab。
 ⇒ 走路线 B 时，上面 8.1~8.5 每一项都可以**逐字照搬**，工作集中在"把回放接到我们的 MuJoCo/MJX 上"。
+
+
+---
+
+## 9. Phase 0：ANYmal-D 双仿真器对照实验（**决定最终用哪个仿真器**）
+
+> 用户决策（2026-10-02）：先在官方 ANYmal-D 上把 **Isaac 端**与 **mjlab 端**都跑一遍，
+> **对比误差**再定最终仿真器；真机侧控制频率对齐到 **400 Hz**；辨识与仿真暂时都用 400 Hz；
+> **刚性夹具真机侧已实现**。
+
+### 9.1 环境现状（2026-10-02 实测，两边都**已就绪**）
+
+| | Isaac 端 | mjlab 端 |
+|---|---|---|
+| 仿真器/环境 | `/home/sysu/IsaacLab` **v2.3.2**（commit `37ddf62687`）+ conda env **`env_isaaclab`**（Python 3.11.15，`isaaclab 0.54.2`，`import isaacsim` OK） | conda env **`unitree_rl_mjlab`**（Python 3.11.16，**mjlab 1.2.0**，mujoco 3.5.0，**mujoco-warp 3.5.0**，warp-lang 1.12.0，torch 2.11.0+cu128） |
+| 硬件 | **RTX 4090，49 GB 显存**，驱动 580.178.04，compute_cap 8.9 | 同 |
+| 磁盘 | `/` 可用 **295 GB** | 同 |
+| 代码 | 官方仓已浅克隆到 `/tmp/pace_repo` | 移植版已浅克隆到 `/tmp/pace_mjlab` |
+| 缺 | — | `uv` **未安装**（README 用 `uv sync`）⇒ 可直接 `pip install -e .` 进 `unitree_rl_mjlab` |
+
+（两个克隆都在 `/tmp`，**未污染本仓库**。）
+
+### 9.2 ⚠️ 先修三个"不可比"，否则对比结论无效
+
+**(a) 机器人描述不同 —— 决定性问题。**
+- 官方侧：`from isaaclab_assets.robots.anymal import ANYMAL_D_CFG` ⇒ 用 **Isaac Lab 内置的 ANYmal-D（USD）**；
+- mjlab 侧：`from pace_sim2real.assets.anymal_d_asset import get_anymal_d_robot_cfg`
+  ⇒ 用**自带的简化 ANYmal-D URDF**（`src/pace_sim2real/assets/anymal_d/anymal.urdf`，BSD-3，
+  加载时故意剥离 Collada 视觉网格，只用官方碰撞+惯量模型）。
+- ⇒ **直接跑两边对比，等于把"仿真器差异"和"资产差异"混在一起**，无法归因。
+- **建议做法**：把**同一份**描述喂给两边 —— 用 Isaac Lab 的 URDF importer 把那份简化 URDF 转成 USD 供官方流程使用；
+  若时间不允许，**至少**先 diff 两份资产的质量/惯量/碰撞体并写进报告，再解释差异。
+
+**(b) 执行器初始参数与上下界必须逐字段 diff。**
+官方 `ANYDRIVE_PACE_ACTUATOR_CFG`（`anymal_pace_env_cfg.py:13-30`）初值：
+`saturation_effort=140.0, effort_limit=89.0, velocity_limit=8.5, stiffness=85.0, damping=0.6,
+encoder_bias=0.0, friction=0.0, dynamic_friction=0.0, viscous_friction=0.0, max_delay=10`。
+⇒ 需与 mjlab 侧同名字段**逐项对照**（它把这些放在 `assets/anymal_d_asset.py` 等位置），
+以及 **49 维 `bounds_params` 是否与官方完全一致**（官方 §8.1 的五个区间）。
+
+**(c) 任务项对齐（已核实/待核实）**
+
+| 项 | 官方 | mjlab | 结论 |
+|---|---|---|---|
+| `sim.dt` | 0.0025（400 Hz） | 0.0025 | ✅ 一致 |
+| `decimation` | 1 | 1 | ✅ 一致 |
+| action scale | 1.0（位置目标→impedance） | 1.0 | ✅ 一致 |
+| `max_iteration` | 200 | 200 | ✅ 一致 |
+| `sigma` | 0.5 | 0.5 | ✅ 一致 |
+| `fix_root_link` | `True` | **待核实** | ⚠️ |
+| `joint_order` | 需读取（`joint_order: list = MISSING`） | **待核实** | ⚠️ **顺序不一致会直接让拟合失去意义** |
+| `episode_length_s` | 99999.0 | 1e9 | 无实质影响 |
+
+### 9.3 实验步骤
+
+- **P0.1 Isaac 侧基线**：`pip install -e source/pace_sim2real`（进 `env_isaaclab`）→
+  `scripts/pace/data_collection.py`（ANYmal-D、duration 20 s、0.1→10 Hz、400 Hz → 8000 样本）→
+  `scripts/pace/fit.py`（N=4096、max_iteration 200、sigma 0.5）。
+  **记录**：`p*`（49 维）、score 曲线（对齐官方 `progress.pt`）、wall-clock、峰值显存。
+- **P0.2 mjlab 侧同流程**（同一 duration/频段/N/迭代上限，同一随机种子若可设）。
+- **P0.3 交叉回放（关键一步）**：
+  ① 把 P0.1 的 `p*` 拿到 mjlab 里回放、P0.2 的 `p*` 拿到 Isaac 里回放；
+  ② 更强的一步：**固定同一段 `des_dof_pos` 与同一个 `p`，在两个仿真器里各回放一次**，比较轨迹 RMSE
+  —— 这一步把"仿真器差异"从"拟合差异"里分离出来（前提是 9.2(a) 的资产已经对齐）。
+- **P0.4 与论文对齐**：论文 ANYmal-D 的 **`T_d = 7.5 ms`（= 3 步 @400 Hz）**、
+  score 量级 **1e-1 → 1e-2 rad²**（Figure 7）。**两边都能复现这两个数，才算"跑对了"。**
+
+### 9.4 决策准则（**先写死，避免事后找理由**）
+
+| 观察 | 结论 |
+|---|---|
+| 两边都复现 `T_d≈3 步`、score 同量级，**交叉回放退化 < ~2×** | 物理一致 ⇒ **按工程成本选 → 选 mjlab**（与 MJX 同族、无 Isaac Sim 依赖、安装与运行都轻） |
+| **交叉回放退化 > ~5×** | 辨识参数**强依赖仿真器** ⇒ **必须在将要训练的那个仿真器里辨识** ⇒ 若继续 MJX 训练，必选 mjlab（即路线 B） |
+| 只有一侧复现不出 `T_d≈3 步` / score 量级 | 该侧 setup 有问题（资产、关节顺序、增益、时间基）⇒ **先修，不下结论** |
+| 两侧都不行 | 我们的复现流程本身有错 ⇒ 回 P0.1/P0.2 排查 |
+
+> 判定完成后，**官方仓库的规范资产照搬不变**（参数化、上下界、Eq.(3) 目标、CMA-ES 配置、
+> `PaceDCMotor` 的延迟与偏置实现语义、`.pt` 数据格式）；变的只是"并行回放接在 Isaac 还是 MuJoCo-Warp"。
+
+---
+
+## 10. 本项目侧：400 Hz 对齐的做法（**建议做成"辨识专用模式"**）
+
+**现状**：电机收发线程 500 Hz（2 ms）→ `SendOnce` 是数据集的触发源；策略 50 Hz。
+
+**建议不要全局改 500→400**（会影响已经调好并验证过的 RL 部署链路），而是给辨识路径单独加一个 400 Hz 模式：
+
+1. **发送周期可配置**：例如 `MotorManager::SetSendPeriodUs(2500)`，只在辨识示例里生效（默认仍 2000）。
+2. **chirp 目标按 400 Hz 采样生成并逐拍下发**：与 `data_collection.py` 的 `num_steps = duration × 400` **一比一**，
+   这样真机与仿真的目标序列**逐点对应**，回放才是"良定"的（论文 §2.1 的核心前提）。
+3. **数据集仍由 `SendOnce` 触发** ⇒ 行频自然变成 400 Hz，`time/dof_pos/des_dof_pos` **无需重采样**即与 PACE 对齐。
+4. **meta 里写明**：`freq=400Hz`、`pace_mode=1`、PD 增益、固件补偿开关状态、base 姿态、夹具方式。
+
+⚠️ **两处必须一并处理**：
+- **延迟上界**：我们实测 ≈24 ms，在 400 Hz 下 ≈**9.6 步**，**正好顶着官方 `T_d ∈ [0, 10]` 的上界**。
+  本项目应把上界**放宽到 15 步（37.5 ms）**，并在文档里记录放宽理由（否则最优解会被边界卡住、拟合出偏小的延迟）。
+- **固件补偿开关**：辨识与部署必须一致（论文量化后果见 §3.1，表观惯量可达 8.1e-3 kg·m²）。
