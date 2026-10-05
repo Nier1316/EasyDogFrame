@@ -1,0 +1,4108 @@
+Towards bridging the gap: Systematic
+sim-to-real transfer for diverse legged
+robots
+
+Published in The International Journal of
+Robotics Research (IJRR).
+DOI: 10.1177/02783649261459628
+
+arXiv:2509.06342v2 [cs.RO] 31 Jul 2026
+
+Filip Bjelonic1 , Fabian Tischhauser1 and Marco Hutter 1
+
+Abstract
+Legged robots must achieve both robust locomotion and energy efficiency to be practical in real-world environments.
+Yet controllers trained in simulation often fail to transfer reliably, and most existing approaches neglect actuator-specific
+energy losses or depend on complex, hand-tuned reward formulations.
+We propose a framework that integrates sim-to-real reinforcement learning with a physics-grounded energy model
+for permanent magnet synchronous motors. The framework requires a minimal parameter set to capture the
+simulation–reality gap and employs a compact four-term reward with a first-principle-based energetic loss formulation
+that balances electrical and mechanical dissipation.
+We evaluate and validate the approach through a bottom-up dynamic parameter identification study, spanning actuators,
+full-robot in-air trajectories and on-ground locomotion. The framework is tested on three primary platforms and deployed
+on ten additional robots, demonstrating reliable policy transfer without randomization of dynamic parameters. Our method
+improves the energetic efficiency over state-of-the-art methods, achieving a 32 % reduction in the full Cost of Transport of
+ANY MAL (1.27). All code, models, and datasets are publicly available.
+Keywords
+Legged robots, Quadrupedal locomotion, Reinforcement learning, Simulation-to-real transfer, Reality gap, Energy
+efficiency
+
+Legged robots promise versatile mobility in environments
+that are inaccessible to wheeled or tracked platforms.
+However, achieving robust and efficient locomotion remains
+a central challenge: Controllers trained in simulation only
+show the same performance on the real system if the system
+and actuator dynamics are accurately modeled. Modeling
+errors, in particular in the actuator dynamics, where electrical
+and mechanical losses are often not properly modeled, lead to
+major inefficiencies and hence directly affect robot endurance
+and payload capacity.
+Prior work has addressed the simulation-to-reality gap
+through extensive domain randomization, residual modeling, or full physics identification. While these methods
+have demonstrated impressive sim-to-real transfer, they often
+require specialized sensors, exhaustive parameter identification, or iterative expert tuning of heuristic models and
+reward functions. As a result, current RL controller pipelines
+often rely on complex, high-dimensional reward functions.
+As modeling errors increase the sim-to-real gap, environment
+design often resorts to repeatedly adjusting rewards based on
+observed discrepancies in the real system – an ad-hoc process
+that can be repeated many times without clear structure,
+and which further disconnects rewards from physical notions
+such as efficiency.
+Prepared using TRR.cls [Version: 2020/08/31 v1.00]
+
+This work introduces a framework (Figure 3) that
+addresses these challenges by combining a sim-to-real RL
+pipeline with systematic actuator modeling, with its core
+modeling advantage illustrated in Figure 1. We perform
+a bottom-up analysis: first characterizing single actuator
+models, then estimating dynamic parameters on the fullsystem level, and finally validating locomotion control
+across multiple platforms. A focus of our framework is
+the integration of a physics-grounded energy model for
+Permanent Magnet Synchronous Motors (PMSMs), which
+enables training of locomotion policies that are both
+transferable and energy-efficient. This work targets the
+reduction of robot-specific reward tuning for locomotion
+by grounding the dominant regularization term – energy
+consumption – in physical units that transfer across
+morphologies. The resulting locomotion objective consists of
+four independently weighted terms: velocity tracking, energy
+consumption, collision avoidance, and foot-touchdown
+
+1 Robotic Systems Lab, ETH Zurich, Zurich, Switzerland
+
+Corresponding author:
+Filip Bjelonic, filip@bjelonic.com
+
+2
+
+XX(X)
+
+3. Cross-platform validation: Deployment on three
+primary platforms (ANY MAL, T YTAN, M INIMAL)
+and ten additional systems (see Section 3.3).
+4. Energetic assessment: Quantitative analysis of
+electrical and mechanical efficiency, demonstrating
+improvements over previous methods (see
+Section 3.3.3).
+Additional contributions include:
+(a) Real
+
+(b) Sim (ours)
+
+8
+
+Delta joint velocity ∆q̇ [rad/s]
+
+• A joint position control strategy with position
+saturation for hardware protection during locomotion
+(see Section 2.3.2).
+• Empirical evidence that four reward terms suffice for
+effective locomotion training (see Section 2.3.3 and
+4.2).
+• A physics-grounded energetic reward that balances
+electrical and mechanical losses to minimize overall
+consumption (see Section 2.3.3).
+
+No model
+Actuator network
+Ours
+
+6
+4
+2
+0
+
+All code, models, and raw data underlying the results,
+including those for most figures and tables, are publicly
+available.
+
+−2
+−4
+−6
+
+1
+−0.4
+
+−0.2
+
+0.0
+
+0.2
+
+0.4
+
+Delta joint position ∆q [rad]
+
+(c) Delta phase portrait
+
+Figure 1. Comparison of real and simulated robot trajectories
+under a 0.1 – 2.0 Hz chirp input. (a) Picture of the real robot with
+an overlaid trace showing its motion sequence from experiment.
+(b) Equivalent view in simulation using our modeling approach.
+In both (a) and (b), the robot’s base is suspended so that its legs
+swing freely. (c) Phase portrait of the “delta” joint state—i.e., at
+each timestep, the real joint position minus the simulated joint
+position (x-axis) and the real joint velocity minus the simulated
+joint velocity (y-axis)—plotted separately for three modeling
+approaches: no model (light gray), state-of-the-art actuator
+network (blue), and our proposed method (orange). Points
+nearer to (0, 0) indicate that the simulated trajectory more
+closely matches the real trajectory.
+
+velocity. The first two encode task performance and physical
+efficiency, while the latter two act as structural safety terms
+that discourage damaging contacts and impact-heavy gaits.
+The main contributions of this work are:
+1. Fixed-base excitation driven system identification:
+A data-efficient identification pipeline based exclusively on fixed-base joint excitation, enabling systematic actuator-level calibration without relying on
+locomotion rollouts or motion priors. (see Section 2).
+2. Bottom-up performance analysis: Multi-level evaluation from single actuators to full-robot locomotion,
+including comparisons with state-of-the-art black-box
+approaches (see Section 3.2).
+Prepared using TRR.cls
+
+Related Work
+
+Our manuscript focuses on state-of-the-art methods for rigid
+robots actuated by Permanent Magnet Synchronous Motors
+(PMSMs), which are the dominant choice in modern legged
+robots due to their efficiency and controllability (see Figure 2
+for a few prominent examples Aractingi et al. (2023); Hutter
+et al. (2017); Katz (2018); Liu et al. (2024); Unitree Robotics
+(2025)). For clarity, we note that while “Brushless Direct
+Current Motor (BLDC)” is often used in industry as a generic
+label for brushless motors, it formally refers to machines
+with trapezoidal back-EMF driven by six-step commutation,
+whereas most legged robots employ sinusoidal PMSMs with
+field-oriented control Derammelaere et al. (2016); GamazoReal et al. (2010).
+
+1.1
+
+Parameter estimation
+
+Parameter estimation for robotic systems has been extensively studied, with classical approaches relying on explicit
+dynamic models that are linear in the unknown parameters. In
+such settings, weighted least-squares, maximum-likelihood
+estimation Swevers et al. (2002), or Kalman filtering Gautier and Poignet (2001) can be applied efficiently, provided
+that sufficiently exciting trajectories are available and that
+measurements of joint torques, velocities, and accelerations
+are reliable Kozlowski (2012). Comprehensive overviews of
+these approaches can be found in the system identification
+literature Wu et al. (2010).
+In practice, however, actuator-level dynamics often
+violate the assumptions required for closed-form estimation.
+Nonlinear effects such as friction, saturation (cf. Figure 13)
+and delays introduce discontinuities that render the loss
+
+Bjelonic et al.
+
+(a) ANY MAL D
+
+3
+
+distance Rüschendorf (1985), Maximum Mean Discrepancy Dziugaite et al. (2015) or identifiability-driven measures Sobanbabu et al. (2025).
+In this work, we focus on direct joint-position trajectory
+matching under controlled in-air excitation. Because joint
+targets are replayed open-loop at the position-command level
+and contacts are removed, phase drift and long-horizon
+accumulation effects are negligible. Under these conditions,
+time-averaged joint position error provides a physically
+interpretable objective for identifying dominant actuator and
+transmission dynamics.
+
+(b) B2
+
+1.3
+(c) S OLO
+
+(d) M INI -C HEETAH
+
+(e) DIABLO
+
+Figure 2. Representative legged robots with explicitly
+documented use of PMSM for actuation.
+
+function nonconvex and non-differentiable. Moreover, access
+to accurate torque sensing is frequently unavailable or
+unreliable on legged platforms.
+Bayesian optimization provides a probabilistic alternative
+that is effective for very low-dimensional problems with
+expensive evaluations Frazier (2018). However, its performance typically degrades with increasing dimensionality and
+high-variance trajectory-level objectives, making it less suitable for moderate-dimensional parameter spaces Stork et al.
+(2022) considered here.
+Evolutionary strategies offer a robust alternative in this
+regime Beyer and Sendhoff (2007). They require minimal
+assumptions on smoothness, tolerate discontinuities, and
+parallelize naturally across large batches of simulations Stork
+et al. (2022). Given the availability of massively parallel
+simulation Rudin et al. (2022), we employ evolutionary
+strategies. We emphasize that the proposed framework is
+agnostic to the specific choice of optimizer; Covariance
+Matrix Adaptation Evolution Strategy (CMA-ES) is used as
+a practical instantiation rather than a core contribution of this
+work.
+
+1.2
+
+Trajectory comparison metrics.
+
+Prior sim-to-real and system identification work evaluates
+simulator quality using a range of trajectory similarity
+measures. Common choices include time-domain meansquared error in joint space (e.g. joint torques) Hwangbo
+et al. (2019), frequency-domain metrics such as bandwidth agreement Kashiri et al. (2017), phase-space or
+limit-cycle comparisons for periodic motions using autocorrelation Albu-Schäffer and Della Santina (2020), and
+task-level metrics such as tracking error or stability margins during deployment Misenti et al. (2025). More
+advanced approaches employ distributional distances over
+trajectory segments Miller et al. (2025) using Wasserstein
+Prepared using TRR.cls
+
+Modeling
+
+We organize prior sim-to-real modeling approaches by the
+amount and role of real-world data used to reduce the reality
+gap. Along this spectrum, methods differ in how strongly they
+rely on physical priors versus learned components, and in
+whether data is used to induce robustness, correct residual
+effects, or directly learn predictive dynamics.
+At one end, domain randomization requires little realworld data but assumes accurate rigid-body dynamics.
+Residual physics approaches combine moderate priors with
+learned corrections, needing additional data to capture
+unmodeled effects. At the other end, full dynamics models
+minimize assumptions but demand extensive real-world
+interaction to learn complete system dynamics. Both modelbased and purely data-driven approaches are represented
+across this continuum.
+Low-data approaches. These methods primarily mitigate
+the sim-to-real gap by relying on strong physics priors
+from the robot description and robustness through domain
+diversity, rather than explicit system identification. Examples include Cassie and BDX droids SysID combined with
+domain randomization Grandia et al. (2025); Xie et al.
+(2020), hand-calibrated parameters with randomized variations Li et al. (2024); Tan et al. (2018). Classical dynamics
+randomization for reinforcement learning Bellegarda et al.
+(2022) or domain adaptation for imitation learning Peng et al.
+(2020) fall into this category, where sim-to-real transfer is
+achieved through robustness induced by diverse simulated
+motion distributions rather than explicit dynamics alignment.
+Large-scale randomization has been shown effective for
+dexterous manipulation (DexTreme Handa et al. (2023)).
+Variants include active domain randomization Mehta et al.
+(2020), probabilistic approaches such as BayesSim Ramos
+et al. (2019), adversarial domain randomization Shi et al.
+(2024), and methods like DROPO Tiboni et al. (2023).
+Moderate-data approaches. Residual models combine
+physics priors with learned corrections, often focusing on
+actuator or body-level dynamics. Neural augmentations of
+simulators capture uncertainties Ajay et al. (2018), while
+adversarial techniques such as SimGAN identify simulation
+parameters Jiang et al. (2021). Neural-Augmented Simulation (NAS) introduces recurrent residual dynamics Golemo
+
+4
+
+XX(X)
+
+Table 1. Comparison of our framework with closely related sim-to-real calibration pipelines.
+Aspect
+
+Miller et al. (2025)
+
+Sobanbabu et al. (2025)
+
+Ours (PACE)
+
+Hardware data source
+Closed-loop control required
+Safety during data collection
+Need for stable pre-trained policy
+Trajectory drift
+Primary optimized parameters
+Parameters pre-computed
+Optimization method
+Similarity metric
+Reason for metric choice
+Number of robots
+
+Locomotion policy rollouts
+Yes
+Medium (falls possible)
+Yes
+Yes
+Friction, torque-speed curve
+Delay
+CMA-ES
+Wasserstein, MMD
+Drift in rollouts
+1 (Spot)
+
+Policies / motion priors
+Yes
+Medium
+Yes
+Yes
+System-level parameters
+–
+CMA-ES
+Fisher information reward
+Exploration reward
+2 (Unitree focused)
+
+Fixed-base joint excitation
+No
+High (base fixed in-air)
+No
+No
+Inertia, damping, friction, delay, bias
+Torque-speed curve
+CMA-ES
+Joint position error
+Simplicity (no drift)
+3+ (3 main + 10 additional)
+
+et al. (2018). Joint-centric methods include actuator networks
+that leverage joint torque sensors Hwangbo et al. (2019),
+unsupervised actuator models without torque sensing Fey
+et al. (2025), drive-limit estimations on S POT Miller et al.
+(2025), and delta-action models through real-world rollouts
+(ASAP He, Gao, Xiao, Zhang, Wang, Wang, Luo, He,
+Sobanbabu, Pan et al. (2025)). Body-centric methods aim to
+identify physical parameters at the system level, for instance
+via sampling-based active exploration (SPI-Active Sobanbabu et al. (2025)) or learning discrepancies from human
+demonstrations (DROID Tsai et al. (2021)). Hybrid strategies
+combine low-level SysID with residual dynamics models,
+such as aerodynamic compensation for the floating robot
+BALLU Sontakke et al. (2023).
+High-data approaches. Full dynamics-based methods
+attempt to learn the complete robot dynamics with little
+or no reliance on physical priors. DayDreamer Wu
+et al. (2023) learns world models from scratch, updating
+them through real-world rollouts while replaying the best
+policy. Offline world models similarly combine simulationinitialized dynamics with real-world fine-tuning Li, Krause
+and Hutter (2025). Other approaches estimate grounded
+forward and inverse dynamics transformations Hanna et al.
+(2021) to enhance simulator accuracy.
+Online adaptation. To cope with discrepancies that
+remain during deployment, online adaptation mechanisms
+are employed. Strategies include online fine-tuning Smith
+et al. (2022), meta-learning for rapid adaptation Song et al.
+(2020), and student–teacher schemes for online parameter
+identification Lee et al. (2020). Recent approaches address
+shifts in dynamics during deployment by relying on the
+policy to implicitly infer or adapt to the underlying system
+at runtime, and can in principle recover the true system
+dynamics through online identification or adaptation Li,
+Peng, Abbeel, Levine, Berseth and Sreenath (2025);
+Radosavovic et al. (2024).
+For comprehensive surveys on sim-to-real, see Ju et al.
+(2022); Muratore et al. (2022).
+While prior work has successfully employed domain
+randomization Handa et al. (2023); Xie et al. (2020) or
+Prepared using TRR.cls
+
+residual dynamics Fey et al. (2025); Hwangbo et al. (2019),
+often relying on implicit online adaptation, these approaches
+require specialized sensors or exhaustive parameter searches.
+Related actuator formulations have been used in prior work
+(e.g., Disney Research Grandia et al. (2025); Google Tan
+et al. (2018)), but without a systematic or validated
+procedure for reliably identifying their parameters on
+real hardware. Our method instead adopts a white-box
+actuator and joint dynamics model with partial observability,
+identifying a minimal and physically interpretable parameter
+set from encoder-only data to compactly capture the
+simulation–reality gap. We further show that actuator drive
+dynamics are largely linear (Hq : q̂ → q), which enables
+fast optimization of a concise and physically interpretable
+parameter set that transfers across platforms without learned
+residuals.
+We note that inertial parameters in the URDF are
+commonly obtained from CAD models or manufacturer
+specifications, and, when necessary, refined via experimental
+identification, as widely studied in classical robot dynamics
+and system identification literature Gautier (1986); Grandia
+et al. (2025).
+1.3.1
+
+Relation to policy-driven sim-to-real calibration.
+Several recent works propose iterative sim-to-real calibration
+pipelines that (i) collect hardware trajectories, (ii) optimize
+simulation parameters (e.g., via CMA-ES), and (iii) train RL
+policies in the calibrated simulator for zero-shot deployment.
+In particular, Miller et al. (2025) and SPI-Active Sobanbabu
+et al. (2025) follow this high-level structure using data
+collected from locomotion policies or motion priors on
+hardware and distributional or information-based objectives
+to match simulated and real behaviors. At this level,
+our framework shares the same overarching structure –
+improving sim-to-real transfer by calibrating physically
+meaningful parameters – and we therefore view these works
+as close references. We note that these works were developed
+largely concurrently with ours, reflecting parallel research
+directions in the community. A structured comparison
+between these approaches and ours is summarized in Table 1.
+In this sense, Miller et al. (2025) can be interpreted as a
+
+Bjelonic et al.
+
+5
+
+Iterate
+
+Deploy
+near
+optimal
+policy
+
+Control Policy
+Base velocities
+Angular base velocities
+Projected gravity
+Base velocity commands
+Joint positions
+Joint velocities
+Last actions
+
+Actions
+Iterate
+
+Figure 3. Overview of the proposed PACE pipeline with policy training. (i) Collection of real in-air data on a fixed-base setup (top left).
+(ii) Evolutionary parameter fitting of joint dynamics to align simulated and measured trajectories (top right). (iii) Blind policy training in
+simulation with zero-shot deployment on hardware (bottom).
+
+complementary extension, exploring how policy-driven data
+collection and distributional objectives can further refine simto-real transfer once a calibrated model is available.
+Our method differs in the calibration signal and the
+resulting optimization regime: rather than relying on
+closed-loop locomotion rollouts (where errors compound,
+trajectories drift, and the collected data depends strongly
+on the current policy), we use repeatable fixed-base joint
+excitation to isolate actuator and joint dynamics under
+controlled conditions. This choice enables safe, low-cost data
+collection without requiring a stable locomotion controller,
+reduces confounding effects between control and dynamics,
+Prepared using TRR.cls
+
+and allows direct trajectory-level error measures without
+suffering from long-horizon drift that motivates distributional
+matching objectives. Consequently, this method targets
+actuator-centric parameter observability and cross-platform
+applicability.
+
+1.4
+
+Control
+
+Control of legged robots in complex terrain has been
+approached with both Model Predictive Control (MPC) and
+Reinforcement Learning (RL) Grandia et al. (2023); Miki
+et al. (2022); Rudin et al. (2025); Xue et al. (2024). Current
+
+6
+
+XX(X)
+
+state-of-the-art emphasizes RL, often based on Proximal
+Policy Optimization (PPO) Schulman et al. (2017) and its
+constrained derivatives, such as IPO Liu et al. (2020) or
+TRPO-based formulations for locomotion Kim et al. (2024).
+Partial observability. Real-world control is inherently
+a partially observable Markov decision process (POMDP).
+Compared to fully observable MDPs, learning under partial
+observability is more challenging, as policies must cope
+with state aliasing and incomplete information Kaelbling
+et al. (1998). In practice, standard RL methods often exhibit
+degraded performance or unstable training when policies
+are restricted to partial observations Hausknecht and Stone
+(2015); Pinto et al. (2017). Several strategies have been
+proposed to mitigate these challenges, including large-scale
+parallelized RL training Rudin et al. (2022), teacher–student
+distillation Lee et al. (2020), and asymmetric actor–critic
+architectures where the critic has privileged state access Pinto
+et al. (2017).
+Reward design. Reward shaping is a central challenge,
+as locomotion policies often involve more than ten handcrafted reward terms Ji et al. (2022); Lee et al. (2020); Miki
+et al. (2022); Shin et al. (2023), making tuning difficult and
+requiring expert heuristics. Constraint-based formulations
+can reduce the dimensionality of reward terms Kim et al.
+(2024), but in practice, they shift part of the tuning
+complexity to the choice and scaling of constraints. Multimorphology training similarly offloads tuning to central
+pattern generators Shafiee et al. (2024). Other approaches
+attempt to automate reward design with large language
+models (Eureka Ma et al. (2023)) or remove explicit
+rewards altogether by optimizing intrinsic objectives, such as
+DIAYN Eysenbach et al. (2018).
+Most recent controllers Miki et al. (2022); Rudin et al.
+(2022) achieve agility, relying on high-dimensional and
+ad hoc reward shaping. We instead formulate rewards
+directly from actuator energy losses, yielding a compact
+and physically meaningful objective. Our formulation only
+requires four reward terms, which reduces tuning complexity.
+
+1.5
+
+Energy-efficient locomotion
+
+Energy-efficient control is critical for autonomous legged
+robots. Total losses consist of controller-independent terms
+such as sensing, computation, and inverter switching,
+and motion- respectively control-policy-dependent losses,
+which can be optimized. The literature on modeling
+motion-dependent energy losses can be grouped into
+pseudo-approximations, low-fidelity models, and highfidelity models. Here, low-fidelity models capture only
+dominant, aggregated effects (e.g., mechanical power and
+Joule losses) using a small number of lumped parameters,
+often with hand-tuned scaling, enabling efficient policy
+optimization at the cost of limited physical detail. In
+contrast, high-fidelity models aim to represent individual
+loss mechanisms (e.g., copper, iron, magnet, and mechanical
+Prepared using TRR.cls
+
+losses), either through detailed physics-based motor models
+or data-driven power predictors. While such models can
+achieve higher accuracy, they typically incur substantially
+higher modeling or data requirements and increased
+computational cost, which can limit their direct use in largescale reinforcement learning.
+Pseudo-approximations. Simplified proxies such as
+squared torque are frequently used to approximate energy
+costs. However, many works omit mechanical power
+consumption altogether Ji et al. (2022); Kim et al. (2024);
+Lee et al. (2020); Miki et al. (2022); Shin et al. (2023), or
+introduce objectives with weak correlation to actual energy,
+e.g., penalizing changes in power Shafiee et al. (2024).
+Low-fidelity models. These methods typically split
+energy into mechanical power Fu et al. (2021) and Joule
+heating Yang et al. (2022). Scaling between these terms is
+often hand-tuned or derived from motor characteristics Fadini
+et al. (2021); Mahankali et al. (2024); Wensing et al.
+(2017), enabling training of energy-aware locomotion
+controllers Aractingi et al. (2023); Roux et al. (2025).
+High-fidelity models. Advanced approaches numerically
+compute individual loss components, including copper losses
+(PCu ), iron losses (PFE ), permanent magnet losses (PPM ),
+and mechanical dissipation Ferrari et al. (2022). Recent
+data-driven work has employed accurate power measurement
+to train neural networks that predict instantaneous power
+consumption in legged robots Valsecchi et al. (2024).
+Existing energy models range from simplified proxies
+such as torque-squared penalties Kim et al. (2024); Lee
+et al. (2020) to computationally intensive numerical loss
+calculations Ferrari et al. (2022). Building on prior actuatoraware formulations Fadini et al. (2021); Wensing et al.
+(2017), we propose a loss model tailored to PMSMs that
+captures the dominant sources of energy dissipation while
+remaining tractable within modern reinforcement learning
+simulators. Crucially, the resulting energy term is expressed
+in physical units [J], which avoids arbitrary reward scaling
+and allows the same coefficient to be reused across robot
+morphologies without retuning. This balance enables training
+of locomotion policies that are explicitly energy-efficient.
+
+1.6
+
+Notation
+
+We adopt the following notation conventions throughout the
+paper:
+• Scalars are written normal (x), vectors in bold (x).
+• Target values are denoted with a hat (x̂).
+• All vector norms are Euclidean, ∥x∥ = ∥x∥2 .
+• The term motor refers to the actuator input side, and
+joint refers to the output side.
+• Reduced inertia with respect to the joint is indicated
+˜
+with a tilde (I).
+• Robot legs are indexed LF (left front), RF (right front),
+LH (left hind), RH (right hind).
+
+Bjelonic et al.
+
+2
+
+Method
+
+Our pipeline to bridge the reality gap comprises three stages,
+illustrated in Figure 3. (i) Data collection on the real
+robot (Section 2.1), using joint impedance (PD) control to
+execute and record trajectories. (ii) Simulator alignment via
+evolutionary parameter identification (Section 2.2), where
+we fit a compact set of parameters so that simulated in-air
+trajectories match the recorded ones. (iii) Policy learning
+and deployment (Section 2.3), where we train a blind
+locomotion controller and deploy it zero-shot on hardware.
+We refer to the overall approach as Precise Adaptation
+through Continuous Evolution (PACE).
+
+2.1
+
+Data collection
+
+Data collection is conducted with a fixed base to avoid motion
+cross-coupling between different limbs. We excite all joints
+simultaneously using chirp signals of 20 – 60 s per sequence,
+sweeping from a minimum to a maximum frequency. The
+chirp is applied at the joint position target level and tracked
+by a PD controller, such that both the real system and the
+simulator are driven by identical reference trajectories rather
+than free-running dynamics. This eliminates accumulating
+phase error and makes direct trajectory matching well-posed.
+Signals and measurements are time-synchronized and logged
+at high sampling rates (typically 400 – 10 000 Hz). We note
+that the conditions listed below were selected empirically
+for robustness and practicality; a systematic comparison of
+alternative data-collection strategies is beyond the scope of
+this work.
+Fixed base (no base motion) During simulation replay
+we rigidly fix the base in air. For robots with symmetry
+planes (e.g., two for ANY MAL/M INIMAL, one for T YTAN),
+we cancel net base wrenches by commanding symmetric joint
+trajectories. For robots without a symmetry plane, including
+fixed-base humanoids or robotic arms, the same identification
+procedure applies by rigidly constraining the base during
+excitation. The actuator-level identification itself remains
+unchanged.
+No contacts (legs free in air). We avoid all contacts
+(including inter-leg) so the identification is not confounded
+by unmeasured external forces. Moreover, in stance the base
+inertia dominates the effective joint dynamics; collecting inair data isolates leg/drive dynamics. A simplified model in
+Appendix B shows that in agile stance the effective base
+inertia exceeds leg/drive inertias by 1–2 orders of magnitude
+(ANY MAL example).
+Excitation bandwidth. Ideally, trajectories cover up to
+fpolicy /2 (Nyquist Tan and Jiang (2018) of the control policy),
+since this is the highest possible frequency that the controller
+can excite in the system. Structural constraints may limit
+this (e.g., 2 Hz on ANY MAL; 10 Hz on T YTAN/M INIMAL).
+If structural or practical constraints prevent reaching this
+range, the excitation should at least cover twice the highest
+Prepared using TRR.cls
+
+7
+
+frequency expected in the locomotion controller’s motion
+(e.g., 1 Hz for our robots walking at 1 m s−1 ).
+Joint-level PD gains. We do not propose a formal or
+optimal procedure for selecting the PD gains. In practice,
+gains are chosen conservatively based on experimental
+feasibility considerations.
+The gains Pτ , Dτ determine the closed-loop poles of the
+joint tracking dynamics, as given by the transfer function
+
+Hq (s) = e−sTd
+
+Pτ
+,
+2
+Ia s + (d + Dτ )s + Pτ
+
+(1)
+
+where Ia denotes the effective armature inertia, d the viscous
+damping, and Td a lumped delay.
+Eq. (1) represents an idealized linear closed-loop model
+and is used solely for frequency-domain analysis: it assumes
+sufficiently high-bandwidth inner-loop torque tracking,
+neglects saturation and other nonlinear effects, and is valid
+only when operating sufficiently far from actuator limits.
+Increasing the gains shifts the dominant poles to
+higher frequencies, which would require substantially larger
+excitation bandwidths during data collection and are often
+infeasible on suspended hardware setups.
+We therefore intentionally use comparatively low gains
+for both identification and policy training, such that
+the characteristic joint dynamics lie well within the
+achievable excitation range. This choice ensures that the
+dominant dynamics are observable and identifiable during
+data collection; empirically, higher gains did not improve
+identification quality but instead pushed the closed-loop poles
+beyond the feasible excitation bandwidth.
+
+2.2
+
+Parameter identification
+
+We align the simulator by fitting a small set of parameters
+that dominantly shape the joint-space dynamics: per-joint
+armature/inertia Ia , viscous damping d, Coulomb friction
+τ f , and joint bias q̃b , plus a global command delay Td . With
+n actuated joints, the parameter vector is
+p = [Ia , d, τ f , q̃b , Td ]T ∈ R4n+1 .
+
+(2)
+
+The joint bias q̃b captures quasi-static offsets between
+commanded and effective joint positions (e.g., encoder
+zeroing, assembly tolerances, or firmware compensations).
+These offsets are approximately constant over identification
+and deployment and manifest as steady-state PD set-point
+shifts if left unmodeled.
+Figure 14 illustrates the full actuator and control stack for
+conceptual clarity, but it does not imply that all depicted
+subsystems are modeled or identified explicitly. For the
+purpose of system identification, we deliberately operate
+at the joint-space, end-to-end level and treat several inner
+control and electrical loops as ideal or absorbed by the
+parameterization (cf. Section 5).
+
+8
+
+XX(X)
+
+Specifically, the inner current and torque control loops
+are assumed to exhibit sufficiently high bandwidth relative
+to the excitation range used for identification, such that
+they can be approximated as unity gain within this regime.
+Residual effects from firmware compensations, filtering, and
+unmodeled electronics are not parameterized individually but
+are instead captured implicitly through the effective inertia
+Ia , damping d, and lumped delay Td . This abstraction avoids
+introducing weakly identifiable parameters while preserving
+the dominant joint-space dynamics relevant for sim-to-real
+transfer.
+On saturation effects. While actuator torque and velocity
+saturation are clearly present on the real systems, we do
+not include saturation limits as free parameters in the
+identification. Instead, saturation is treated as a known and
+enforced nonlinearity that is applied deterministically in both
+simulation and hardware using manufacturer specifications
+and safety limits (cf. Figure 13 and Eq. (5)). As a
+result, the identified parameters capture the effective jointspace dynamics within the feasible operating region, while
+saturation acts only as a boundary constraint. Including
+saturation limits as optimization variables would be poorly
+conditioned and weakly identifiable from in-air trajectories.
+We instantiate N = 4096 parallel environments, indexed
+by e, with the real-experiment base pose, each with
+parameters pe . We replay the recorded joint targets q̂ at
+the simulation rate used later for RL, and measure the
+simulated joint trajectories qsim
+i,e . The identification objective
+for environment e is the time-averaged mean-squared jointposition error:
+k
+
+ℓe =
+
+1 X real
+2
+∥q − qsim
+i,e ∥ ,
+k i=1 i
+
+(3)
+
+yielding a loss vector L ∈ RN . We optimize
+p∗ = arg minp E[ℓe ],
+
+(4)
+
+using CMA-ES Nomura and Shibata (2024) over the
+population. We chose CMA-ES because the identification
+objective is trajectory-level, nonconvex, and affected by
+nonsmooth effects such as friction, saturation, and delay,
+while the optimizer does not require gradients through
+the full hardware-matched simulation pipeline. Compared
+with simpler evolutionary strategies, covariance adaptation
+provides an efficient search distribution for the moderately
+dimensional continuous parameter spaces considered here
+(typically ≈ 49 parameters for our robots). We found
+CMA-ES reliable and sample-efficient in massively parallel
+GPU simulation; for lower-dimensional or more expensive
+settings, Bayesian optimization is an alternative. We
+emphasize that CMA-ES is used here as a generic black-box
+optimizer for parameter identification. Closely related simto-real pipelines that also employ CMA-ES or evolutionary
+strategies for simulator alignment have been reported
+previously Miller et al. (2025); Sobanbabu et al. (2025).
+Prepared using TRR.cls
+
+Single-joint dynamics model. For reference, a single joint
+obeys
+
+Ia q̈ + d q̇ = τi + τcomp + τf ,
+
+(5)
+
+where τf models Coulomb friction and τcomp denotes
+firmware-level compensations (e.g., cogging compensations,
+plant inversion, friction observers). These terms are not
+modeled explicitly, identified, or used elsewhere in the
+pipeline; instead, their net effect is absorbed implicitly into
+the fitted parameters through trajectory matching.
+Before introducing the closed-loop form in Eq. (6), we
+recall that q denotes the joint position, q̂ the commanded joint
+target, Pτ , Dτ the joint-level PD gains (Sec. 2.1), and q̃b a
+constant joint-position bias.
+Assuming tight current control and a saturation nonlinearity on commanded torque (cf. Figure 13), a practical closedloop form is
+
+Ia q̈ + d q̇ = sat Pτ (q̂ − q + q̃b ) − Dτ q̇ + τcomp + τf .
+(6)
+Drive-level simplifications (e.g., load-independent damping) are common but imperfect; actual damping and
+torque–current maps are often state dependent. Hence, fitting
+parameters against full-robot in-air data (rather than isolated
+drives; see Section 4.1.2) is critical.
+The parameter set p reflects the quantities that dominantly
+shape the closed-loop joint-space dynamics in Eq. (6) and
+Eq. (1) and are directly observable from encoder-only
+in-air trajectories under PD position control. Specifically,
+the effective armature inertia Ia and viscous damping d
+determine the dominant poles of the closed-loop system,
+Coulomb friction τf captures low-velocity asymmetries, the
+joint bias q̃b accounts for constant offsets due to encoder
+alignment and mechanical preload, and the lumped delay Td
+captures communication and inner-loop latencies.
+Crucially, these parameters enter the dynamics in
+a manner that is structurally identifiable from joint
+position measurements, whereas many lower-level actuator
+parameters are not.
+Finally, note a non-uniqueness if PD gains are cooptimized with the dynamics. Any common scaling uc of
+{Ia , d, Pτ , Dτ } preserves Eq. (6) and trajectories:
+uc Ia∗ q̈ + uc d∗ q̇ = uc Pτ∗ ∆q − uc Dτ∗ q̇.
+
+(7)
+
+We therefore do not include PD gains in the identification and
+assume these to be known.
+The same structural non-uniqueness motivates excluding
+other multiplicative actuator-side parameters, such as the
+motor torque constant ki , from the identification. Under PD
+position control, ki only enters as a global torque scaling and
+is therefore not independently identifiable from joint position
+trajectories; its effect is absorbed into the effective inertia and
+damping terms.
+
+Bjelonic et al.
+
+2.3
+
+Learning environment
+
+Having addressed simulator alignment through parameter
+identification, we now turn to the learning-based control
+stage. Because PACE identifies the dynamics end-to-end,
+we do not use dynamics randomization. We randomize the
+task (pushes, ground friction) and terrains (flat/rough, stairs,
+boxes, slopes). We otherwise follow standard practice Rudin
+et al. (2022), emphasizing only differences below.
+Observations We model the problem as a POMDP.
+Accordingly, we use asymmetric PPO Pinto et al. (2017):
+the policy receives proprioception oprop ⊂ s, while the critic
+observes privileged state s.
+Policy (proprioception). Base linear velocity vB , base
+angular velocity ω B , gravity in base frame gB (from a state
+yaw
+y
+x
+estimator); user commands (vB
+, vB
+, ωB
+); joint positions q
+and velocities q̇; previous action at−1 . We add i.i.d. noise to
+all but commands and at−1 . The observation has dimension
+oprop ∈ R48 .
+Critic (privileged). Noise-free oprop∗ plus base wrench
+(FB , τ B ), ground friction, binary foot contacts, and a height
+scan centered at the base CoM spanning 2 m×3 m at 0.15 m
+resolution. Thus opriv ∈ R305 and s = [oprop∗ , opriv ] ∈ R353 .
+2.3.1
+
+Actions and hard-limit safe PD control The policy
+outputs joint position offsets at = π(oprop
+t ) relative to a
+default posture q0 , which are converted to torques and
+tracked by a current loop (cf. Figure 14):
+
+τ t = Pτ at + q0 − q − Dτ q̇.
+(8)
+
+9
+
+interpolate the saturation and avoid discontinuities. It does
+not represent an additional constraint or penalty and was
+found not to induce avoidance behaviors in practice.
+Rewards We define the number of reward terms by
+the number of independently tuned scalar weights that must
+be manually chosen. Accordingly, although some objectives
+may decompose into multiple physical components, they are
+counted as a single reward term if no additional relative
+scaling is introduced. Thanks to fitted dynamics parameters,
+we therefore use only four reward terms: velocity tracking
+and energy (physics-based), plus two structural penalties
+(collisions and foot-touchdown velocity). In particular,
+the energy objective combines electrical, mechanical, and
+gravitational contributions through a physics-grounded
+formulation with a single weight, avoiding the need for handtuning relative scalings that are commonly treated as separate
+rewards in prior work (e.g. vertical velocity penalty, torquesquared).
+Velocity tracking. Following Lee et al. (2020), we reward
+proximity to commanded base velocities:
+
+
+
+
+(ω̂
+−ω
+)2
+∥v̂
+−v
+∥2
+.
+rv = exp − B,xy σv B,xy 2 + exp − B,yaw σv B,yaw
+2.3.3
+
+(10)
+
+2.3.2
+
+Energy. We combine electrical dissipation Pel with
+mechanical power Pmech (including regeneration) and
+gravitational potential power Ppot :
+
+Ptotal = Pel + Pmech + Ppot .
+
+(11)
+
+Before sending targets q̂t = at + q0 to the drives we apply
+a joint-limit saturation to guarantee zero commanded torque
+toward a hard limit while preserving motion away from it. Let
+Qfeas be the feasible set and Qsoft ⊂ Qfeas a soft-limit band.
+For joint j with soft/hard bounds qjsoft , qjhard ,
+
+soft
+
+j −qj
+q̂j − qhard
+q̂j − qjhard , qj ∈ Qsoft , q̂j ∈
+/ Qfeas ,
+qj −qjsoft
+q̂j =
+
+q̂j ,
+otherwise.
+(9)
+
+Assuming dominant q-axis current iq and negligible id ,
+
+At qj = qjhard this yields q̂j = qjhard so the PD term toward the
+limit vanishes. The same logic applies near the lower bound.
+This saturation runs in both simulation and on hardware.
+
+where rj is the gear ratio, ki,j the motor constant, Rj the
+coil resistance, g gravity, and vb,z the center-of-mass velocity
+along − g. Because many robotic systems are black-box,
+Figure 22 reports the characteristic Joule heating scale from
+Eq. (12) for our in-house developed robots, providing a rough
+estimate across different platforms.
+Since joint speeds scale with base speed, dissipation
+grows roughly with ∥v̂B ∥2 . Without normalization, the
+physically derived power term would therefore dominate the
+reward at higher commanded velocities and bias the policy
+toward under-tracking. We thus apply a velocity-dependent
+normalization,
+
+Clarification of joint-limit saturation. The joint-limit
+handling does not constrain the policy action space nor
+prevent targets from exceeding the hard limits. Instead, the
+commanded target q̂j is reshaped such that the PD controller
+produces zero torque toward the hard limit while preserving
+full authority away from it. Consequently, even with low
+gains, the controller can still generate large torques near the
+limits in the direction that moves the joint back into the
+feasible set.
+The soft-limit band Qsoft is a narrow buffer (typically a few
+degrees, O(2–5◦ ) per joint) introduced solely to smoothly
+Prepared using TRR.cls
+
+Pel =
+
+Pmech =
+Ppot =
+
+n
+X
+
+Rj i2q,j =
+
+n
+X
+
+τj2
+
+Rj
+2 ,
+rj2 ki,j
+
+j=1
+
+j=1
+
+(
+
+τ ⊤ q̇ > 0,
+τ ⊤ q̇ < 0,
+
+τ ⊤ q̇,
+kregen τ ⊤ q̇,
+
+B
+X
+
+mb g vb,z ,
+
+(12)
+(13)
+(14)
+
+b=1
+
+γv =
+
+1
+,
+∥v̂B ∥2 + 1
+
+(15)
+
+10
+
+XX(X)
+
+and define
+re = γv Ptotal ,
+
+(16)
+
+which ensures balancing between velocity tracking and
+energy optimization across different commanded speeds
+while preserving the physical interpretation of the powerbased loss. Alternative formulations based on constrained
+or complementary optimization could enforce velocity
+tracking and energy minimization separately; however,
+the proposed normalization provides an equivalent effect
+in a simpler unconstrained reward formulation without
+introducing additional constraints or dual variables.
+Interpretation of energy terms. While some components
+of the energy objective resemble commonly used heuristic
+penalties, their interpretation and effect differ fundamentally.
+In particular, the gravitational potential term Ppot is
+formulated as a reward, not a penalty. It rewards increases
+in potential energy when ascending (e.g., stairs or slopes)
+and, by energy conservation, discourages unnecessary
+energy injection when descending. This behavior cannot be
+reproduced by a simple vertical velocity penalty, which lacks
+directionality and physical grounding.
+Crucially, all energetic terms – electrical dissipation,
+mechanical power, and gravitational potential – share the
+same physical unit [J]. The resulting reward therefore
+operates in a unified energy space, where scaling is
+determined by physical constants (e.g., mass, gravity, motor
+parameters) rather than ad-hoc coefficients. This ensures
+consistent weighting across robots and operating regimes,
+and shifts the design effort from manual tuning toward
+physically meaningful normalization.
+Limitations of the energy model. The proposed energy
+
+model captures the dominant motion-dependent losses
+relevant for large-scale policy optimization, but it is not
+a full motor-drive loss model. In particular, it does not
+explicitly model iron losses, inverter switching losses,
+temperature-dependent resistance, battery dynamics, detailed
+field-weakening behavior, or load-dependent transmission
+losses. The model is therefore expected to be most
+accurate for PMSM-driven robots operating within the
+identified torque, velocity, and temperature regimes, and less
+accurate for systems with strongly nonlinear transmissions,
+pronounced thermal drift, or frequent operation close to
+electrical saturation. In such cases, the same framework could
+incorporate higher-fidelity or data-driven power models, at
+the cost of additional modeling and identification effort.
+Foot-touchdown (FTD) penalty. To discourage braking by
+impacts (gear wear, noise), we penalize the maximum foot
+speed in a short history window upon touchdown. With buffer
+Prepared using TRR.cls
+
+length nftd = 3 and foot j,
+(
+foot
+maxk∈{t−2,t−1,t} ∥vj,k
+∥, if touchdown at t,
+vj,ftd =
+0,
+otherwise,
+(17)
+rftd =
+
+#feet
+X
+
+(18)
+
+vj,ftd .
+
+j
+
+While penalizing foot jerk is a reasonable alternative
+and can promote smooth motion, it implicitly acts at a
+fixed temporal scale determined by the control timestep
+and numerical differentiation. In this work, our goal was to
+explicitly target impact-related effects at contact, for which
+a windowed foot-touchdown velocity penalty offers more
+direct temporal control and interpretability. We therefore
+opted for the FTD formulation.
+Collision
+penalty. We
+penalize joint-limit
+thigh–environment collisions via an indicator:
+
+(
+rc =
+
+1,
+0,
+
+if collision at t,
+otherwise.
+
+and
+
+(19)
+
+Penalty scheduling. Early in training, large penalties can
+stall gait discovery. We therefore schedule energy and FTD
+penalties with an exponential factor kdecay = e−λt and κ =
+1 − kdecay :
+
+r = cv rv + cc rc + κ (ce re + cftd rftd ) .
+
+(20)
+
+We typically choose a half-life of 500 iterations for λ, but this
+is task dependent.
+Entropy scheduling Exploration is essential early
+but harms precision later. We anneal the entropy coefficient
+with a smooth tanh schedule:
+2.3.4
+
+(21)
+
+E(t) = E∞ + ϵ (E0 − E∞ ),
+ϵ = 12 − 12 tanh η (t − TE ) ,
+
+
+(22)
+
+so that E(0) ≈ E0 transitions to E∞ near TE .
+
+2.4
+
+Remarks
+
+Drive-side filtering. Joint velocities are often low-pass
+filtered (cutoffs as low as 25–50 Hz). Although PACE uses
+positions in the loss, filtered q̇ still affects commanded PD
+torques. If noticeable, include this filter in simulation and
+identify its parameters.
+Units of PD gains. Non-SI units still allow identification
+but break generalization across gains and skew energy terms
+(damping/ohmic vs. mechanical). Use consistent SI units.
+Further assumptions (empirically satisfied in Figure 4).
+
+Bjelonic et al.
+
+11
+Table 2. Main robot characteristics.
+
+Weight [kg]
+Shoulder height [m]
+Shoulder width [m]
+Shoulder depth [m]
+Thigh length [m]
+Shank length [m]
+Regen. coeff. kregen [-]
+Bus voltage u [V]
+Gear ratio r [-]
+Max. joint torque [Nm]
+Max. joint speed [rad/s]
+
+Figure 4. Primary robotic platforms evaluated in this study. Top
+row (left to right): ANY MAL, T YTAN, and M INIMAL. Additional
+systems include Sony’s A IBO, Softbank’s NAO, ALMA,
+S PACEHOPPER, LEVA, M AGNECKO v2 and v1, and Fourier’s
+GR-1. All robots are depicted in operation using the proposed
+PACE parameter fitting.
+
+• Correct kinematics (URDF/USD, frames).
+• High-bandwidth current control or an LTIapproximable drive (closed-loop behavior is fitted).
+• Mild temperature dependence during data collection.
+• Nonlinearities modest in the excited range (or absorbed
+by fitted terms).
+• Sufficient structural stiffness in the excitation band
+(Section 2.1).
+Finally, we stress that adding parameters indiscriminately
+can harm identifiability. The compact set {Ia , d, τ f , q̃b , Td }
+proved sufficient across platforms; co-optimizing PD gains
+leads to non-unique optima (Eq. (7)).
+
+3
+
+Experiments
+
+This section introduces the robotic platforms and the
+experimental protocols. We evaluate PACE in two stages.
+First, controlled in-air validation and evaluation experiments
+(Section 3.2) establish methodological soundness at different
+levels of system complexity, ranging from a single drive to
+the fully suspended robot. Second, on-ground locomotion
+experiments (Section 3.3) apply the approach in realistic
+deployment scenarios, assessing performance and energetic
+efficiency.
+We proceed bottom–up: (In–air: i) single–actuator analysis on T YTAN (full access to firmware, electronics, and
+mechanics, Section 3.2.1); (In–air: ii) full–robot identification and validation, including a comparison on ANY MAL
+against a zero–model baseline and a state-of-the-art actuator
+network Hwangbo et al. (2019) (Section 3.2.2); (On–ground:
+Prepared using TRR.cls
+
+Max. motor torque [Nm]
+Max. motor speed [rad/s]
+Motor constant ki [Nm/A]
+Coil resistance R [Ω]
+
+T YTAN
+Hips Knee
+
+ANY MAL
+
+M INIMAL
+
+52.3
+0.62
+0.22
+0.73
+0.40
+0.37
+0.3
+48
+0.8 5.6
+9
+28 140
+315
+316.8
+36
+25
+35
+94
+29
+0.59
+1.25
+1.04
+1.71
+
+52.8
+0.55
+0.20
+0.75
+0.30
+0.38
+0.0
+48
+
+4.2
+0.25
+0.16
+0.39
+0.15
+0.16
+0.3
+18
+7.2 16
+2.9 6.4
+45 99.4
+0.4
+716
+0.0252
+0.194
+
+?
+
+89
+8.5
+?
+?
+?
+?
+
+Table 3. Reward scales and PD gains used for locomotion.
+
+Velocity tracking
+Energy [10−5 ]
+Collisions
+FTD
+
+Pτ
+Dτ
+
+T YTAN
+
+ANY MAL
+
+M INIMAL
+
+0.2
+− 16
+− 1.0
+− 0.1
+60
+2
+
+0.2
+− 16
+− 1.0
+− 0.1
+85
+0.6
+
+0.2
+− 128
+− 1.0
+− 0.1
+4
+0.05
+
+iii) full–robot locomotion experiments (Sections 3.3.1, 3.3.2)
+under the same parameters as (In–air: ii) and (On–ground: iv)
+long-duration energetic evaluations (Section 3.3.3).
+Separation of in-air identification and on-ground
+evaluation. For clarity, we emphasize that all parameter
+
+identification in this work is performed exclusively using
+in-air, contact-free trajectories with a fixed or effectively
+immobilized base (Section 3.2). No data collected under
+ground contact is used for parameter estimation. Groundcontact experiments (Section 3.3) are used solely for
+downstream policy deployment and evaluation using the
+already identified parameters from Section 3.2.2.
+Each experimental stage has a distinct objective. The
+single–drive study validates high-bandwidth motor torque
+tracking and mechanical identification under fully known
+conditions. The in-air full–robot experiments test whether
+the approach scales to system level, generalizes across
+PD gains and trajectories, and allow benchmarking against
+a zero–model baseline and a learned actuator network Hwangbo et al. (2019). Finally, the on–ground locomotion trials demonstrate the practical applicability of
+PACE, evaluating tracking accuracy, energetic efficiency, and
+long–duration performance.
+
+12
+
+3.1
+
+XX(X)
+
+Robots
+
+We perform analysis on three quadrupeds–T YTAN, ANYMAL, and M INIMAL–chosen to span actuation types, scales,
+and transparency (open vs. closed source). All three share
+the same leg topology: Hip Abduction–Adduction (HAA),
+Hip Flexion–Extension (HFE), and Knee Flexion–Extension
+(KFE), with point feet (rubber end caps). All joints are
+PMSM driven. Key characteristics are summarized in
+Table 2, where “?” marks indicate confidential specifications
+we are not permitted to disclose.
+T YTAN—a custom platform developed at ETH Zurich and
+based on BARRY Valsecchi et al. (2023)—uses pseudo-direct
+drives at HAA/HFE (fixed ratio r = 5.6) and a variable-ratio
+ball-screw lever at KFE (r ∈ [0.8, 9]). It employs a low inertia
+leg design by moving the knee-motor towards its hip.
+ANY MAL Hutter et al. (2016) employs series-elastic
+harmonic drives with high, fixed ratios. It serves as a closedsource testbed demonstrating applicability when only limited
+low-level access is available. Our method does not rely
+on joint-torque sensors, in contrast to the actuator network
+baseline.
+M INIMAL is a small, largely 3D-printed quadruped. All
+joints share a variable-ratio lever mechanism driven by TMotor units and a lead-screw transmission. In total 76 % of
+its total mass is situated in the base with only 6 % at each leg.
+Beyond these three primary platforms, PACE has also been
+deployed on a diverse set of robots, including A IBO Watanabe et al. (2025), NAO, ALMA Bellicoso et al. (2019);
+Ma et al. (2025), S PACEHOPPER Spiridonov et al. (2024),
+LEVA Arnold et al. (2025), M AGNECKO v1 Leuthard et al.
+(2024)/v2, GR-1 He, Zhang, Jenelten, Grandia, Bächer and
+Hutter (2025), the A LLEGRO Hand, and the A BILITY Hand
+(see Fig. 4), as well as additional unpublished systems not
+shown here.
+Data collection On each system, we record multijoint chirps with varying amplitudes. Typical sequence
+duration is 20 – 40 s with f0 = 0.1 Hz and a maximum
+frequency of 10 Hz to avoid excessive actuator stress.
+Structural constraints limit the achievable bandwidth on
+suspended setups (full T YTAN: 8 Hz; ANY MAL: 2 Hz; cf.
+Section 2.1).
+All full-robot logs (and low-level control) run at 400 Hz.
+We capture time-synchronized data via shared-memory
+logging using SignalLogger Hottiger et al. (2020). For
+additional validation on M INIMAL, we also collect random
+joint steps at 2 Hz update (every 0.5 s); we do not use this
+trajectory on larger machines to avoid transmission wear.
+Unless noted otherwise, all PACE optimizations and
+simulations run on a single NVIDIA GeForce RTX 3080.
+3.1.1
+
+Initialization of CMA-ES All optimization parameters are normalized to lie within the interval [−1, 1] using
+their respective lower and upper bounds. CMA-ES is initialized with a zero mean, corresponding to the center of the
+3.1.2
+
+Prepared using TRR.cls
+
+feasible parameter range and thus a non-biased prior over
+the parameters. The initial standard deviation of the covariance matrix is set to σ = 0.5, enabling broad exploration of
+the normalized parameter space while remaining within the
+specified bounds. This scale-invariant initialization is shared
+across all robots and parameter sets and was found to be
+robust in practice without requiring manual tuning.
+
+3.2
+
+In-air evaluation and validation
+
+The following experiments validate PACE under controlled,
+contact-free conditions. The single-drive setup isolates
+mechanical effects and directly reveals the physical meaning
+of the identified inertia Ia and damping d. We note that
+this setup is used purely for validation and is not required
+by the proposed identification pipeline, which only assumes
+the ability to command joint-level trajectories and log
+joint states through the standard robot interface. The inair full-robot experiments then test whether the approach
+scales when all actuators, electronics, and dynamics interact
+simultaneously. Throughout, we concentrate on effective
+inertia Ia (mechanically verifiable); damping and friction
+are identified but not dissected further, as detailed tribology
+would require dedicated equipment.
+Single drive A single hip actuator is rigidly mounted
+to an aluminum frame (Figure 5a). The motor shaft is vertical
+(gravity effects negligible). An aluminum interface attaches
+a discrete mass at known radii using a locking pin, enabling
+controlled changes of output inertia. The power supply is four
+12 V car-batteries in series (48 V), peak 10.8 kW; a 100 A
+fuse limits to 4.8 kW. The drive accepts up to 32 A peak
+current. This setup emulates a perfect voltage source.
+The drive’s output-reduced inertia comprises the rotor,
+sun-gear assembly, planet gears, and output shaft. Using
+d’Alembert’s principle, the combined reduced output inertia
+is
+3.2.1
+
+I˜output = I˜rotor + I˜sun + I˜planet + I˜shaft
+= (1.14 + 0.511 + 0.00203 + 0.00146) × 10−2 kg m2
+≈ 1.65 × 10−2 kg m2 ,
+
+(23)
+
+showing rotor and sun-assembly dominance; planets and
+output-shaft are ∼ 103 smaller.
+The interface inertia is I˜interface = 8.67 × 10−3 kg m2 . The
+attachable mass has m = 503 g and own inertia about its
+CoM of 1.8 × 10−4 kg m2 . By varying the mounting radius
+of this mass, the joint inertia can be adjusted in the range
+1.65 – 6.27 × 10−2 kg m2 .
+Current loop validation. The goal of this experiment is to
+verify the motor drives’ ability to precisely track commanded
+currents iq , and thereby commanded motor torques τm , over
+a wide frequency range. With the interface removed (free
+spin), we command a current chirp (1–1250 Hz, amplitude
+2 A, 25 s) and record measured currents at 10 kHz. This
+
+Bjelonic et al.
+
+13
+
+No Load
+Interface
+Interface + Mass
+
+0.08
+
+Mass
+
+Inertia Ia [kg m2 ]
+
+0.07
+0.06
+0.05
+0.04
+0.03
+0.02
+
+Interface
+
+0.01
+0.00
+
+Motor
+
+0.00
+
+0.05
+
+0.10
+
+0.15
+
+0.20
+
+0.25
+
+Distance d [m]
+(a) Single-drive experimental setup for
+joint-level characterization.
+
+(b) Identified versus target inertia as a function of lever arm radius, with drive
+compensations disabled.
+
+0.7
+
+Joint position q [rad]
+
+0.6
+0.5
+0.4
+0.3
+0.2
+
+Ours (sim)
+Real
+Target
+
+0.1
+0.0
+7.0
+
+7.5
+
+8.0
+
+8.5
+
+9.0
+
+9.5
+
+Time t [s]
+(c) Full-robot setup on T YTAN for multi-joint
+data collection.
+
+(d) Trajectory replay on the LF HFE joint of T YTAN, comparing real and simulated joint
+positions.
+
+Figure 5. Experimental setups and representative evaluation across abstraction levels.
+
+experiment does not serve parameter identification, but rather
+confirms high-bandwidth motor torque authority. Joint-level
+torque fidelity is addressed end-to-end by PACE.
+Mechanical loop identification. For single-drive identification, we fit three parameters: armature inertia Ia , viscous
+damping d, and friction τf . Joint bias is irrelevant (no
+gravity coupling), and the control/communication delay Td
+is negligible (microseconds). We simulate in Isaac Gym a
+single-link, single-joint model (link inertia set to zero so Ia
+absorbs total inertia).
+We collect chirps from 0.1 – 10 Hz at 2.5 kHz logging.
+In total 30 experiments are conducted: 15 with nominal firmware feed-forward compensations enabled (cogging/friction; cf. Figure 14) and 15 with compensations
+disabled. Each set spans five load cases (No load; Interface
+only; Interface+mass at 15.9 cm, 21.6 cm, 27.3 cm) and three
+PD configurations:
+Prepared using TRR.cls
+
+• Pτ = 60 N m rad−1 , Dτ = 2 N m s rad−1 (locomotion default),
+• Pτ = 145 N m rad−1 , Dτ = 5 N m s rad−1 ,
+• Pτ = 250 N m rad−1 , Dτ = 10 N m s rad−1 .
+Each experiment is fitted independently (three parameters),
+totaling ∼ 5 h across all runs.
+Full robot At the system level we identify all
+parameters, including joint position biases and a global
+delay, with the base stationary and legs moving in air.
+We collect identification and validation sets on T YTAN,
+ANY MAL, and M INIMAL. For T YTAN, identification
+uses sinusoidal joint targets at Pτ = 60 N m rad−1 , Dτ =
+2 N m s rad−1 ; validation repeats with Pτ = 145 N m rad−1 ,
+Dτ = 5 N m s rad−1 . For M INIMAL, we additionally validate
+on random joint steps (0.5 s dwell). On ANY MAL, low-level
+gains are fixed; we therefore use the vendor defaults for
+3.2.2
+
+14
+
+XX(X)
+
+(a) Real-world deployment of T YTAN during continuous deployment.
+
+(b) Corresponding simulation rollout under identical base velocity targets and conditions.
+
+Base velocity vB,x [m/s]
+
+1.0
+0.5
+0.0
+−0.5
+
+Base angular velocity ψ̇ [rad/s]
+
+−1.0
+1.5
+
+Real
+Sim
+Target
+
+1.0
+
+0.5
+
+0.0
+
+12
+
+14
+
+16
+
+18
+
+20
+
+22
+
+24
+
+Time t [s]
+(c) Tracking performance. Top: commanded and measured forward velocity. Bottom: commanded and measured angular velocity around the yaw axis.
+
+Joint torque τj [Nm]
+
+150
+
+Measured
+Target
+
+100
+
+50
+
+0
+
+−50
+17
+
+18
+
+Time t [s]
+
+19
+
+17
+
+18
+
+Time t [s]
+
+19
+
+17
+
+18
+
+19
+
+Time t [s]
+
+(d) Joint torque tracking on the left front leg. Shown are policy-commanded and measured torques for the HAA, HFE, and KFE joints (left to right).
+
+Figure 6. Sim-to-real evaluation of T YTAN using the proposed PACE framework.
+
+Prepared using TRR.cls
+
+Normalized score l [rad2 ]
+
+Bjelonic et al.
+
+15
+
+Tytan
+Anymal
+Minimal
+
+10−1
+
+10−2
+
+0
+
+20
+
+40
+
+60
+
+80
+
+100
+
+Iteration
+Figure 7. CMA-ES optimization score as a function of iteration
+(logarithmic scale) for the three main robotic platforms.
+1.0
+
+and serve only to evaluate sim-to-real transfer performance
+under realistic locomotion conditions.
+We further analyze the two platforms T YTAN and
+ANY MAL on long-duration trials. We quantify locomotion
+efficiency and decompose the total energy consumption into
+contributions from locomotion, inverter switching losses,
+compute and sensors overhead.
+Using the identified parameters, we train blind locomotion
+policies as in Section 2.3 without dynamics randomization.
+Hyperparameters and robot specific parameters are listed in
+Table 8 and Table 3 respectively. The same reward structure
+and scales are reused across ANY MAL, T YTAN, and
+M INIMAL. One coefficient that differs is the energy penalty
+for Minimal, which is increased due to its lightweight, 3Dprinted morphology. No task- or robot-specific retuning of
+tracking, collision or foot-touchdown terms was required.
+Tytan We train a single policy and compare real vs.
+simulation by replaying the real commanded base-velocity
+trajectory in open loop. The robot is manually driven within a
+3 m × 3 m area; total duration is ∼ 90 s (SignalLogger buffer
+limit).
+
+Joint position q [rad]
+
+3.3.1
+0.5
+
+0.0
+
+−0.5
+11.0
+
+No model (sim)
+Actuator network (sim)
+Ours (sim)
+Real
+Target
+11.5
+
+12.0
+
+12.5
+
+13.0
+
+13.5
+
+Time t [s]
+Figure 8. In-air LF–HFE joint trajectory of ANY MAL (zoomed
+view). Dashed gray: target trajectory. Dashed green: measured
+trajectory. Blue: no actuator model. Red: actuator network
+baseline. Orange: proposed method (PACE).
+
+both PACE and the actuator-network baseline. The actuatornetwork baseline is the ANYbotics LSTM actuator model
+deployed on our platform, rather than a model retrained
+on the suspended, contact-free chirp data used for PACE
+identification. Its proprietary training set is not available to
+us; however, the original actuator-network formulation was
+trained on contact-rich, high-frequency foot-trajectory data
+with measured torques Hwangbo et al. (2019). We therefore
+interpret this comparison as an evaluation against a strong
+practical actuator-network baseline, not as a controlled equaldata comparison between model classes.
+
+3.3
+
+On-ground locomotion analysis
+
+Having validated PACE under controlled conditions, we now
+assess its performance in locomotion scenarios under ground
+contact. These experiments evaluate full-robot deployment
+on hardware, testing whether the identified models enable
+robust tracking. All on-ground locomotion experiments use
+the actuator and delay parameters identified from in-air data
+(Section 3.2.2) without further adaptation or re-identification.
+Ground-contact rollouts are not used for parameter estimation
+Prepared using TRR.cls
+
+ANYmal We train three policies—(i) no model
+(URDF-only), (ii) actuator network Hwangbo et al. (2019),
+and (iii) PACE—with identical rewards, no dynamics
+randomization, and the same environment. We compare step
+responses at 1 m s−1 (forward/sideways over 4 m) and yaw
+steps at 2 rad s−1 .
+3.3.2
+
+Energetic running-track evaluations With dynamics
+fitted by PACE, the policies evaluated here do not require
+dynamics randomization to transfer to hardware, allowing
+the controller to specialize to the identified nominal machine
+dynamics. We do not claim that this eliminates the value
+of domain randomization or online adaptation; rather, these
+methods are complementary and may further improve
+robustness under unmodeled environmental or hardware
+variations. We emphasize that this outcome is not unique to
+PACE (e.g., Miller et al. (2025)), but arises here from explicit
+actuator-level identification using a compact, physically
+interpretable parameterization. We therefore perform longduration endurance tests on a standard 400 m track,
+comparing to our prior actuator-network results Bjelonic
+et al. (2023). The same T YTAN and ANY MAL policies from
+Secs. 3.3.1 and 3.3.2 are used. All policies are also capable
+of traversing standard stairs (cf. Figure 3).
+Both platforms use the same battery type as in Bjelonic
+et al. (2023), with capacity EB = 907.2 W h. We decompose
+the total cost of transport (CoT) additively as
+3.3.3
+
+CoT = CoE + CoD + CoL,
+
+(24)
+
+where each term captures a disjoint contribution. CoE
+accounts for controller-independent electronics power (compute and sensing), measured with the robot powered but
+drives disabled. CoD captures inverter and drive overheads,
+
+16
+
+XX(X)
+
+8
+6
+
+No model
+Actuator network
+Ours (PACE)
+
+Joint velocity q̇ [rad/s]
+
+4
+(a) Real-world deployment without any actuator model.
+
+(b) Real-world deployment with a learned actuator network.
+
+2
+0
+−2
+−4
+−6
+−8
+0.5
+
+1.0
+
+1.5
+
+2.0
+
+Joint position q [rad]
+(d) Phase portrait of the LF HFE joint over multiple gait cycles.
+
+(c) Real-world deployment with the proposed method.
+
+Base velocity vB,x [m/s]
+
+1.2
+1.0
+0.8
+0.6
+No model
+Actuator network
+Ours (PACE)
+Command
+
+0.4
+0.2
+0.0
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+Method
+
+Time t [s]
+
+(e) Forward velocity tracking. Left: commanded and measured velocities over time. Right: distribution of steady-state velocity errors across methods.
+
+Figure 9. Sim-to-real evaluation on ANY MAL. Panels (a–c) illustrate real-world deployments. Panel (d) shows the corresponding
+phase portraits. Panel (e) presents commanded and measured forward velocities (left) and steady-state velocity error distributions
+across methods (right).
+
+Table 4. Running-track performance (per full battery charge). ANY MAL C and AO PS are from Bjelonic et al. (2023).
+
+Rounds [–]
+Distance s [m]
+Initial SoC [%]
+Final SoC [%]
+Time t [min]
+Commanded v̂x,B [m s−1 ]
+Average v̄x,B [m s−1 ]
+Efficiency η [%]
+Ambient Temp. Θ [◦ C]
+Avg. power Pfull [W]
+
+Prepared using TRR.cls
+
+ANY MAL C
+
+AO PS
+
+ANY MAL D
+
+T YTAN
+
+6.6
+2640
+89
+10
+59
+1.0
+0.740
+100
+26
+723
+
+7.5
+3000
+92
+11
+68
+1.0
+0.735
+111
+31
+646
+
+10.3
+4120
+95
+15
+82
+1.0
+0.850
+132
+10
+556
+
+15.25
+6100
+98
+5
+104
+1.0
+0.978
+196
+18
+504
+
+Bjelonic et al.
+
+17
+
+40
+20
+0
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+2.0
+
+Cost of Transport
+
+Battery SoC [%]
+
+(a) Representative stills from one step cycle during running-track evaluation.
+100
+ANYmal C
+ANYmal D
+80
+Tytan
+60
+
+ANYmal C
+ANYmal D
+Tytan
+Dogs
+
+1.5
+
+1.0
+
+0.5
+
+0.0
+
+Distance s [km]
+
+Robot / Animal
+
+(b) Battery state of charge (SoC) as a function of distance traveled.
+
+2
+0
+
+Front knee
+Hind knee
+Min current
+Max gear ratio
+
+0.3
+0.2
+
+−2
+
+0.1
+
+−4
+−6
+
+Tytan
+ANYmal D
+
+0.4
+
+Normalized magnitude |Q|
+
+Joint velocity q̇ [rad/s]
+
+4
+
+(c) Decomposition of the Cost of Transport (CoT).
+
+0.0
+
+−2.5
+
+−2.0
+
+−1.5
+
+Joint position q [rad]
+
+−1.0
+
+−0.5
+
+(d) Limit cycle of the T YTAN knee joint over a 10 s window.
+
+0
+
+2
+
+4
+
+6
+
+8
+
+Frequency f [Hz]
+(e) Frequency spectrum of the LF HFE joint during steady locomotion.
+
+Figure 10. Running-track evaluations across robotic platforms. (a) Representative stills from one step cycle. (b) Battery consumption
+over distance (SoC). (c) Cost of transport (CoT) with contributions from electronics (CoE, diagonal hatching) and drives’ inverter
+switching (CoD, horizontal hatching). (d) Limit cycle of the T YTAN knee joint over a 10 s window. (e) Frequency spectrum of the LF HFE
+joint during steady locomotion.
+
+measured with drives enabled but zero torque. CoL contains
+only motion-dependent losses during locomotion, including
+mechanical dissipation and electrical losses such as Joule
+heating. By construction, CoE and CoD are largely independent of gait mechanics, while CoL reflects the portion directly
+influenced by modeling accuracy and control.
+
+Prepared using TRR.cls
+
+To estimate resting powers, we repeat full-charge discharge
+tests with (i) robot on a crane, drives enabled but zero current
+target (rest), and (ii) robot on ground, drives off (off ). With
+measured durations ti and State of Charge (SoC) windows
+
+18
+
+XX(X)
+
+match the analytical model up to > 100 Hz. Magnitude
+stays near 0 dB (unity gain) with ≤ 5◦ phase lag up to
+25 Hz; the −1 dB point occurs near 50 Hz, and we observe a
+control bandwidth of ≈ 346 Hz or 0.58 % of the pulse-width
+modulation frequency. A dead time of ≈ 400 µs is inferred
+from the phase slope. Above ∼ 350 Hz, signal-to-noise ratio
+limits the estimate.
+
+Table 5. CoT decomposition on the track.
+
+ANY MAL C
+ANY MAL D
+T YTAN
+Dogs
+
+CoE
+
+CoD
+
+CoL
+
+CoT
+
+(0.50)
+
+(0.24)
+
+0.50
+0.29
+
+0.24
+0.21
+
+1.12
+0.53
+0.47
+0.23
+
+1.86
+1.27
+0.97
+0.48
+
+0.25
+
+(SoCmax
+− SoCmin
+i
+i ), the average powers are
+
+min
+EB SoCmax
+rest − SoCrest
+Prest =
+,
+trest
+
+min
+EB SoCmax
+off − SoCoff
+Poff =
+.
+toff
+
+(25)
+(26)
+
+For a locomotion experiment of duration ttrack and distance
+∆s, the total CoT is
+
+min
+EB SoCmax
+track − SoCtrack
+.
+(27)
+CoT =
+mg ∆s
+Electronics and drives contributions are
+Poff ttrack
+CoE =
+,
+mg ∆s
+
+
+Prest − Poff ttrack
+, (28)
+mg ∆s
+
+CoD =
+
+and the locomotion term follows as
+CoL = CoT −
+
+4
+
+Prest ttrack
+.
+mg ∆s
+
+(29)
+
+Results
+
+We report identification progress, fitted parameters, and
+sim2real performance across T YTAN, ANY MAL, and
+M INIMAL. Optimization traces (CMA-ES scores per
+iteration) are shown in Figure 7; final parameter sets appear in
+Table 6. For ANY MAL, the same fitted set can be used across
+units, though hardware wear, varying firmware and changing
+simulator may introduce small residual gaps.
+Across robots, same-type joints fit to similar armature
+Ia and damping d. Both ANY MAL and T YTAN identify
+a global delay of 7.5 ms. ANY MAL shows the largest
+fitted damping (order 5 N m s rad−1 ); pseudo-direct variants
+(T YTAN, M INIMAL) fit substantially lower d. Despite higher
+damping on ANY MAL, fitted Coulomb-like friction is of
+similar order to T YTAN. With N = 4096 environments, endto-end optimization for each platform converges within
+10 – 24 h, depending on trajectory length, GPU throughput,
+and parameter bounds.
+
+4.1
+
+In-air evaluation and validation
+
+4.1.1
+
+Single drive
+
+loop validation. From current-chirp data
+(1 – 1250 Hz, 2 A, 25 s) we estimate the motor inner-loop
+transfer Hi (s) = τm /τ̂m . Measured Bode plots (Figure 16)
+Current
+
+Prepared using TRR.cls
+
+Mechanical loop identification. We fit {Ia , d, τf } from
+position-chirp data (0.1 – 10 Hz, 2.5 kHz logging) over five
+load cases and three PD configurations (Section 3.2.1).
+In the no-compensation firmware mode, fitted Ia agrees
+with analytic targets within 2 % (rotor), 6 % (interface),
+and 15 % (added mass at radius); across PD settings,
+the standard deviation is 0.67 %, 3.7 %, and 14 %,
+respectively (Figure 5b). One high-gain/high-mass trial failed
+mechanically (the lever broke) and is excluded. Parameter
+variations remain small across the locomotion-relevant
+operating range and load-cases, with noticeable deviations
+only near extreme conditions close to material limits, which
+are outside the operating regime considered in this work.
+With firmware compensations enabled, all fits exhibit
+an approximately constant offset Icomp = 8.1 × 10−3 kg m2
+(virtual inertia, cf. Figure 17).
+Assuming unit inner-loop gain, the outer-loop single-joint
+transfer from q̂ to q matches the second-order model in
+Equation 1. For the high-load, locomotion-gain case (Pτ =
+60 N m rad−1 , Dτ = 2 N m s rad−1 ), the dominant complex
+conjugate yields a gain drop near 4.35 Hz and ≈ −14 dB at
+10 Hz (cf. Figure 18). The dominant pole pair lies within the
+frequency range spanned by the excitation trajectories.
+Full robot Representative in-air trajectory overlays
+for T YTAN show near-overlap between real measurements
+and simulated replay using fitted parameters (Figure 5d).
+Validation at different gains (Pτ = 145 N m rad−1 , Dτ =
+5 N m s rad−1 ) preserves the match (Figure 15).
+A comparison against the single-drive baseline highlights
+a clear discrepancy. For the LF–HFE joint of T YTAN, the
+fitted inertia is Ia = 10.6 × 10−2 kg m2 , approximately four
+times higher than the expected Ia ≈ 2.5 × 10−2 kg m2 from
+rotor and compensation alone, while the fitted damping d =
+0.17 N m s rad−1 remains consistent with expectation (cf.
+Table 6).
+On M INIMAL, both chirps and random joint steps
+are reproduced closely; the URDF-only model deviates
+substantially (Appendix: Figure 20a, Figure 20b).
+4.1.2
+
+Comparison with the actuator network on ANYmal
+Figure 1 compares in-air behavior for ANY MAL using: (i)
+no model (URDF-only), (ii) the actuator network Hwangbo
+et al. (2019), and (iii) PACE. The trace overlays (stills)
+qualitatively match only for the latter two; the no-model case
+diverges. The delta phase portraits of LF–HAA show smallest
+(∆q, ∆q̇) with PACE, while the actuator network exhibits
+more variance and a joint position bias (∼ 5◦ ). The deltas
+
+Bjelonic et al.
+
+19
+
+Battery current i [A]
+
+vB,x [m/s]
+
+Figure 11. Dynamic-limit demonstrations. Top: two-legged balance with ANY MAL. Center: running with ANY MAL. Bottom: stair
+climbing with M INIMAL.
+
+align between real (blue) and fitted simulation (orange), with
+targets in dashed black. Measured vs. commanded motor
+torques on the LF leg also match well; small deviations
+appear at KFE during liftoff.
+
+Measured
+Target
+
+2
+0
+−2
+
+ANYmal Forward walking with URDF-only fails
+(caught by crane), whereas both actuator network and PACE
+succeed (Figure 9). During steady state, both achieve a mean
+≈ 0.85 m s−1 (violin plot), with similar limit cycles; the nomodel case diverges by ∼ 3 s. Sideways and yaw tests are
+provided in the Appendix (Figure 21); the URDF-only policy
+can execute yaw steps at 2 rad s−1 but remains unreliable for
+1 m s−1 forward and sideways walking.
+4.2.2
+
+0
+Measured
+Limit
+
+−10
+−20
+−30
+0
+
+20
+
+40
+
+60
+
+80
+
+100
+
+Time t [s]
+Figure 12. Running experiments with ANY MAL. Top:
+commanded forward velocity versus measured base velocity
+(state estimation). Bottom: battery current profile during the
+same run, including measured current and the saturated peak
+limit of 32 A imposed by the battery.
+
+are calculated as ∆qi = qisim − qireal and ∆q̇i = q̇isim − q̇ireal .
+The closer a trajectory to (0,0), the smaller the reality gap.
+A zoomed HFE time window appears in Figure 8. Data
+usage differs: our approach relied on ∼ 20 s of in-air data; the
+2019 actuator network used ∼ 4 min of torqued data, using
+more complex data acquisition techniques, and the deployed
+vendor LSTM was likely trained on a larger dataset.
+
+Energetic running-track evaluations We replicate
+the 400 m track protocol of Bjelonic et al. (2023) and
+extend it with ANY MAL D and T YTAN. Summary statistics
+are listed in Table 4. State-of-charge vs. distance, CoT
+decomposition, frequency spectra, and a knee limit-cycle
+analysis are in Figure 10.
+We decompose the cost of transport (CoT) into electronics
+(CoE), drives (CoD), and locomotion (CoL) using the
+procedures in Section 3.3.3. Table 5 summarizes the
+contributions. For ANY MAL D, Cost of Transport (CoT)
+reduces to 1.27 (vs. 1.86 for ANY MAL C); T YTAN reaches
+0.97. In both platforms, less than half of the energy is
+attributed to CoL. Biological dogs reach similar distribution
+at half the CoT Bryce and Williams (2017) at 30 kg weight
+compared to T YTAN.
+4.2.3
+
+Dynamic-limit demonstrations Figure 11 shows
+three policies trained in fitted simulation and deployed
+zero-shot. On ANY MAL, we demonstrate two-legged
+balancing (orientation tracking) and running. In these running
+trials, simulation attained ≈ 4 m s−1 ; hardware peaked
+near 3 m s−1 , limited by battery current (32 A threshold;
+Figure 12). The running speed is presented as contextual
+4.2.4
+
+4.2
+
+On-ground locomotion analysis
+
+Tytan Figure 6 juxtaposes real vs. simulated
+sequences for an open-loop replay of commanded base
+velocities. Both absolute and relative motion match closely
+(cf. supplementary video). Linear and yaw-rate tracking
+4.2.1
+
+Prepared using TRR.cls
+
+20
+
+XX(X)
+
+comparison and not claimed as a new overall record. On
+M INIMAL (4 kg), the policy climbs standard 18 cm stairs
+continuously (20 steps in 46 s).
+
+5
+
+Discussion
+
+Inner loop as near–unit torque source. The electrical inner
+loop tracks torque at high bandwidth (measured ≈ 346 Hz),
+so within the policy’s frequency range it can be treated as a
+near–unit-gain source (Section 4.1.1). With more advanced
+control, bandwidths up to ∼3.5 kHz are feasible Springob
+and Holtz (2002).
+Physicality of fitted parameters and virtual inertia.
+On a single drive, PACE recovers output inertias that
+match analytic expectations, and the drive behaves closely
+like a second–order LTI system. Because the mechanical
+bandwidth falls in the excitation range, Ia and d can
+be reliably identified and directly relate to the dynamics
+shaped by the PD gains (cf. Section 2.1). When firmware
+compensations are enabled, we observe an additive,
+load–independent virtual inertia that shifts the effective
+dynamics (Section 4.1.1); identification and deployment
+should therefore use identical firmware modes.
+Interpreting Ia and d. Across abstraction levels, the
+fitted armature term Ia aggregates rotor inertia, compensation
+effects, and inaccuracies in link and load modeling, while
+the fitted damping term d captures contributions from the
+motor, gearbox, and compensations. Both scale with the
+ratio ki /ki,real , and are handled end–to–end by PACE. The
+unexpectedly larger full-robot Ia (about fourfold relative to
+the single-drive baseline) is consistent with three effects:
+(i) underestimation of link inertia in CAD, particularly
+in the thigh, (ii) additional apparent inertia introduced by
+compensation, and (iii) rotor inertia. A diagnostic single-legsegment analysis confirms this explanation (Appendix C), but
+it is not central to our contribution.
+Generalization across gains and trajectories. Fitted
+simulators reproduce in–air trajectories at unseen PD gains
+and for unseen trajectories with higher fidelity than the
+actuator–network baseline, indicating a consistent physical
+model rather than an overfit function approximation (cf.
+Figure 5d, Figure 8 and Figure 20).
+In–air data suffices for contact tasks. Identifying
+joint–space dynamics (Section 2.2) is sufficient for zero–shot
+locomotion. Our results do not contradict prior actuator
+networks Hwangbo et al. (2019), but reflect a different
+operating regime. We deliberately identify dynamics from
+contact-free, in-air excitation. In this regime, the mechanical
+loop dominates and the actuator is well approximated by
+a low-order LTI model; remaining nonlinearities are either
+outside the excitation range or absorbed into the fitted
+parameters.
+Zero–model failure and the role of speed. Policies
+trained without actuator models can fail even at low speeds
+(Section 4.2); covering the resulting gap would require heavy
+Prepared using TRR.cls
+
+dynamics randomization, whose scope grows rapidly with
+step frequency (Figure 19). Thus, achievable speed (step
+frequency) is a sensitive proxy for the reality gap.
+Sim2real tracking and dynamic behaviors. Open–loop
+base–velocity replays match between real and simulation
+(Figure 6), and PACE is competitive with the actuator
+network on ANY MAL (Figure 9). The same modeling
+enabled two dynamic behaviors on ANY MAL: two-legged
+balancing and high-speed running up to the platform’s
+electrical limit. It also enabled continuous stair-climbing
+on M INIMAL. The 3 m s−1 ceiling on ANY MAL is set by
+battery current limits (32 A, Figure 12). Notably, PACE
+uses only ∼20 s of encoder–only in–air data per robot,
+versus minutes of torque–instrumented data for actuator
+networks—broadening applicability to systems without
+torque sensors.
+Energy shaping and straight–leg gaits. With compensation and ki drift folded into d, the energy reward
+(Section 2.3.3) penalizes dissipations that correlate with
+track–side CoT reductions (Table 5). In the evaluated setting,
+precise simulator fitting removes the need for dynamics
+randomization during policy training, enabling ANY MAL to
+adopt straighter-knee gaits in the identified nominal dynamics. This reduces the total CoT by ∼32 % and halves locomotion losses. Despite T YTAN’s efficient drives and low leg
+inertia, its inability to fully straighten the knee keeps its
+locomotion cost only ∼11 % lower than ANY MAL’s in this
+regime, underscoring the energetic importance of full knee
+extension on flat terrain (Table 5).
+Where the watts go. For both ANY MAL and T YTAN, less
+than half of the energy budget is spent on locomotion itself;
+electronics and inverter switching account for the remainder.
+Algorithmic efficiency alone cannot close the full CoT gap
+to biology. We need to build robots based on more efficient
+sensors, computers, and power electronics.
+Generalization across robots. The same parameterization
+{Ia , d, τ f , q̃b , Td } transfers from open (T YTAN, M INIMAL)
+to closed (ANY MAL) platforms—and beyond—suggesting a
+broadly useful basis.
+Future extensions.
+• Hybrid CMA–ES with local gradient refinements in
+differentiable physics.
+• Contact–parameter refinement when foot–force sensing or plates are available.
+• Lightweight online adaptation (global scale on {Ia , d})
+to track wear/temperature over time Lee et al. (2020).
+
+6
+
+Conclusion
+
+We presented Precise Adaptation through Continuous Evolution (PACE), an alignment of joint-space dynamics that
+enables zero-shot sim2real locomotion on the evaluated
+platforms while eliminating broad actuator-dynamics randomization during policy training. The key idea is to fit
+
+Bjelonic et al.
+
+a parameterization—per-joint armature, viscous damping,
+Coulomb friction, joint bias, and a global delay—directly
+using ∼20 s of in-air, encoder-only trajectories and massively
+parallel evolutionary search.
+Across three platforms (T YTAN, ANY MAL, M INIMAL),
+the fitted simulators reproduce in-air joint trajectories with
+near overlap and generalize across PD gains and trajectories;
+on ANY MAL they close the gap where URDF-only models
+fail and match actuator-network fidelity while requiring less
+data and no torque sensors. The fitted dynamics translates
+to the ground: blind locomotion policies train in fitted
+simulation and deploy zero-shot, yielding accurate basevelocity tracking and endurance improvements on a 400 m
+track (e.g., ANY MAL D: CoT 1.27 and 4.12 km; T YTAN:
+CoT 0.97 and 6.10 km). Dynamic-limit demonstrations (twolegged balance, ∼3 m/s running bounded by a 32 A battery
+limit, and stair climbing on a 4 kg robot) further indicate that
+residual constraints are hardware–power and sensing limited
+rather than model limited.
+The approach is data- and compute-efficient (20 s
+trajectories, single-GPU, 10 – 24 h per robot with N =
+4096 environments) and applies to both open and closed
+platforms, provided firmware compensation modes and
+filters are consistent between identification and deployment.
+Current limitations include finite excitation bandwidth on
+suspended setups and temperature/aging dependencies that
+shift effective parameters. Our approach fails if any of the
+assumptions from Section 2.4 are violated, which fully online
+and model-free approaches might be able to catch.
+Future work will focus on (i) accurately identifying
+electrical constraints—bus-voltage (Appendix A) and current
+limits (Figure 12), and inverter switching behavior—and
+embedding them into the fit, and (ii) explicitly modeling
+compliance (joint/foot stiffness, link flexibilities, series
+elasticity) within the optimization. Together, these additions
+should enable higher step-frequency gaits that deliberately
+exploit hardware dynamics rather than fight them. As
+simulators expose richer effects, we will also extend the
+parameterization beyond acceleration to include higher-order
+...
+motion terms—jerk q , snap q (4) , crackle q (5) , and pop
+q (6) —to better capture bandwidth limits, electro-magnetic
+effects, mitigate wear, and shape smooth, high-frequency
+locomotion.
+Takeaway. A small, physically meaningful parameter set
+(4n+1), identified from in-air experiments using joint
+encoders, was sufficient in our experiments to eliminate broad
+dynamics randomization for blind quadrupedal locomotion
+and to translate simulation capabilities to hardware in a single
+shot.
+Authors’ Note
+ORCIDs
+Filip Bjelonic 0000-0002-4890-3132
+
+Prepared using TRR.cls
+
+21
+Fabian Tischhauser 0009-0009-8821-3994
+Marco Hutter 0000-0002-4285-4990
+
+Acknowledgements
+The authors would like to thank the RSL Learning Group for many
+insightful discussions throughout this work. We are grateful to
+Konrad and Matthias for valuable discussions on electronics. We
+also thank Zichong, Stephan, Efe, Yuntao, René, Clemens, Ryo,
+Alexander, Fabio for employing and extending our approach in their
+own research. Finally, we acknowledge the use of OpenAI’s GPT5, which assisted in refining the manuscript language. All technical
+content, analyses, and citations were generated and verified by the
+authors. We note that large language models may exhibit biases,
+errors, or omissions, and we take full responsibility for the accuracy
+and appropriateness of the manuscript.
+
+Author Contributions
+The authors confirm contribution to the paper as follows: study
+conception and design: F. Bjelonic, F. Tischhauser, M. Hutter; data
+collection: F. Bjelonic; analysis and interpretation of results: F.
+Bjelonic; mechanical experimental setups and electronics support:
+F. Tischhauser; manuscript preparation: F. Bjelonic, M. Hutter. M.
+Hutter provided funding, supervision and critical feedback. All
+authors reviewed the results and approved the final version of the
+manuscript.
+
+Declaration of conflicting interests
+The authors declare that there are no potential conflicts of interest
+with respect to the research, authorship, or publication of this
+article.
+
+Funding
+This work was supported by the European Union’s Horizon Europe
+Framework Programme (Grant Agreement No. 101070596).
+
+Data Accessibility Statement
+The datasets supporting the findings of this study are available
+at https://doi.org/10.3929/ethz-c-000783505, and
+the source code is publicly available at https://github.com/
+leggedrobotics/pace-sim2real.
+
+References
+Ajay, A., Wu, J., Fazeli, N., Bauza, M., Kaelbling, L. P., Tenenbaum,
+J. B. and Rodriguez, A. (2018), Augmenting physical simulators
+with stochastic neural networks: Case study of planar pushing
+and bouncing, in ‘2018 IEEE/RSJ International Conference on
+Intelligent Robots and Systems (IROS)’, IEEE, pp. 3066–3073.
+Albu-Schäffer, A. and Della Santina, C. (2020), ‘A review on
+nonlinear modes in conservative mechanical systems’, Annual
+Reviews in Control 50, 49–71.
+Aractingi, M., Léziart, P.-A., Flayols, T., Perez, J., Silander, T. and
+Souères, P. (2023), ‘Controlling the solo12 quadruped robot with
+deep reinforcement learning’, scientific Reports 13(1), 11945.
+
+22
+Arnold, M., Hildebrandt, L., Janssen, K., Ongan, E., Bürge, P.,
+Gábriel, Á. G., Kennedy, J., Lolla, R., Oppliger, Q., Schaaf, M.
+et al. (2025), ‘Leva: A high-mobility logistic vehicle with legged
+suspension’, arXiv preprint arXiv:2503.10028 .
+Bellegarda, G., Chen, Y., Liu, Z. and Nguyen, Q. (2022), Robust
+high-speed running for quadruped robots via deep reinforcement
+learning, in ‘2022 IEEE/RSJ International Conference on
+Intelligent Robots and Systems (IROS)’, IEEE, pp. 10364–
+10370.
+Bellicoso, C. D., Krämer, K., Stäuble, M., Sako, D., Jenelten, F.,
+Bjelonic, M. and Hutter, M. (2019), Alma-articulated locomotion
+and manipulation for a torque-controllable robot, in ‘2019
+International conference on robotics and automation (ICRA)’,
+IEEE, pp. 8477–8483.
+Beyer, H.-G. and Sendhoff, B. (2007), ‘Robust optimization–a
+comprehensive survey’, Computer methods in applied mechanics
+and engineering 196(33-34), 3190–3218.
+Bjelonic, F., Lee, J., Arm, P., Sako, D., Tateo, D., Peters, J.
+and Hutter, M. (2023), ‘Learning-based design and control
+for quadrupedal robots with parallel-elastic actuators’, IEEE
+Robotics and Automation Letters 8(3), 1611–1618.
+Bryce, C. M. and Williams, T. M. (2017), ‘Comparative locomotor
+costs of domestic dogs reveal energetic economy of wolf-like
+breeds’, Journal of Experimental Biology 220(2), 312–321.
+Derammelaere, S., Haemers, M., De Viaene, J., Verbelen, F.
+and Stockman, K. (2016), A quantitative comparison between
+bldc, pmsm, brushed dc and stepping motor technologies, in
+‘2016 19th International Conference on Electrical Machines and
+Systems (ICEMS)’, Ieee, pp. 1–5.
+Dziugaite, G. K., Roy, D. M. and Ghahramani, Z. (2015), ‘Training
+generative neural networks via maximum mean discrepancy
+optimization’, arXiv preprint arXiv:1505.03906 .
+Eysenbach, B., Gupta, A., Ibarz, J. and Levine, S. (2018), ‘Diversity
+is all you need: Learning skills without a reward function’, arXiv
+preprint arXiv:1802.06070 .
+Fadini, G., Flayols, T., Del Prete, A., Mansard, N. and Souères,
+P. (2021), Computational design of energy-efficient legged
+robots: Optimizing for size and actuators, in ‘2021 IEEE
+International Conference on Robotics and Automation (ICRA)’,
+IEEE, pp. 9898–9904.
+Ferrari, S., Ragazzo, P., Dilevrano, G. and Pellegrino, G. (2022),
+‘Flux and loss map based evaluation of the efficiency map
+of synchronous machines’, IEEE Transactions on Industry
+Applications 59(2), 1500–1509.
+Fey, N., Margolis, G. B., Peticco, M. and Agrawal, P. (2025),
+‘Bridging the sim-to-real gap for athletic loco-manipulation’,
+arXiv preprint arXiv:2502.10894 .
+Frazier, P. I. (2018), Bayesian optimization, in ‘Recent advances in
+optimization and modeling of contemporary problems’, Informs,
+pp. 255–278.
+Fu, Z., Kumar, A., Malik, J. and Pathak, D. (2021), ‘Minimizing
+energy consumption leads to the emergence of gaits in legged
+robots’, arXiv preprint arXiv:2111.01674 .
+
+Prepared using TRR.cls
+
+XX(X)
+Gamazo-Real, J. C., Vázquez-Sánchez, E. and Gómez-Gil, J.
+(2010), ‘Position and speed control of brushless dc motors
+using sensorless techniques and application trends’, sensors
+10(7), 6901–6947.
+Gautier, M. (1986), ‘Identification of robots dynamics’, IFAC
+Proceedings Volumes 19(14), 125–130.
+Gautier, M. and Poignet, P. (2001), ‘Extended kalman filtering and
+weighted least squares dynamic identification of robot’, Control
+Engineering Practice 9(12), 1361–1372.
+Golemo, F., Taiga, A. A., Courville, A. and Oudeyer, P.-Y. (2018),
+Sim-to-real transfer with neural-augmented robot simulation, in
+‘Conference on Robot Learning’, PMLR, pp. 817–828.
+Grandia, R., Jenelten, F., Yang, S., Farshidian, F. and Hutter,
+M. (2023), ‘Perceptive locomotion through nonlinear modelpredictive control’, IEEE Transactions on Robotics 39(5), 3402–
+3421.
+Grandia, R., Knoop, E., Hopkins, M. A., Wiedebach, G., Bishop,
+J., Pickles, S., Müller, D. and Bächer, M. (2025), ‘Design
+and control of a bipedal robotic character’, arXiv preprint
+arXiv:2501.05204 .
+Handa, A., Allshire, A., Makoviychuk, V., Petrenko, A., Singh,
+R., Liu, J., Makoviichuk, D., Van Wyk, K., Zhurkevich, A.,
+Sundaralingam, B. et al. (2023), Dextreme: Transfer of agile
+in-hand manipulation from simulation to reality, in ‘2023 IEEE
+International Conference on Robotics and Automation (ICRA)’,
+IEEE, pp. 5977–5984.
+Hanna, J. P., Desai, S., Karnan, H., Warnell, G. and Stone, P. (2021),
+‘Grounded action transformation for sim-to-real reinforcement
+learning’, Machine Learning 110(9), 2469–2499.
+Hausknecht, M. J. and Stone, P. (2015), Deep recurrent q-learning
+for partially observable mdps., in ‘AAAI fall symposia’, Vol. 45,
+p. 141.
+He, J., Zhang, C., Jenelten, F., Grandia, R., Bächer, M. and Hutter,
+M. (2025), ‘Attention-based map encoding for learning generalized legged locomotion’, arXiv preprint arXiv:2506.09588 .
+He, T., Gao, J., Xiao, W., Zhang, Y., Wang, Z., Wang, J., Luo, Z.,
+He, G., Sobanbabu, N., Pan, C. et al. (2025), ‘Asap: Aligning
+simulation and real-world physics for learning agile humanoid
+whole-body skills’, arXiv preprint arXiv:2502.01143 .
+Hottiger, G., Gehring, C. and Bellicoso, D. (2020), ‘signal logger:
+Signal logging and plotting tools for robotics’, https://
+github.com/ANYbotics/signal_logger. Accessed:
+2025-07-09.
+Hutter, M., Gehring, C., Jud, D., Lauber, A., Bellicoso, C. D.,
+Tsounis, V., Hwangbo, J., Bodie, K., Fankhauser, P., Bloesch, M.
+et al. (2016), Anymal-a highly mobile and dynamic quadrupedal
+robot, in ‘IEEE/RSJ International conference on intelligent robots
+and systems (IROS)’, pp. 38–44.
+Hutter, M., Gehring, C., Lauber, A., Gunther, F., Bellicoso, C. D.,
+Tsounis, V., Fankhauser, P., Diethelm, R., Bachmann, S., Blösch,
+M. et al. (2017), ‘Anymal-toward legged robots for harsh
+environments’, Advanced Robotics 31(17), 918–931.
+Hwangbo, J., Lee, J., Dosovitskiy, A., Bellicoso, D., Tsounis,
+V., Koltun, V. and Hutter, M. (2019), ‘Learning agile and
+
+Bjelonic et al.
+dynamic motor skills for legged robots’, Science Robotics
+4(26), eaau5872.
+Ji, G., Mun, J., Kim, H. and Hwangbo, J. (2022), ‘Concurrent
+training of a control policy and a state estimator for dynamic
+and robust legged locomotion’, IEEE Robotics and Automation
+Letters 7(2), 4630–4637.
+Jiang, Y., Zhang, T., Ho, D., Bai, Y., Liu, C. K., Levine, S. and Tan,
+J. (2021), Simgan: Hybrid simulator identification for domain
+adaptation via adversarial reinforcement learning, in ‘2021 IEEE
+International Conference on Robotics and Automation (ICRA)’,
+IEEE, pp. 2884–2890.
+Ju, H., Juan, R., Gomez, R., Nakamura, K. and Li, G. (2022),
+‘Transferring policy of deep reinforcement learning from
+simulation to reality for robotics’, Nature Machine Intelligence
+4(12), 1077–1087.
+Kaelbling, L. P., Littman, M. L. and Cassandra, A. R. (1998),
+‘Planning and acting in partially observable stochastic domains’,
+Artificial intelligence 101(1-2), 99–134.
+Kashiri, N., Malzahn, J. and Tsagarakis, N. G. (2017), ‘On the
+sensor design of torque controlled actuators: A comparison study
+of strain gauge and encoder-based principles’, IEEE Robotics and
+Automation Letters 2(2), 1186–1194.
+Katz, B. G. (2018), A low cost modular actuator for dynamic robots,
+PhD thesis, Massachusetts Institute of Technology.
+Kim, Y., Oh, H., Lee, J., Choi, J., Ji, G., Jung, M., Youm, D.
+and Hwangbo, J. (2024), ‘Not only rewards but also constraints:
+Applications on legged robot locomotion’, IEEE Transactions on
+Robotics 40, 2984–3003.
+Kozlowski, K. R. (2012), Modelling and identification in robotics,
+Springer Science & Business Media.
+Lee, J., Hwangbo, J., Wellhausen, L., Koltun, V. and Hutter,
+M. (2020), ‘Learning quadrupedal locomotion over challenging
+terrain’, Science robotics 5(47), eabc5986.
+Leuthard, S., Eugster, T., Faesch, N., Feingold, R., Flynn, C.,
+Fritsche, M., Hürlimann, N., Morbach, E., Tischhauser, F.,
+Müller, M. et al. (2024), Magnecko: Design and control of a
+quadrupedal magnetic climbing robot, in ‘Climbing and Walking
+Robots Conference’, Springer, pp. 55–67.
+Li, C., Krause, A. and Hutter, M. (2025), ‘Offline robotic world
+model: Learning robotic policies without a physics simulator’,
+arXiv preprint arXiv:2504.16680 .
+Li, Y., Li, J., Fu, W. and Wu, Y. (2024), Learning agile bipedal
+motions on a quadrupedal robot, in ‘2024 IEEE International
+Conference on Robotics and Automation (ICRA)’, IEEE,
+pp. 9735–9742.
+Li, Z., Peng, X. B., Abbeel, P., Levine, S., Berseth, G. and Sreenath,
+K. (2025), ‘Reinforcement learning for versatile, dynamic, and
+robust bipedal locomotion control’, The International Journal of
+Robotics Research 44(5), 840–888.
+Liu, D., Yang, F., Liao, X. and Lyu, X. (2024), Diablo: A 6-dof
+wheeled bipedal robot composed entirely of direct-drive joints, in
+‘2024 IEEE/RSJ International Conference on Intelligent Robots
+and Systems (IROS)’, IEEE, pp. 3605–3612.
+
+Prepared using TRR.cls
+
+23
+Liu, Y., Ding, J. and Liu, X. (2020), Ipo: Interior-point policy
+optimization under constraints, in ‘Proceedings of the AAAI
+conference on artificial intelligence’, Vol. 34, pp. 4940–4947.
+Ma, Y., Cramariuc, A., Farshidian, F. and Hutter, M. (2025),
+‘Learning coordinated badminton skills for legged manipulators’,
+Science Robotics 10(102), eadu3922.
+Ma, Y. J., Liang, W., Wang, G., Huang, D.-A., Bastani, O.,
+Jayaraman, D., Zhu, Y., Fan, L. and Anandkumar, A. (2023),
+‘Eureka: Human-level reward design via coding large language
+models’, arXiv preprint arXiv:2310.12931 .
+Mahankali, S., Lee, C.-C., Margolis, G. B., Hong, Z.-W.
+and Agrawal, P. (2024), Maximizing quadruped velocity by
+minimizing energy, in ‘2024 IEEE International Conference on
+Robotics and Automation (ICRA)’, IEEE, pp. 11467–11473.
+Mehta, B., Diaz, M., Golemo, F., Pal, C. J. and Paull, L.
+(2020), Active domain randomization, in ‘Conference on Robot
+Learning’, PMLR, pp. 1162–1176.
+Miki, T., Lee, J., Hwangbo, J., Wellhausen, L., Koltun,
+V. and Hutter, M. (2022), ‘Learning robust perceptive
+locomotion for quadrupedal robots in the wild’, Science Robotics
+7(62), eabk2822.
+Miller, A., Yu, F., Brauckmann, M. and Farshidian, F. (2025),
+‘High-performance reinforcement learning on spot: Optimizing
+simulation parameters with distributional measures’, arXiv
+preprint arXiv:2504.17857 .
+Misenti, S., Hertel, B., Weng, B., Donald, R., Jawaji, A., KosokoThoroddsen, M.-T., Trafton, J. G., Norton, A., Azadeh, R.
+and Gu, Y. (2025), ‘Experimental evaluation of commercial
+quadruped robots: stability and performance in non-inertial
+environments’, International Journal of Intelligent Robotics and
+Applications pp. 1–26.
+Muratore, F., Ramos, F., Turk, G., Yu, W., Gienger, M. and Peters, J.
+(2022), ‘Robot learning from randomized simulations: A review’,
+Frontiers in Robotics and AI 9, 799893.
+Nomura, M. and Shibata, M. (2024), ‘cmaes : A simple yet practical
+python library for cma-es’, arXiv preprint arXiv:2402.01373 .
+Peng, X. B., Coumans, E., Zhang, T., Lee, T.-W., Tan, J. and Levine,
+S. (2020), ‘Learning agile robotic locomotion skills by imitating
+animals’, arXiv preprint arXiv:2004.00784 .
+Pinto, L., Andrychowicz, M., Welinder, P., Zaremba, W. and
+Abbeel, P. (2017), ‘Asymmetric actor critic for image-based robot
+learning’, arXiv preprint arXiv:1710.06542 .
+Radosavovic, I., Xiao, T., Zhang, B., Darrell, T., Malik, J. and
+Sreenath, K. (2024), ‘Real-world humanoid locomotion with
+reinforcement learning’, Science Robotics 9(89), eadi9579.
+Ramos, F., Possas, R. C. and Fox, D. (2019), ‘Bayessim: adaptive
+domain randomization via probabilistic inference for robotics
+simulators’, arXiv preprint arXiv:1906.01728 .
+Roux, C., Chane-Sane, E., De Matteı̈s, L., Flayols, T., Manhes, J.,
+Stasse, O. and Souères, P. (2025), ‘Constrained reinforcement
+learning for unstable point-feet bipedal locomotion applied to the
+bolt robot’, arXiv preprint arXiv:2508.02194 .
+Rudin, N., He, J., Aurand, J. and Hutter, M. (2025), ‘Parkour in the
+wild: Learning a general and extensible agile locomotion policy
+
+24
+using multi-expert distillation and rl fine-tuning’, arXiv preprint
+arXiv:2505.11164 .
+Rudin, N., Hoeller, D., Reist, P. and Hutter, M. (2022), Learning
+to walk in minutes using massively parallel deep reinforcement
+learning, in A. Faust, D. Hsu and G. Neumann, eds, ‘Proceedings
+of the 5th Conference on Robot Learning’, Vol. 164 of
+Proceedings of Machine Learning Research, PMLR, pp. 91–100.
+URL: https://proceedings.mlr.press/v164/rudin22a.html
+Rüschendorf, L. (1985), ‘The wasserstein distance and approximation theorems’, Probability Theory and Related Fields
+70(1), 117–129.
+Schulman, J., Wolski, F., Dhariwal, P., Radford, A. and Klimov,
+O. (2017), ‘Proximal policy optimization algorithms’, arXiv
+preprint arXiv:1707.06347 .
+Shafiee, M., Bellegarda, G. and Ijspeert, A. (2024),
+Manyquadrupeds: Learning a single locomotion policy
+for diverse quadruped robots, in ‘2024 IEEE International
+Conference on Robotics and Automation (ICRA)’, IEEE,
+pp. 3471–3477.
+Shi, F., Zhang, C., Miki, T., Lee, J., Hutter, M. and Coros, S.
+(2024), ‘Rethinking robustness assessment: Adversarial attacks
+on learning-based quadrupedal locomotion controllers’, arXiv
+preprint arXiv:2405.12424 .
+Shin, Y.-H., Song, T.-G., Ji, G. and Park, H.-W. (2023), ‘Actuatorconstrained reinforcement learning for high-speed quadrupedal
+locomotion’, arXiv preprint arXiv:2312.17507 .
+Smith, L., Kew, J. C., Peng, X. B., Ha, S., Tan, J. and Levine,
+S. (2022), Legged robots that keep on learning: Fine-tuning
+locomotion policies in the real world, in ‘2022 international
+conference on robotics and automation (ICRA)’, IEEE, pp. 1593–
+1599.
+Sobanbabu, N., He, G., He, T., Yang, Y. and Shi, G.
+(2025), ‘Sampling-based system identification with active
+exploration for legged robot sim2real learning’, arXiv preprint
+arXiv:2505.14266 .
+Song, X., Yang, Y., Choromanski, K., Caluwaerts, K., Gao, W.,
+Finn, C. and Tan, J. (2020), Rapidly adaptable legged robots
+via evolutionary meta-learning, in ‘2020 IEEE/RSJ International
+Conference on Intelligent Robots and Systems (IROS)’, IEEE,
+pp. 3769–3776.
+Sontakke, N., Chae, H., Lee, S., Huang, T., Hong, D. W. and Hal,
+S. (2023), Residual physics learning and system identification
+for sim-to-real transfer of policies on buoyancy assisted
+legged robots, in ‘2023 IEEE/RSJ International Conference on
+Intelligent Robots and Systems (IROS)’, IEEE, pp. 392–399.
+Spiridonov, A., Buehler, F., Berclaz, M., Schelbert, V., Geurts,
+J., Krasnova, E., Steinke, E., Toma, J., Wuethrich, J., Polat,
+R. et al. (2024), Spacehopper: A small-scale legged robot
+for exploring low-gravity celestial bodies, in ‘2024 IEEE
+International Conference on Robotics and Automation (ICRA)’,
+IEEE, pp. 3464–3470.
+Springob, L. and Holtz, J. (2002), ‘High-bandwidth current control
+for torque-ripple compensation in pm synchronous machines’,
+IEEE Transactions on industrial electronics 45(5), 713–721.
+
+Prepared using TRR.cls
+
+XX(X)
+Stork, J., Eiben, A. E. and Bartz-Beielstein, T. (2022), ‘A
+new taxonomy of global optimization algorithms’, Natural
+Computing 21(2), 219–242.
+Swevers, J., Ganseman, C., Tukel, D. B., De Schutter, J.
+and Van Brussel, H. (2002), ‘Optimal robot excitation and
+identification’, IEEE transactions on robotics and automation
+13(5), 730–740.
+Tan, J., Zhang, T., Coumans, E., Iscen, A., Bai, Y., Hafner,
+D., Bohez, S. and Vanhoucke, V. (2018), ‘Sim-to-real:
+Learning agile locomotion for quadruped robots’, arXiv preprint
+arXiv:1804.10332 .
+Tan, L. and Jiang, J. (2018), Digital signal processing: fundamentals
+and applications, Academic press.
+Tiboni, G., Arndt, K. and Kyrki, V. (2023), ‘Dropo: Sim-toreal transfer with offline domain randomization’, Robotics and
+Autonomous Systems 166, 104432.
+Tsai, Y.-Y., Xu, H., Ding, Z., Zhang, C., Johns, E. and Huang,
+B. (2021), ‘Droid: Minimizing the reality gap using single-shot
+human demonstration’, IEEE Robotics and Automation Letters
+6(2), 3168–3175.
+Unitree Robotics (2025), ‘Motor sdk development guide’, Online:
+https://support.unitree.com/home/en/Motor_
+SDK_Dev_Guide/overview. Accessed: Aug. 21, 2025.
+Valsecchi, G., Rudin, N., Nachtigall, L., Mayer, K., Tischhauser,
+F. and Hutter, M. (2023), ‘Barry: a high-payload and agile
+quadruped robot’, IEEE Robotics and Automation Letters
+8(11), 6939–6946.
+Valsecchi, G., Vicari, A., Tischhauser, F., Garabini, M. and Hutter,
+M. (2024), Accurate power consumption estimation method
+makes walking robots energy efficient and quiet, in ‘2024
+IEEE/RSJ International Conference on Intelligent Robots and
+Systems (IROS)’, IEEE, pp. 13282–13288.
+Watanabe, R., Miki, T., Shi, F., Kadokawa, Y., Bjelonic, F.,
+Kawaharazuka, K., Cramariuc, A. and Hutter, M. (2025),
+‘Learning quiet walking for a small home robot’, arXiv preprint
+arXiv:2502.10983 .
+Wensing, P. M., Wang, A., Seok, S., Otten, D., Lang, J. and Kim, S.
+(2017), ‘Proprioceptive actuator design in the mit cheetah: Impact
+mitigation and high-bandwidth physical interaction for dynamic
+legged robots’, Ieee transactions on robotics 33(3), 509–522.
+Wu, J., Wang, J. and You, Z. (2010), ‘An overview of dynamic
+parameter identification of robots’, Robotics and computerintegrated manufacturing 26(5), 414–419.
+Wu, P., Escontrela, A., Hafner, D., Abbeel, P. and Goldberg, K.
+(2023), Daydreamer: World models for physical robot learning,
+in ‘Conference on robot learning’, PMLR, pp. 2226–2240.
+Xie, Z., Clary, P., Dao, J., Morais, P., Hurst, J. and Panne, M. (2020),
+Learning locomotion skills for cassie: Iterative design and sim-toreal, in ‘Conference on Robot Learning’, PMLR, pp. 317–329.
+Xue, H., Pan, C., Yi, Z., Qu, G. and Shi, G. (2024), ‘Full-order
+sampling-based mpc for torque-level locomotion control via
+diffusion-style annealing’, arXiv preprint arXiv:2409.15610 .
+Yang, Y., Zhang, T., Coumans, E., Tan, J. and Boots, B. (2022),
+Fast and efficient locomotion via learned gait transitions, in
+
+Bjelonic et al.
+
+25
+
+vq = R iq + L i̇q + eq ⇒ L i̇q ≤ Umax − R iq − eq .
+(33)
+
+Prepared using TRR.cls
+
+−0.0275
+0.0045
+0.0188
+−0.0148
+0.0043
+−0.0065
+−0.000 70
+−0.016
+0.010
+−0.026
+−0.0095
+0.0027
+
+0.0010
+0.040
+0.31
+
+7.5
+7.5
+0.0
+T YTAN
+ANY MAL
+M INIMAL
+
+−0.0029
+0.011
+−0.020
+−0.028
+−0.003
+−0.0017
+−0.011
+0.0057
+−0.0030
+0.0017
+0.022
+−0.018
+T YTAN
+ANY MAL
+M INIMAL
+
+0.0036
+0.0035
+0.033
+0.000 25
+0.028
+0.34
+0.044
+0.021
+0.084
+0.0093
+0.0054
+0.038
+T YTAN
+ANY MAL
+M INIMAL
+
+1.7
+4.7
+0.1911
+2.1
+5.2
+0.092
+0.17
+4.4
+0.0
+
+Armature Ia [10
+
+1.7
+4.9
+0.0
+
+3.3
+67
+0.026
+
+T YTAN
+ANY MAL
+M INIMAL
+
+120
+74
+0.056
+
+RF HFE
+RF HAA
+
+106
+76
+0.025
+
+with pole at −R/L, time constant τ = L/R, and theoretical
+−3 dB bandwidth
+1 R
+R
+f∞ =
+.
+(32)
+ω∞ = ,
+L
+2π L
+Taking the available phase voltage to be limited by
+the DC–bus (conservatively Umax ≈ Ubus = 48 V, up to
+modulation factors), our drive yields f∞ ≈ 310 Hz. Hence,
+even at the voltage limit the current loop can, in principle,
+exceed the policy Nyquist of 25 Hz.
+At nonzero electrical speed ωe , the back–EMF eq = ωe λ
+consumes part of the voltage headroom:
+
+140
+76
+0.050
+
+(31)
+
+T YTAN
+ANY MAL
+M INIMAL
+
+Iq (s)
+1
+=
+,
+Vq (s)
+Ls + R
+
+LF KFE
+
+(30)
+
+LF HFE
+
+⇒
+
+vq (t) = R iq (t) + L i̇q (t),
+
+LF HAA
+
+Even with perfect control, a PMSM’s current (and thus
+torque) loop is fundamentally limited by the available
+DC–bus voltage and the phase inductances. Under a
+low–speed / locked–rotor assumption with id ≈ 0 and
+negligible delay, the q-axis dynamics reduce to
+
+Joint
+
+Voltage–Limited Torque Bandwidth of a
+PMSM
+Table 6. All PACE parameters found for T YTAN, ANY MAL, and M INIMAL
+
+A
+
+RF KFE
+
+‘Conference on robot learning’, PMLR, pp. 773–783.
+
+120
+77
+0.025
+
+−3
+
+LH HAA
+
+LH HFE
+
+Figure 13. Idealized PMSM saturation envelope for the T YTAN
+hip motor, showing motor velocity ω (x-axis) versus torque τ
+(y-axis). The solid blue curve indicates the enforced torque limits
+in simulation: commanded torques inside the envelope are
+applied directly, while those outside are saturated to the
+boundary. This boundary is determined by two constraints: the
+maximum torque limit (dot-dashed gray), representing effects
+such as magnet demagnetization, and the back-EMF–limited
+torque (dashed gray). Orange dots mark experimental
+measurements from Section 3.2.1.
+
+−0.017
+−0.0013
+0.0012
+
+0.000 50
+0.045
+0.39
+0.035
+0.013
+0.075
+0.0
+0.0029
+0.048
+
+2.3
+5.5
+0.030
+0.83
+5.1
+0.0
+
+110
+39
+0.028
+140
+79
+0.052
+
+100
+
+0.031
+0.024
+0.091
+
+50
+
+3.9
+5.4
+0.066
+
+0
+
+Motor velocity q̇m [rad/s]
+
+0.63
+4.9
+0.0
+
+−50
+
+3.6
+64
+0.026
+
+−100
+
+110
+51
+0.023
+
+−30
+
+LH KFE
+
+−20
+
+RH HAA
+
+Characteristic
+Torque limits
+Simulation limits
+Measured
+
+kg m ]
+3.4
+140
+67
+89
+0.025
+0.049
+Damping d [N m s rad−1 ]
+0.22
+2.3
+0.50
+4.3
+5.3
+4.9
+0.031
+0.030
+0.0
+Friction τf [–]
+0.036
+0.0015
+0.0
+0.027
+0.036
+0.0032
+0.070
+0.32
+0.051
+Joint Position Bias q̃b [rad]
+−0.012
+−0.026
+−0.0011
+−0.0072
+0.0094
+−0.012
+0.010
+−0.018 −0.000 40
+Delay Td [ms]
+
+−10
+
+RH HFE
+
+0
+
+0.70
+5.1
+0.0
+
+10
+
+3.5
+51
+0.025
+
+RH KFE
+
+20
+
+2
+
+Motor torque τm [N m]
+
+30
+
+26
+
+XX(X)
+
+No Load
+Interface
+Interface + Mass
+
+0.08
+
+0.6
+
+Inertia Ia [kg m2 ]
+
+Joint position q [rad]
+
+Figure 14. Simplified block diagram of the motor-driven joint actuator, illustrating the electronics (left, yellow) and rigid-body dynamics
+(right, red) subsystems. In the electronics path, a PD position controller with gains Pτ and Dτ drives a PI current loop—comprised of
+integrator Iu and feedforward Pu —to regulate the torque producing quadrature current iq . This path is subject to disturbances from
+the load current, nonlinear battery dynamics, temperature variations, and unknown feed-forward compensations. In the mechanical
+path, iq is converted to torque through the motor constant ki and gear ratio n, then transmitted to the inertia Ia , friction torque τf , and
+viscous transmission damping d, yielding joint acceleration q̈ and position q . The two subsystems interact via the back-EMF constant
+kω .
+
+0.5
+Ours (sim)
+Real
+Target
+
+0.4
+0.3
+0.2
+0.1
+
+0.06
+0.04
+0.02
+0.00
+
+7.0
+
+7.5
+
+8.0
+
+8.5
+
+9.0
+
+9.5
+
+0.00
+
+0.05
+
+Time t [s]
+
+0.10
+
+0.15
+
+0.20
+
+0.25
+
+Distance d [m]
+
+Figure 15. Validation of T YTAN on the HFE joint using
+proportional–derivative (PD) gains of 145/5. Shown are
+commanded trajectories, real measurements and the response
+under the near-optimal identified model.
+
+Figure 17. Identified versus target inertia as a function of lever
+arm radius, with drive compensations disabled.
+
+Magnitude |Hq | [dB]
+
+Magnitude |Hi | [dB]
+
+0
+
+0
+
+−10
+
+−20
+
+−15
+
+0
+
+Phase φ [°]
+
+−5
+
+−20
+10−1
+
+−50
+
+Measured
+Model
+Double Pole
+100
+
+Frequency f [Hz]
+
+−100
+
+Measured
+Model
+
+−150
+100
+
+101
+
+102
+
+Figure 18. An example bode plot from the single-drive
+experiment for the closed-loop transfer function Hq : q̂j → qj ,
+mapping commanded joint position q̂j to measured joint position
+qj .
+
+Frequency f [Hz]
+Figure 16. Current tracking performance for the inner-loop
+transfer function Hi : τ̂m → τm , mapping commanded motor
+torque τ̂m to measured torque τm .
+
+As ωe increases (or during field–weakening), the effective
+current (torque) bandwidth reduces because Umax − eq
+Prepared using TRR.cls
+
+shrinks. In practice, the achievable closed–loop bandwidth is
+also bounded to a fraction of the PWM carrier frequency and
+by inverter dead times and delays.
+Implication. For our experiments—low to moderate speeds
+and ≤25 Hz policy content—the inner loop behaves as a
+near–unit–gain motor torque source; high–speed limits are
+
+Magnitude |Hq | [dB]
+
+Bjelonic et al.
+
+27
+
+then dominated by voltage/current headroom (e.g., battery
+current limiting), not by inner–loop dynamics.
+
+0
+
+B
+
+−10
+
+Phase φ [°]
+
+0
+−50
+Model
+Tytan @1 m/s
+Envelope
+
+−100
+−150
+10−1
+
+100
+
+Frequency f [Hz]
+Figure 19. An example bode plot from the single-drive
+experiment for the closed-loop transfer function Hq : q̂j → qj ,
+mapping commanded joint position q̂j to measured joint position
+qj . The hatched region indicates the 2σ confidence interval from
+analytic estimation (Appendix C).
+
+Effective Base Inertia Comparison on
+ANYmal
+
+To analyze the difference between drive-specific in-air inertia
+and contact-induced inertia, we apply d’Alembert’s principle
+of virtual displacements. We consider two scenarios: (i)
+vertical motion of the robot’s base and legs, and (ii)
+horizontal motion parallel to the ground, both starting from
+the nominal agile stance. In both cases, we analyze the
+dynamics in the robot’s x–z plane.
+For tractability, we neglect leg masses and account only for
+the base mass and link inertias. We further assume equal link
+lengths of 0.3 m for the thigh and shank and no gravity.
+Vertical Motion. This case is simplest, as no torque is
+applied at the HFE joint, and d’Alembert’s principle reduces
+to Eq. (34):
+mz̈δz + Ih q̈h δqh + Ik q̈k δqk = 2τk δqk
+s.t.
+
+Joint position q [rad]
+
+−1.0
+
+(36)
+
+qk = 2qh
+
+−2.0
+
+zB = 2l cos
+δzB = −l sin
+
+−2.5
+47
+
+48
+
+49
+
+50
+
+żB = −l sin
+
+51
+
+Time t [s]
+
+z̈B = −l sin
+
+(a) Evaluation on the chirp trajectory used for parameter identification.
+
+Joint position q [rad]
+
+(35)
+
+xB = 0,
+
+where m is the base mass, and Ih and Ik denote the reflected
+and body inertias of the thigh and shank, respectively.
+The kinematic constraints yield the following dependencies
+between the knee joint angle qk , the hip joint angle qh , and
+the base z-position zB :
+
+No model (sim)
+Ours (sim)
+Real
+Target
+
+−1.5
+
+−1.5
+No model (sim)
+Ours (sim)
+Real
+Target
+
+−2.0
+
+−2.5
+28
+
+30
+
+32
+
+34
+
+36
+
+38
+
+40
+
+42
+
+Time t [s]
+(b) Validation on a random-step trajectory not used for parameter
+identification.
+
+Figure 20. Trajectory tracking performance of the LF KFE joint
+on the M INIMAL platform. The identified parameters are
+evaluated on (a) the chirp trajectory used for fitting and (b) an
+unseen random-step trajectory.
+
+Prepared using TRR.cls
+
+(34)
+
+qk
+2
+
+qk
+2 δqk
+
+qk
+2 q̇k
+
+qk
+l
+2 q̈k − 2 cos
+
+(37)
+
+
+
+(38)
+(39)
+qk
+2
+
+ 2
+q̇k .
+
+(40)
+
+Substituting these relations into Eq. (34) yields the
+nonlinear differential equation
+
+
+τk = I˜k q̈k + 14 ml2 sin q2k cos q2k q̇k2
+(41)
+h
+i
+
+I˜k = 21 ml2 sin q2k + 14 Ih + Ik .
+(42)
+Assuming small velocities q̇k ≪ 1, we plot the position–dependent inertia against the base position in Fig. 23b,
+and compare it to the constant inertia observed when the legs
+are not in contact.
+Horizontal Motion. The horizontal case is more
+involved, leading to large coupled equations. We employ
+a differentiable symbolic toolbox to obtain the reduced
+dynamics. As in the vertical case, we report only the main
+expressions: the virtual displacement in the x direction
+(Eq. 43) and the base constraint (Eq. 44).
+mẍδx + Ih q̈h δqh + Ik q̈k δqk = 2τh δqh
+√
+s.t. zB = 2 l
+
+(43)
+(44)
+
+28
+
+XX(X)
+
+Base velocity vB,y [m/s]
+
+1.2
+1.0
+0.8
+0.6
+No model
+Actuator network
+Ours (PACE)
+Command
+
+0.4
+0.2
+0.0
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+Method
+
+Time t [s]
+
+(a) Sideways velocity tracking. Left: commanded and measured velocities over time. Right: distribution of steady-state velocity errors across methods.
+
+Base angular velocity ψ̇ [rad/s]
+
+2.5
+2.0
+1.5
+1.0
+
+No model
+Actuator network
+Ours (PACE)
+Command
+
+0.5
+0.0
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+Method
+
+Time t [s]
+
+(b) Angular velocity tracking around the yaw axis. Left: commanded and measured velocities over time. Right: distribution of steady-state velocity
+errors across methods.
+
+Figure 21. Additional sim-to-real evaluation of ANY MAL. (a) Sideways velocity tracking. (b) Yaw angular velocity tracking. Both panels
+compare commanded and measured base velocities over time (left) and summarize steady-state errors across methods (right).
+Table 7. Dynamics properties of the T YTAN leg: CAD values, experimental estimates, and propagated uncertainties.
+
+∥ r1 ∥ [m]
+∥ r2 ∥ [m]
+∥ r3 ∥ [m]
+Gravity g [m s−2 ]
+Thigh Mass mT [kg]
+Shank Mass mS [kg]
+Thigh Eigenfrequency fT [Hz]
+Shank Eigenfrequency fS [Hz]
+Thigh Inertia IT [kg m2 ]
+Shank Inertia IS [kg m2 ]
+CoM induced Thigh Inertia [kg m2 ]
+
+CAD
+
+Measured
+
+Difference %
+
+Measurement Error
+
+–
+
+0.30
+0.25
+0.105
+9.806
+3.775
+0.4803
+0.82
+0.88
+0.0786
+0.008 50
+0.0416
+
+–
+
+±0.01
+±0.01
+±0.01
+
+0.24
+0.075
+9.81
+3.612
+0.4535
+–
+–
+
+0.0228
+0.0107
+0.0203
+
+The relations between the base x-position xB and the joint
+angles are highly nonlinear and coupled:
+xB = l(cos(qk − qh ) + cos(qh ))
+√
+
+qk = qh ± arccos 2 − cos(qh ) .
+
+Prepared using TRR.cls
+
+(45)
+(46)
+
+4.2
+40
+0.0
+4.5
+5.9
+–
+–
+
+240
+−21
+100
+
+–
+–
+–
+
+±0.03
+±0.03
+±0.0318
+±0.002 76
+±0.007 93
+
+Because the dependencies are strongly nonlinear, their
+derivatives are large, and the effective inertia varies
+accordingly. The results are shown in Fig. 23c.
+
+Bjelonic et al.
+
+29
+
+Power Ratio [W/(Nm)2 ]
+
+100
+Minimal
+Magnecko v1
+Magnecko v2
+ANYmal
+Tytan knee
+Fitted trend
+10−1
+
+10−2
+
+101
+
+Mass m [kg]
+
+Link Inertia Estimation
+
+To analyze the discrepancy between single-drive and fullrobot inertia estimates, we performed a study on a legsegment of T YTAN. The KFE was disconnected to minimize
+friction, allowing the thigh or shank to swing freely. This
+setup permits direct estimation of link inertias from free
+oscillations, which we then compare against CAD-derived
+values and the PACE fit.
+
+C.1
+
+Pendulum Model
+
+Considering small oscillations around a pivot point P , the
+dynamics of the harmonic oscillator are
+Ip q̈ + mrgq = 0,
+
+(47)
+
+with link mass m, CoM distance r, and gravitational
+acceleration g. The standard form is
+q̈ + ω 2 q = 0,
+
+(48)
+
+where ω = 2πf is the eigenfrequency. By comparing
+Eq. (47) and Eq. (48), the inertia about the pivot P is
+IP =
+
+mrg
+.
+(2πf )2
+
+(49)
+
+Using the parallel-axis theorem, the inertia about the CoM
+follows as
+ICoM = IP − mr2 .
+
+C.2
+
+(50)
+
+Measured Values and Uncertainties
+
+We assume negligible uncertainty in m and g, while r and f
+are measured with uncertainties of 1 cm and 0.3 Hz (ten-cycle
+Prepared using TRR.cls
+
+Inertia I˜qk [kg m2 ]
+
+C
+
+(a) ANY MAL in its agile stance with marked reference variables.
+1.2
+On-ground
+1.0
+In-air
+Agile stance
+0.8
+
+0.6
+0.4
+0.2
+0.0
+0.0
+
+0.1
+
+0.2
+
+0.3
+
+0.4
+
+0.5
+
+0.6
+
+Vertical position zB [m]
+(b) Effective reduced inertia at the KFE joint during vertical base motion,
+induced by the base’s mass.
+10
+On-ground (front)
+On-ground (hind)
+8
+In-air
+6
+Agile stance
+
+Reduced Inertia I˜qh [kg m2 ]
+
+Figure 22. Joule heating constants of different robots, derived
+from motor parameters over body weight. These values offer a
+first-order estimate for black-box robotic systems.
+
+4
+2
+0
+−0.4
+
+−0.2
+
+0.0
+
+0.2
+
+0.4
+
+Horizontal position xB [m]
+
+(c) Effective reduced inertia at the HFE joint during horizontal base
+motion, induced by the base’s mass.
+
+Figure 23. Reduced inertia comparison for ANY MAL with and
+without ground contact. Panel (a) shows the agile stance used
+for evaluation. Panels (b) and (c) depict the reduced inertia at
+the KFE and HFE joint respectively as a function of base
+position during vertical and horizontal base motion, respectively.
+
+timing). Error propagation is computed via
+X  ∂f 2
+2
+σx2i ,
+σ =
+∂x
+i
+i
+
+(51)
+
+30
+
+XX(X)
+Table 8. PPO Hyperparameters for RL Pipeline
+
+Inertia Ia [kg m2 ]
+
+0.125
+0.100
+
+0.021
+
+0.075
+
+Estimated total inertia
+CoM inertia component
+Thigh inertia component
+Compensation inertia
+Rotor inertia
+
+0.056
+
+0.050
+0.025
+
+0.0085
+0.016
+
+0.000
+
+Measured
+
+Battery SoC in [%]
+
+Battery SoC in [%]
+
+Figure 24. Breakdown of reduced inertia contributions for the
+full robot configuration for T YTAN in Section 3.2.2. The bar plot
+shows the distribution of components shaping the fitted joint
+inertia estimate Ia (dotted black line) obtained with PACE. The
+solid line denotes the ±1σ confidence interval from analytic
+measurements in Appendix C.
+100
+Walking
+Electronics & drives
+Electronics
+
+75
+50
+
+Value
+
+Empirical normalization
+Number of iterations
+Value loss coefficient cv
+Clipped value loss
+Clipping parameter ϵ
+Entropy coefficient α (initial)
+Entropy coefficient α (final)
+Entropy decay turn-over point
+Number of learning epochs Nepoch
+Number of mini-batches Nmb
+Learning rate η
+Learning rate schedule
+Discount factor γ
+GAE parameter λ
+target
+Desired KL divergence DKL
+Max gradient norm ∥∇∥max
+Actor hidden nodes
+Critic hidden nodes
+Initial policy std σ0
+Steps per environment Nstep
+Activation function
+
+True
+
+30 000
+1.0
+True
+
+0.2
+2 × 10−3
+5 × 10−4
+20 000
+5
+10
+10−3
+adaptive
+
+0.99
+0.95
+10−2
+1.0
+[256, 256, 256, 128]
+[256, 256, 256, 128]
+1.5
+24
+exponential linear unit (ELU)
+
+These results explain part of the fourfold increase
+observed in the full-robot Ia and confirm that the fitted
+inertia represents the combined effects of rotor, link, and
+compensation dynamics. Figure 19 further visualizes the
+parameter spread under uncertainty, showing how these
+variations remain fully captured by PACE.
+
+25
+0
+100
+75
+50
+25
+0
+0
+
+50
+
+100
+
+150
+
+200
+
+250
+
+300
+
+350
+
+Time t [min]
+Figure 25. Full battery depletion time of ANY MAL (Top) and
+T YTAN (bottom) at walking in blue, resting (Electronics & drives)
+in orange, and lying on the ground in green (Electronics).
+
+and applied to both thigh and shank. The resulting inertias
+and variances are summarized in Table 7, which also
+contrasts experimental and CAD values.
+
+C.3
+
+Parameter
+
+Results
+
+For the thigh, the inertia about the CoM is
+IT,CoM = 0.0786 kg m2 ± 0.0318 kg m2 ,
+
+(52)
+
+while the shank yields
+IS,CoM = 0.0085 kg m2 ± 0.0028 kg m2 .
+
+(53)
+
+Figure 24 illustrates the resulting dynamics envelopes,
+including 2σ uncertainty bounds. Compared to CAD
+measurements (Table 7), the thigh inertia is noticeably higher,
+while the shank remains consistent.
+Prepared using TRR.cls
+
+
