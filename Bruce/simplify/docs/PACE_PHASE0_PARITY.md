@@ -267,8 +267,7 @@ USD 从 NVIDIA Nucleus **成功下载**（无本地副本）。
 集合相同（缺失/多余均为空），但**排列不同**。
 ⇒ 只要 PACE 的代码一切按 `joint_order` 解析 `joint_ids`，就不会出问题；
 **但任何"假定资产顺序 == joint_order"的写法都会静默错位**。
-**必须核实**：官方 `fit.py` / env 里把参数与关节对应起来的那段（`joint_ids` 的解析方式）。
-→ 已加入 §7 待办。
+**核实结果（2026-10-05）：安全，不是问题 ✅** —— 见 §8。
 
 ### 6.5 脚本侧小问题（不影响结论）
 
@@ -282,7 +281,7 @@ USD 从 NVIDIA Nucleus **成功下载**（无本地副本）。
 
 | # | 事项 | 依据 |
 |---|---|---|
-| 1 | **核实 PACE 如何把参数对应到关节**（`joint_ids` 解析），确认"Isaac 资产顺序 ≠ `joint_order`"不会导致错位 | §6.4 |
+| 1 | ~~核实 PACE 如何把参数对应到关节~~ ⇒ **已完成，不是问题**（见 §8：按**关节名**查表映射，与资产顺序无关） | §6.4, §8 |
 | 2 | **若要把 mjlab 用于浮动基座（RL 训练）**：修掉基座少 25 kg（补齐 base_inertia/battery/HAA_drive/shells 的合并质量），或改用与 Isaac 一致的资产 | §5.3, §6.2 |
 | 3 | 决定 pan/tilt 这 2 个未致动关节如何处理（Isaac 无、mjlab 有；对辨识无影响，但会让"DoF 数"不一致） | §6.2 |
 | 4 | 补跑 `[5]` 执行器默认参数（可选） | §6.5 |
@@ -291,3 +290,91 @@ USD 从 NVIDIA Nucleus **成功下载**（无本地副本）。
 > **对"用哪个仿真器"的初步影响**：既然两侧**腿链质量逐项吻合**、且 PACE 是**固定基座**辨识，
 > 那么"资产差异"对 Phase 0 的**辨识误差对比**基本不构成干扰 —— 前提是把 §7 的第 1 条（关节顺序）核实掉。
 > 若最终要用 mjlab 做**训练**，则第 2 条（基座 25 kg）必须先修。
+
+
+---
+
+## 8. ✅ 第 1 项核实结果：**关节顺序差异不会导致错位**（2026-10-05）
+
+### 8.1 参数列 → 资产索引：**按名字查表**，与资产顺序无关
+
+`scripts/pace/fit.py:56` 与 `scripts/pace/data_collection.py:58` 都是同一句：
+
+```python
+joint_order = env_cfg.sim2real.joint_order
+joint_ids   = torch.tensor([articulation.joint_names.index(name) for name in joint_order], device=...)
+```
+
+⇒ 参数向量的第 `i` 列 ↔ `joint_order[i]` ↔ **按名字找到的资产关节**。
+资产内部怎么排（Isaac 按关节类型分组、mjlab 按腿分组）**完全不影响** ✅
+
+写入时也全部带 `joint_ids`（`optim/cma_es.py:111-124`）：
+
+```python
+articulation.write_joint_armature_to_sim(self.sim_params[:, armature_idx], joint_ids=joint_ids, env_ids=env_ids)
+articulation.write_joint_viscous_friction_coefficient_to_sim(self.sim_params[:, damping_idx], joint_ids=joint_ids, ...)
+articulation.write_joint_friction_coefficient_to_sim(self.sim_params[:, friction_idx], joint_ids=joint_ids, ...)
+articulation.write_joint_position_to_sim(initial_position + self.sim_params[:, bias_idx], joint_ids=joint_ids)
+```
+（另有注释说明：静态摩擦不能低于动态摩擦，所以先写 `dynamic=0` 再写 `static`，最后把 `dynamic` 补上同一值。）
+
+### 8.2 执行器侧还有一道显式保护（**这是最容易被忽略的一步**）
+
+`encoder_bias` / `time_lags` 是**住在执行器里的**，而执行器有自己的关节顺序
+（`actuators[...].joint_indices`）。PACE 在这里做了**显式的散射映射**（`cma_es.py:126-133`）：
+
+```python
+for drive_type in articulation.actuators.keys():
+    drive_indices = articulation.actuators[drive_type].joint_indices      # 执行器自己的资产索引
+    if isinstance(drive_indices, slice):
+        all_idx = torch.arange(joint_ids.shape[0]); drive_indices = all_idx[drive_indices]
+    comparison_matrix = (joint_ids.unsqueeze(1) == drive_indices.unsqueeze(0))
+    drive_joint_idx = torch.argmax(comparison_matrix.int(), dim=0)        # 拟合列 → 执行器列
+    articulation.actuators[drive_type].update_encoder_bias(self.sim_params[:, bias_idx][:, drive_joint_idx])
+    articulation.actuators[drive_type].update_time_lags(self.sim_params[:, delay_idx].to(torch.int))
+```
+
+⇒ `q̃b` 被正确重排到执行器顺序；`T_d` 是**全局单值**，无需映射。
+**结论：这套代码对"资产顺序 ≠ joint_order"是安全的**，我们**不需要**为了顺序去改任何东西。
+
+> 复现时唯一要照做的是：**自己实现回放时也要按名字映射**，别用位置索引。
+> 另外照抄一个坑：`torch.argmax` 在"名字对不上"时会**静默返回 0**（不报错）——
+> 所以仍建议像 §1.3 那样断言一次"两个集合相同"（我们已核过：缺失/多余均为空）。
+
+### 8.3 🎁 顺带挖到：ANYmal-D 例子的**精确验收真值**
+
+`scripts/pace/data_collection.py:59-64` 在生成 sim 激励数据前，**显式把仿真参数设成已知值**：
+
+```python
+armature = 0.1      # 12 个关节全 0.1
+damping  = 4.5
+friction = 0.05     # 库仑摩擦
+bias     = 0.05     # 12 个
+time_lag = 5        # 仿真步  (= 12.5 ms @ 400 Hz)
+```
+
+⇒ **拟合 ANYmal-D 的 sim 数据时，必须把这些值近似还原回来**，这就是 Phase 0 最硬的验收标准
+（比我之前引用论文的 `T_d = 7.5 ms` 更合适 —— 那个是**真机**数据拟合出来的值，而这里是 sim 数据的**真值**）：
+
+| 参数 | 真值 | 官方上界 | 在界内? |
+|---|---|---|---|
+| `I_a` | **0.1** | `[1e-5, 1.0]` | ✅ |
+| `d` | **4.5** | `[0, 7.0]` | ✅ |
+| `τ_f` | **0.05** | `[0, 0.5]` | ✅ |
+| `q̃_b` | **0.05** | `[-0.1, 0.1]` | ✅ |
+| `T_d` | **5 步 = 12.5 ms** | `[0, 10]` 步 | ✅ |
+
+**验收判据（Phase 0 用这个，不用论文的 7.5 ms）**：
+> 两侧各自的拟合结果都应落在真值附近（例如 `I_a∈[0.05,0.2]`、`d∈[3,6]`、`τ_f∈[0.02,0.1]`、
+> `q̃_b∈[0.02,0.08]`、`T_d∈[4,6] 步`）。**哪一侧先复现出这五个真值，那一侧的实现就是对的**；
+> 若某一侧偏差很大，先怀疑该侧 setup（而不是仿真器物理）。
+
+⚠️ 注意一个实现细节：**同一个拟合出的 `bias` 被用了两次** ——
+`write_joint_position_to_sim(initial_position + bias)`（初始状态偏移）
+以及 `update_encoder_bias(bias)`（执行器看到的编码器帧偏移）。
+复现时两处都要照做，否则 `q̃b` 的可辨识性会变差。
+
+### 8.4 因此第 1 项最终结论
+
+**关节顺序不是问题**（按名字映射 + 执行器侧显式散射），**Phase 0 的辨识误差对比可以照计划进行**。
+下一步只剩：决定 pan/tilt 怎么处理（§7 第 3 项，对固定基座辨识无影响）→ 跑 smoke test → 正式拟合。
