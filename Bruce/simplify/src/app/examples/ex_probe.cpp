@@ -292,7 +292,8 @@ void Example62_PaceChirpCollect() {
     constexpr float KP         = 50.0f;    // ⚠ 论文明确要求**低增益**（ANYmal 用 85/0.6；Go2W 部署用 50/1.0）
     constexpr float KD         = 1.0f;
     constexpr int   HZ         = 400;      // 辨识采样/控制频率（PACE 整机日志用 400 Hz）
-    constexpr float POS_LIMIT  = 1.2f;     // 任一关节 |位置| 越限即中止
+    constexpr float POS_LIMIT  = 2.5f;     // status 坐标的硬保护（thigh 在 DEFAULT_POSE 就有 ~-1.16）
+    constexpr float DEV_LIMIT  = 0.5f;     // 偏离 chirp 偏置超过该值即中止（真正有意义的保护）
     // ------------------------------------------------------
 
     const int N = (int)(DURATION_S * HZ);
@@ -320,16 +321,28 @@ void Example62_PaceChirpCollect() {
     float base[12];
     for (int leg = 0; leg < 4; leg++)
         for (int j = 0; j < 3; j++) base[leg * 3 + j] = rl::DEFAULT_POSE[leg * 3 + j];
+    // ⚠️ 坐标约定（2026-10-05 修的一个真 bug）：
+    //   `rl::DEFAULT_POSE` / 观测 / 动作 / 仿真 都在 **URDF 约定**；
+    //   而 `SendImpedance` 收的是 **GetStatus(status) 约定**，两者差一个
+    //   `URDF = CONV_A·status + CONV_B`（thigh 还要**反号**且差 ~0.96 rad、calf 差 ~1.28 rad）。
+    //   所以：**下发前必须 urdf_to_status，记录时必须 status_to_urdf**，
+    //   否则一来拉到的姿态完全不对（thigh 会差 ~78°），二来导出的 .pt 不在仿真坐标系里。
     printf("\n[1/3] 把 12 个腿关节 PD 拉到 DEFAULT_POSE（3 s）...\n");
     for (int k = 0; k < 3 * HZ && !g_rl_stop; k++) {
         for (int leg = 0; leg < 4; leg++)
-            for (int j = 0; j < 3; j++) mm.SendImpedance(leg, j + 1, base[leg * 3 + j], 0, KP, KD, 0);
+            for (int j = 0; j < 3; j++) {
+                const int i = leg * 3 + j;
+                mm.SendImpedance(leg, j + 1, rl::urdf_to_status(base[i], i), 0, KP, KD, 0);
+            }
         usleep(1000000 / HZ);
     }
     for (int leg = 0; leg < 4; leg++)
-        for (int j = 0; j < 3; j++)
-            base[leg * 3 + j] = mm.GetStatus(leg, j + 1).position;   // 用实测作为偏置（更稳）
-    printf("      偏置（实测 joint_order）: ");
+        for (int j = 0; j < 3; j++) {
+            const int i = leg * 3 + j;
+            // 用实测（转回 URDF）作为 chirp 偏置，比标称值更稳
+            base[i] = rl::status_to_urdf(mm.GetStatus(leg, j + 1).position, i);
+        }
+    printf("      偏置（URDF 坐标，实测 joint_order）: ");
     for (int i = 0; i < 12; i++) printf("%.3f ", base[i]);
     printf("\n");
 
@@ -372,7 +385,8 @@ void Example62_PaceChirpCollect() {
         for (int leg = 0; leg < 4; leg++)
             for (int j = 0; j < 3; j++) {
                 const int i = leg * 3 + j;
-                mm.SendImpedance(leg, j + 1, base[i] + AMP_RAD * w, 0, KP, KD, 0);
+                // 下发：URDF 目标 → status（见上面坐标约定说明）
+                mm.SendImpedance(leg, j + 1, rl::urdf_to_status(base[i] + AMP_RAD * w, i), 0, KP, KD, 0);
             }
         // 记录（同一拍内先下发再读反馈）
         const auto now = std::chrono::steady_clock::now();
@@ -383,9 +397,12 @@ void Example62_PaceChirpCollect() {
                 fprintf(f, ",%.6f", base[leg * 3 + j] + AMP_RAD * w);
         for (int leg = 0; leg < 4; leg++)
             for (int j = 0; j < 3; j++) {
-                const float p = mm.GetStatus(leg, j + 1).position;
-                fprintf(f, ",%.6f", p);
-                if (fabsf(p) > POS_LIMIT) aborted = 1;
+                const int i = leg * 3 + j;
+                const float p_status = mm.GetStatus(leg, j + 1).position;
+                const float p_urdf   = rl::status_to_urdf(p_status, i);   // 记录用 URDF 坐标
+                fprintf(f, ",%.6f", p_urdf);
+                // 保护：偏离偏置过多、或 status 绝对值失控 ⇒ 中止
+                if (fabsf(p_urdf - base[i]) > DEV_LIMIT || fabsf(p_status) > POS_LIMIT) aborted = 1;
             }
         fprintf(f, "\n");
         written++;
@@ -401,7 +418,10 @@ void Example62_PaceChirpCollect() {
     printf("[3/3] 结束：回偏置姿态、失能\n");
     for (int k = 0; k < HZ && !g_rl_stop; k++) {
         for (int leg = 0; leg < 4; leg++)
-            for (int j = 0; j < 3; j++) mm.SendImpedance(leg, j + 1, base[leg * 3 + j], 0, KP, KD, 0);
+            for (int j = 0; j < 3; j++) {
+                const int i = leg * 3 + j;
+                mm.SendImpedance(leg, j + 1, rl::urdf_to_status(base[i], i), 0, KP, KD, 0);
+            }
         usleep(1000000 / HZ);
     }
     all_free(mm);
