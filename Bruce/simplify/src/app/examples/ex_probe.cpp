@@ -15,6 +15,9 @@
 #include "strategy/imu_device.h"
 #include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <chrono>
+#include <sys/stat.h>
 #include <cmath>
 #include <string>
 #include <unistd.h>
@@ -254,4 +257,170 @@ void Example60_SysIdProbe() {
     tm.stop_thread("motor_send");
     mm.Stop();
     printf("[INFO] 示例60 完成\n");
+}
+
+
+// =====================================================================
+//  示例 62：PACE 式真机辨识数据采集（12 腿关节同时位置 chirp）
+//
+//  依据：Bjelonic/Tischhauser/Hutter, IJRR 2026 (arXiv 2509.06342)
+//    §2.1 数据采集：固定 base、无接触、**所有关节同时**做 chirp、**加在关节位置目标层**、PD 跟踪；
+//                   序列 20~60 s；日志 400~10000 Hz；**故意用低增益**。
+//    §2.2 待辨识：p = [Ia, d, τf, q̃b(每关节), Td(全局)]ᵀ ∈ R^(4n+1)，n=12 → 49 个参数。
+//    目标：时均关节位置平方误差（Eq.3），开环回放同一位置目标 ⇒ 无相位漂移。
+//
+//  ⚠️ 为什么不用 MotorManager 的 500 Hz 发送节拍直接录：
+//     ThreadManager 的 interval 是**整数毫秒**，无法表达 400 Hz 的 2.5 ms；
+//     且 PACE 要求"一步仿真 = 一个样本"的**严格 400 Hz 等距**时间基。
+//     故本示例**自己持有 400 Hz 循环**并写专属 CSV（发送线程仍以 500 Hz 重发同一目标，不影响正确性）。
+//
+//  产物：log/pace/chirp_<时间戳>.csv
+//     列：epoch, t_actual_s, des_LF_HAA..des_RH_KFE(12), meas_LF_HAA..meas_RH_KFE(12)
+//     · 列序 = PACE 的 joint_order（LF/RF/LH/RH × HAA/HFE/KFE，**按腿分组**），
+//       与本框架 CAN 序（FL/FR/RL/RR × hip/thigh/calf，也按腿分组）**一一对应**，无需重排。
+//     · t_actual_s 仅作诊断；导出时用 **理想等距网格** `arange(N)/400`（PACE 要求仿真速率一致），
+//       并校验实际周期偏差 —— 超限应判该次采集无效。
+// =====================================================================
+void Example62_PaceChirpCollect() {
+    printf("\n========== 示例 62：PACE 式真机辨识采集（全关节同时位置 chirp）==========\n");
+
+    // ---------------- 可调参数（改这里即可）----------------
+    constexpr float DURATION_S = 20.0f;    // 序列时长（PACE：20~60 s）
+    constexpr float F0_HZ      = 0.1f;     // 起始频率
+    constexpr float F1_HZ      = 10.0f;    // 终止频率（PACE 官方例程上限）
+    constexpr float AMP_RAD    = 0.06f;    // chirp 幅值（保守；现场按机械余量确认）
+    constexpr float KP         = 50.0f;    // ⚠ 论文明确要求**低增益**（ANYmal 用 85/0.6；Go2W 部署用 50/1.0）
+    constexpr float KD         = 1.0f;
+    constexpr int   HZ         = 400;      // 辨识采样/控制频率（PACE 整机日志用 400 Hz）
+    constexpr float POS_LIMIT  = 1.2f;     // 任一关节 |位置| 越限即中止
+    // ------------------------------------------------------
+
+    const int N = (int)(DURATION_S * HZ);
+    printf("[参数] 时长 %.0fs | chirp %.2f→%.2f Hz | 幅值 %.3f rad | kp/kd %.0f/%.1f | %d Hz | %d 拍\n",
+           DURATION_S, F0_HZ, F1_HZ, AMP_RAD, KP, KD, HZ, N);
+
+    printf("\n⚠️ 前置条件（PACE §2.1，缺一不可）：\n");
+    printf("   1) 狗必须**刚性固定**（吊带会摆动 ⇒ 违反 fixed-base 前提；有夹具则夹紧）\n");
+    printf("   2) 机身尽量水平；**轮子与腿全部离地**、无任何接触（含腿间）\n");
+    printf("   3) 固件补偿开关（cogging/摩擦补偿）在整个辨识与后续部署期间**保持一致**\n");
+    printf("   4) kp/kd 与后续部署**完全相同**（PACE 禁止把 PD 增益与动力学联合优化）\n");
+    printf("准备好后按回车开始（Ctrl+C 取消）: ");
+    fflush(stdout);
+    { int c; while ((c = getchar()) != '\n' && c != EOF) {} }
+    if (g_rl_stop) { printf("[INFO] 已取消\n"); return; }
+
+    MotorManager& mm = MotorManager::GetInstance();
+    ThreadManager tm;
+    if (!init_all(mm, tm)) return;          // 复用 ex_probe 的初始化（腿 IMPEDANCE / 轮 SPEED 0 速）
+    signal(SIGINT, rl_signal_handler);
+    g_rl_stop = 0;
+
+    // ---------- 初始姿态：用 DEFAULT_POSE 作为 chirp 的偏置（= PACE 的 trajectory_bias）----------
+    // 注意：不是"起立"，本示例假设狗已被固定、腿悬空；直接把腿 PD 拉到 DEFAULT_POSE 附近。
+    float base[12];
+    for (int leg = 0; leg < 4; leg++)
+        for (int j = 0; j < 3; j++) base[leg * 3 + j] = rl::DEFAULT_POSE[leg * 3 + j];
+    printf("\n[1/3] 把 12 个腿关节 PD 拉到 DEFAULT_POSE（3 s）...\n");
+    for (int k = 0; k < 3 * HZ && !g_rl_stop; k++) {
+        for (int leg = 0; leg < 4; leg++)
+            for (int j = 0; j < 3; j++) mm.SendImpedance(leg, j + 1, base[leg * 3 + j], 0, KP, KD, 0);
+        usleep(1000000 / HZ);
+    }
+    for (int leg = 0; leg < 4; leg++)
+        for (int j = 0; j < 3; j++)
+            base[leg * 3 + j] = mm.GetStatus(leg, j + 1).position;   // 用实测作为偏置（更稳）
+    printf("      偏置（实测 joint_order）: ");
+    for (int i = 0; i < 12; i++) printf("%.3f ", base[i]);
+    printf("\n");
+
+    // ---------- 建 CSV ----------
+    ::mkdir("log", 0755); ::mkdir("log/pace", 0755);
+    char ts[32], path[128];
+    { time_t now = time(nullptr); strftime(ts, sizeof ts, "%Y%m%d_%H%M%S", localtime(&now)); }
+    snprintf(path, sizeof path, "log/pace/chirp_%s.csv", ts);
+    FILE* f = fopen(path, "w");
+    if (!f) { printf("[ERROR] 无法创建 %s\n", path); return; }
+    const char* jn[12] = {"LF_HAA","LF_HFE","LF_KFE","RF_HAA","RF_HFE","RF_KFE",
+                          "LH_HAA","LH_HFE","LH_KFE","RH_HAA","RH_HFE","RH_KFE"};
+    fprintf(f, "epoch,t_actual_s");
+    for (int i = 0; i < 12; i++) fprintf(f, ",des_%s", jn[i]);
+    for (int i = 0; i < 12; i++) fprintf(f, ",meas_%s", jn[i]);
+    fprintf(f, "\n");
+    // meta（PACE 复现必需的现场信息）
+    FILE* fm = fopen((std::string(path) + ".meta.txt").c_str(), "w");
+    if (fm) {
+        fprintf(fm, "source=Example62_PaceChirpCollect\n");
+        fprintf(fm, "duration_s=%.3f\nf0_hz=%.3f\nf1_hz=%.3f\namp_rad=%.4f\n", DURATION_S, F0_HZ, F1_HZ, AMP_RAD);
+        fprintf(fm, "kp=%.2f\nkd=%.2f\nrate_hz=%d\n", KP, KD, HZ);
+        fprintf(fm, "joint_order=");
+        for (int i = 0; i < 12; i++) fprintf(fm, "%s%s", jn[i], i < 11 ? "," : "");
+        fprintf(fm, "\nnote=固定基座/离地/固件补偿开关 由操作者填写\n");
+        fclose(fm);
+    }
+
+    // ---------- 主循环：400 Hz 严格等距 ----------
+    printf("\n[2/3] 开始 chirp（%.0f s @ %d Hz）... Ctrl+C 中止\n", DURATION_S, HZ);
+    const auto t0 = std::chrono::steady_clock::now();
+    int written = 0; double sum_dt = 0; double max_dt = 0; int aborted = 0;
+    auto prev = t0;
+    for (int k = 0; k < N && !g_rl_stop; k++) {
+        const float t = (float)k / HZ;                       // 理想等距时间
+        const float ph = 2.0f * (float)M_PI *
+                         (F0_HZ * t + (F1_HZ - F0_HZ) / (2.0f * DURATION_S) * t * t);
+        const float w = sinf(ph);
+        // 全关节同时、同一 chirp（PACE 官方例程亦如此），偏置 = base 实测
+        for (int leg = 0; leg < 4; leg++)
+            for (int j = 0; j < 3; j++) {
+                const int i = leg * 3 + j;
+                mm.SendImpedance(leg, j + 1, base[i] + AMP_RAD * w, 0, KP, KD, 0);
+            }
+        // 记录（同一拍内先下发再读反馈）
+        const auto now = std::chrono::steady_clock::now();
+        const double t_act = std::chrono::duration<double>(now - t0).count();
+        fprintf(f, "%d,%.6f", k, t_act);
+        for (int leg = 0; leg < 4; leg++)
+            for (int j = 0; j < 3; j++)
+                fprintf(f, ",%.6f", base[leg * 3 + j] + AMP_RAD * w);
+        for (int leg = 0; leg < 4; leg++)
+            for (int j = 0; j < 3; j++) {
+                const float p = mm.GetStatus(leg, j + 1).position;
+                fprintf(f, ",%.6f", p);
+                if (fabsf(p) > POS_LIMIT) aborted = 1;
+            }
+        fprintf(f, "\n");
+        written++;
+        // 周期统计（诊断）
+        const double dt = std::chrono::duration<double>(now - prev).count();
+        prev = now; sum_dt += dt; if (dt > max_dt) max_dt = dt;
+        if (aborted) { printf("\n[WARN] 位置越限（>%.2f rad），中止\n", POS_LIMIT); break; }
+        usleep(1000000 / HZ);
+    }
+    fclose(f);
+
+    // ---------- 收尾 ----------
+    printf("[3/3] 结束：回偏置姿态、失能\n");
+    for (int k = 0; k < HZ && !g_rl_stop; k++) {
+        for (int leg = 0; leg < 4; leg++)
+            for (int j = 0; j < 3; j++) mm.SendImpedance(leg, j + 1, base[leg * 3 + j], 0, KP, KD, 0);
+        usleep(1000000 / HZ);
+    }
+    all_free(mm);
+    printf("\n========== 采集结果 ==========\n");
+    printf("  有效拍数: %d / %d（%s）\n", written, N, aborted ? "有越限中止" : "完整");
+    if (written > 1) {
+        const double mean_dt = sum_dt / (written - 1);
+        printf("  实际平均周期: %.6f s（目标 %.6f，偏差 %+.3f%%）  最大单拍 %.6f s\n",
+               mean_dt, 1.0 / HZ, (mean_dt - 1.0 / HZ) / (1.0 / HZ) * 100.0, max_dt);
+        printf("  ⚠ 判据：平均周期偏差应 <1%%，且无长于 3 倍周期的大跳（否则该次采集作废重采）\n");
+    }
+    printf("  CSV: %s\n", path);
+    printf("  下一步: python3 tool/pace_export_dataset.py %s   （导出 PACE .pt）\n", path);
+
+    for (int cp = 0; cp < 4; cp++)
+        for (int mi = 1; mi <= 4; mi++) mm.DisableMotor(cp, mi);
+    signal(SIGINT, SIG_DFL);
+    tm.stop_thread("motor_receive");
+    tm.stop_thread("motor_send");
+    mm.Stop();
+    printf("[INFO] 示例62 完成\n");
 }

@@ -14,3 +14,9 @@
 // 与 Example38 的分工：Ex38 用相位法在线估延迟（只打印）；本示例把原始数据落盘，
 // 延迟/时间常数/伺服模型都离线拟合，可复算、可对比、可回放。
 void Example60_SysIdProbe();
+
+// 【2026-10-05 新增】PACE 式真机辨识数据采集：**12 个腿关节同时**做位置 chirp
+// （0.1→10 Hz、20 s、400 Hz 采样、低增益），写 PACE 兼容 CSV 供 tool/pace_export_dataset.py 转 .pt。
+// 前置：狗**刚性固定**（吊带会摆，违反 PACE 的 fixed-base 前提）、机身水平、轮子离地。
+// 与 Example60 的分工：Ex60 是逐关节激励探针（延迟/轮速伺服）；本示例专做 PACE 辨识所需的全关节同时激励。
+void Example62_PaceChirpCollect();

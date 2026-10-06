@@ -4,7 +4,7 @@
 // =====================================================================
 //  示例切换说明
 //  = 只运行一个示例：目标示例的 3 行取消注释、其余保持注释即可。
-//  = Example1-16 已清理（早期实验），现存 17~61（共 44 个；55 从未实现，已删除）。
+//  = Example1-16 已清理（早期实验），现存 17~62（共 45 个；55 从未实现，已删除）。
 //  = 当前启用：Example61（站立/原地转向 专精策略手柄遥操作；策略变体见 include/strategy/policy_variant.h）。
 //
 //  ⚠ 2026-09-29：原先此处用 `signal(SIGINT, signal_handler)` 装了一个只把
@@ -192,6 +192,11 @@ int main() {
     // printf("[INFO] Running Example60_SysIdProbe...\n");
     // Example60_SysIdProbe();
     // printf("[INFO] Example60 completed.\n");
+
+    // 运行示例62 - PACE 式真机辨识采集（12 腿关节同时位置 chirp，0.1→10Hz/20s/400Hz，写 PACE 兼容 CSV）
+    // printf("[INFO] Running Example62_PaceChirpCollect...\n");
+    // Example62_PaceChirpCollect();
+    // printf("[INFO] Example62 completed.\n");
 
     // 运行示例61 - 站立/原地转向 专精策略手柄遥操作（右摇杆转向、A站立、B急停、START趴下；默认录 500Hz 数据集）
     printf("[INFO] Running Example61_RLStandTurnTeleop...\n");
