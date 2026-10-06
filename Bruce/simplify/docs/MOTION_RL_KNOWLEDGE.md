@@ -280,14 +280,14 @@ void leg_foot_force_to_torque(LegIndex leg, q_cmd[3], f[3], tau[3]);       // τ
 
 ### 9.6 ex_rl.cpp（61）—— 站立/原地转向 专精策略遥操作，2026-10-02 新增
 
-`Example61_RLStandTurnTeleop`：针对 **standstep_s4 / iteration_10000** 策略（`POLICY_VARIANT==1`）的手柄遥操作。
+`Example61_RLStandTurnTeleop`：针对 **standstep_s4 / iteration_10000** 策略（运行时会强制切到该变体）的手柄遥操作。
 该策略训练时**只有两类命令**：`[0,0,0]`（站立）与 `[0,0,wz]`（原地迈步转向），vx 恒 0、不支持前进。
-- 手柄：右摇杆水平=原地转向（死区内 = 精确 `[0,0,0]`）、A=强制站立、B=急停、START=趴下、q=退出。
+- 手柄：右摇杆水平=原地转向（死区内 = 精确 `[0,0,0]`）、A=强制站立、B/START=优雅趴下、q=退出（`Ctrl+C` 硬急停）。
 - **手柄 Y=标准对比序列**（站立 5s → 左转 8s → 站立 3s → 右转 8s → 站立 3s，共 27s；上升沿触发，推摇杆即中止回手动）：给真机与仿真一条
   **完全相同的命令串**，命令写进数据集 `cmd_wz` 列，离线按命令分段即可严格对齐 —— 这是做 sim/real gap
   对比时排除"人手不一致"的关键。
 - 默认开 500 Hz 统一数据集录制；每秒打印 `cmd` vs `gyro_z`（现场就能看出跟不跟得上）。
-- 权重变体见 `include/strategy/policy_variant.h`（旧策略 = 变体 0，改一个数字重编即可切回）。
+- 两套权重同时编译进程序，运行时选择见 `include/strategy/policy_set.h`；`policy_variant.h` 的 `POLICY_VARIANT` 只是默认值。
 
 ### 9.5 ex_probe.cpp（60）—— 真机激励探针，2026-09-29 新增
 

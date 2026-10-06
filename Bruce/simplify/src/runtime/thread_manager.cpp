@@ -46,9 +46,13 @@ void ThreadManager::apply_priority(int priority) {
  *      - 检查 stop_flag，为 true 时退出循环
  *   5. 置状态为 STOPPED
  *
- * 关于定时精度：
- *   采用"扣除执行时间后再 sleep"的方式，避免任务耗时导致间隔漂移。
- *   若单次 func() 耗时超过 interval_ms，则跳过本轮 sleep，立即进入下一轮。
+ * 关于定时精度（2026-10-04 修正）：
+ *   采用**绝对 deadline 网格**驱动周期：next += interval; sleep_until(next)。
+ *   旧实现 "func(); sleep_for(interval - elapsed)" 每轮都会多睡约 50µs
+ *   （Linux 默认 timer_slack），在 2ms 周期下累积成 ~486Hz（实测 -2.8%）。
+ *   改为固定网格后，单轮偏晚会被下一轮自动补回，平均周期严格 = interval_ms
+ *   （实测 500Hz）。若单次 func() 耗时 > interval_ms 或线程被长时间抢占，
+ *   则重置基准、不追帧（避免"追帧风暴"）。
  */
 void ThreadManager::run_thread(ThreadInfo* info) {
     if (info->priority > 0)
@@ -62,17 +66,23 @@ void ThreadManager::run_thread(ThreadInfo* info) {
         return;
     }
 
-    // LOOP 模式：持续执行直到 stop_flag 被置为 true
-    while (!info->stop_flag) {
-        auto start = std::chrono::steady_clock::now();
+    // LOOP 模式：持续执行直到 stop_flag 被置为 true。
+    // 用**绝对 deadline 网格**定周期：即使每轮 sleep 都偏晚，也不会累积成频率偏差。
+    const auto period = std::chrono::milliseconds(info->interval_ms);
+    auto next = std::chrono::steady_clock::now();
 
+    while (!info->stop_flag) {
         info->func();
 
-        // 计算本轮实际耗时，用剩余时间补足间隔
-        auto elapsed   = std::chrono::steady_clock::now() - start;
-        auto remaining = std::chrono::milliseconds(info->interval_ms) - elapsed;
-        if (remaining > std::chrono::milliseconds(0))
-            std::this_thread::sleep_for(remaining);
+        // 本轮应唤醒的绝对时刻（与 func() 耗时无关，网格固定）
+        next += period;
+        const auto now = std::chrono::steady_clock::now();
+        if (next > now) {
+            std::this_thread::sleep_until(next);
+        } else {
+            // 已落后（func 超周期 / 被长时间抢占）：重置基准，立即进行下一轮
+            next = now;
+        }
     }
 
     info->state = ThreadState::STOPPED;

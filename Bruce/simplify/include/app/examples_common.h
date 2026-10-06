@@ -4,6 +4,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <csignal>
+#include <chrono>
+#include <thread>
 
 class MotorManager;   // 前向声明（Enable/DisableRlFrictionFF 参数用）
 
@@ -29,6 +31,29 @@ struct RawTerminal {
         tcsetattr(STDIN_FILENO, TCSANOW, &old_tio);
         fcntl(STDIN_FILENO, F_SETFL, old_flags);
     }
+};
+
+// 固定周期节拍器（绝对 deadline 网格）——策略主循环用，避免"计算耗时叠加到周期上"。
+// 旧写法 `usleep(1000000/HZ)` 是"干完活再睡满一个周期" ⇒ 实际周期 = 耗时 + 周期，
+// 实测 Ex61 的 50Hz 环跑成 20.57ms(≈48.6Hz, -2.8%)。本 helper 把唤醒时刻钉在固定
+// 网格上，单轮偏晚会被下一轮补回，平均周期严格 = 1/hz；落后过多则重置、不追帧。
+//   LoopPacer pacer(HZ);  while (...) { ...body...; pacer.wait(); }
+class LoopPacer {
+public:
+    explicit LoopPacer(int hz)
+        : period_(std::chrono::microseconds(1000000 / (hz > 0 ? hz : 1))),
+          next_(std::chrono::steady_clock::now()) {}   // 基准=此刻；wait() 内再 +period
+
+    /// 阻塞到下一个节拍点；若本轮耗时已超过一个周期则重置基准（不追帧）
+    void wait() {
+        next_ += period_;
+        const auto now = std::chrono::steady_clock::now();
+        if (next_ > now) std::this_thread::sleep_until(next_);
+        else              next_ = now;
+    }
+private:
+    std::chrono::microseconds             period_;
+    std::chrono::steady_clock::time_point next_;
 };
 
 // 方向键解析结果

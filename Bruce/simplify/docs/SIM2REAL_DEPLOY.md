@@ -4,9 +4,12 @@
 > 数值唯一真值来源：`include/strategy/rl_controller.h`(.cpp)、`include/strategy/sim2real_conv.h`(.cpp)、`include/strategy/imu_device.h`(.cpp)。
 > 训练侧权威参考：`/home/sysu/Desktop/Project/Bruce/RL_Train/code`（`src/sim2sim.py`、`src/cfg/dogurdf_config.py`）。
 >
-> 🆕 **2026-10-02 更新**：新增**策略变体开关** `include/strategy/policy_variant.h`（`POLICY_VARIANT`）。
-> **当前 = 1 → standstep_s4 / iteration_10000**（只有静止站立 `[0,0,0]` 与原地转向 `[0,0,wz]`，不支持前进），
-> 权重导出到 `include/strategy/policy_weights_standturn.h`；变体 0 仍是本节描述的 smalllift_s45/iteration_9754。
+> 🆕 **2026-10-04 更新**：两套策略权重现在**同时编译进程序**，示例在运行时选择
+> （`include/strategy/policy_set.h`：`rl::SetPolicyVariant()` / `rl::CurrentPolicy()`）：
+> - **Example37（可前进遥操作）→ smalllift_s45 / iteration_9754**
+> - **Example61（站立/原地转向）→ standstep_s4 / iteration_10000**（只有 `[0,0,0]` 与 `[0,0,wz]`，不支持前进）
+>
+> `include/strategy/policy_variant.h` 的 `POLICY_VARIANT` 现在只是**默认变体**（未显式选择的示例才用它）。
 > `main.cpp` 激活 **Example61_RLStandTurnTeleop**。下面 §3 的"策略规格"描述的是**变体 0**，接口（obs 64/action 16/
 > 网络结构/gait 时钟/动作尺度）两个变体完全一致，差异只在**命令分布**与权重本身。
 >

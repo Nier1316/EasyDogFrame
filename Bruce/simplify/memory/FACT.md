@@ -21,7 +21,7 @@
 - 真机：`weights/iteration_9754.pkl` → `tool/export_policy.py`（默认 `CKPT`，`--ckpt` 可覆盖）→ `include/strategy/policy_weights.h` + `include/strategy/policy_test_ref.h`；三者 mtime 2026-09-22，与 HEAD `98ef8ea`（权重切换 9754，降低抬腿幅度）一致。
 - 网络：`64 → 512 → 256 → 128 → 16`，中间层 ELU 激活、输出层无激活（`include/strategy/mlp.h`）。
 - sim2sim：`dogurdf_sim2sim_deploy/run_sim2sim.sh` 默认 checkpoint = `../weights/iteration_9754.pkl`（**与真机同一份**），可用 `SIM2SIM_CKPT=<path.pkl>` 覆盖；此前硬编码 `iteration_3000`，2026-09-29 修正。
-- 🗄️ 历史存档（**不再与真机同步**）：`dogurdf_sim2sim_deploy/checkpoints/dogurdf_velocity/{iteration_450,iteration_3000}.pkl`；`weights/` 现有 `iteration_9754.pkl`（当前）+ `iteration_2100.pkl`（历史），`iteration_3500/4350/5350.pkl` 已于 2026-09-29 删除。
+- 🗄️ 历史存档（**不再与真机同步**）：`dogurdf_sim2sim_deploy/checkpoints/dogurdf_velocity/{iteration_450,iteration_3000}.pkl`；`weights/` 现有 **`iteration_5350.pkl`（稳定/演示，2026-10-06 从 git 历史恢复）** + `iteration_9754.pkl` + `iteration_2100.pkl`（历史），`iteration_3500/4350.pkl` 仍已删除。
 - ⚠️ 9754 / 2100 / 3000 三个 checkpoint 的 actor 形状相同（64-512-256-128-16），可互换加载。
 
 ### 关键常量（`include/strategy/rl_controller.h`）
@@ -115,13 +115,26 @@
 - `examples_common` 只有 4 个 helper：`RawTerminal`、`poll_key`、`g_rl_stop`+`rl_signal_handler`、`EnableRlFrictionFF/DisableRlFrictionFF`。
 - ⚠️ 安全现状（2026-09-29 脚本复核）：42 个示例中 **29 个会使能电机**（脚本按函数体内直接调 `EnableMotor`/`PreEnableZeroTorque` 统计为 27 个；Ex58/59 经公共 helper `init_zero_torque()` 使能），其中 **13 个装了 `SIGINT` 急停** —— Ex25/34/35/36/37/38/51/52/53/54/56/**58/59**；其余 **16 个**（Ex18/19/20/21/22/23/29/32/41/44/45/46/47/48/49/57）会使能但没有软急停，运行前须留安全距离、可随时断电。
 
-### 策略变体与权重（2026-10-02）
-- **唯一开关**：`include/strategy/policy_variant.h` 的 `#define POLICY_VARIANT`。
-  - `1` = **standstep_s4 / iteration_10000**（2026-10-02，当前最新）：只有**静止站立 `[0,0,0]`** 与
-    **原地迈步转向 `[0,0,wz]`**（vx 恒 0），对角轻抬腿 + 轮差速偏航，平地。**不支持前进**。
-  - `0` = smalllift_s45 / iteration_9754（2026-09-19）：可 vx 前进 + 转向（Ex37 等基于它）。
-- 两套权重都在仓库里：`policy_weights.h`（旧）+ `policy_weights_standturn.h`（新，2026-10-02 导出）；
-  参考对 `policy_test_ref.h` / `policy_test_ref_standturn.h`。改一个数字后**重新编译**即可切换。
+### 策略变体与权重（2026-10-06：**运行时三变体**，默认 = 5350 演示稳定）
+- **三套权重同时编译进程序**，示例在进入 RL 前**运行时选择**：
+  `include/strategy/policy_set.h`（`rl::SetPolicyVariant()` / `rl::PolicyOf()` / `rl::CurrentPolicy()`），
+  实现在 `src/strategy/policy_set.cpp`（三套权重头各包进独立命名空间
+  `wt_smalllift` / `wt_standturn` / `wt_5350`）。
+  - `0` = **smalllift_s45 / iteration_9754**（2026-09-19，可 vx 前进 + 转向）。
+  - `1` = **standstep_s4 / iteration_10000**（2026-10-02，只有静止站立 `[0,0,0]` 与原地迈步转向 `[0,0,wz]`，
+    vx 恒 0，**不支持前进**）→ **Example61 强制使用**。
+  - `2` = **h52_s45_v4 / iteration_5350**（2026-09-17，宽摩擦 DR + 地形适应，可前进）
+    → **默认变体**，**Example37 强制使用**，**演示/稳定策略**（见根目录 `STABLE.md`）。
+- `include/strategy/policy_variant.h` 的 `#define POLICY_VARIANT` 现在**只是默认变体**（= 2 / 5350）；
+  **换策略不再需要重新编译**。
+- `mlp.h` 的 `mlp_forward()` 经 `rl::CurrentPolicy()` 取权重；结构体字段用小写 `w0/b0/w1/b1/w2/b2/wo/bo`
+  （避开 `<termios.h>` 的 `B0` 波特率宏）。
+- 三套权重头：`policy_weights.h`（9754）+ `policy_weights_standturn.h`（10000）+
+  `policy_weights_5350.h`（5350）；参考对同名 `policy_test_ref*.h`。
+- ⚠️ **5350 的 checkpoint 曾被删除**：`weights/iteration_5350.pkl` 于 2026-09-29 清理时删除，
+  2026-10-06 由 git 历史 `0d0257c` 恢复（blob `d19b3d60…`，逐字节一致）。
+- **Ex30 现在同时校验三套**：`mlp_forward(REF_OBS)` vs `REF_ACTION` 最大绝对误差
+  **9754 = 1.67e-6、10000 = 4.29e-6、5350 = 2.38e-6（均通过）**。
 - `tool/export_policy.py` 新增 `--out-weights/--out-ref`（可导出到变体文件，不覆盖旧权重）。
 - **接口不变**：obs 仍是 64 维、action 16 维、MLP 512/256/128 + ELU；
   `GAIT_CYCLE=0.6` 与 `GAIT_OFFSET=(0,0.5,0.5,0)` 与训练侧 `GAIT_CYCLE_TIME=0.6`/`GAIT_PHASE_OFFSETS` 一致；
@@ -130,8 +143,8 @@
   **C++ 侧 Ex30 离线回归 `mlp_forward(REF_OBS)` vs `REF_ACTION` 最大绝对误差 4.29e-6（通过）**。
 - 训练命令范围（standturn）：`wz ∈ ±1.0`（"turn [0,0,wz] commands only"，见 standturn 实验的 notes），
   `vx` 不在分布内 ⇒ **新示例把 `mcfg.cmd_bias_vx` 设为 0**（Ex37 的 `-0.05` 是给前进策略抵轮子偏置的）。
-- 新示例 **Example61_RLStandTurnTeleop**（`ex_rl.cpp`，main.cpp 当前激活）：
-  右摇杆水平=原地转向（死区内=精确 `[0,0,0]`=站立）、A=强制站立、B=急停、START=趴下、q=退出、
+- 新示例 **Example61_RLStandTurnTeleop**（`ex_rl.cpp`，main.cpp 当前激活；**运行时强制变体 1**）：
+  右摇杆水平=原地转向（死区内=精确 `[0,0,0]`=站立）、A=强制站立、B/START=优雅趴下、q=退出（Ctrl+C 硬急停）、
   **手柄 Y=跑标准对比序列**（站立 5s → 左转 8s → 站立 3s → 右转 8s → 站立 3s，上升沿触发）、推摇杆=中止序列回手动、键盘 x=中止序列；
   默认开 500 Hz 统一数据集录制（`cmd_wz` 列即为命令串，离线可直接按命令分段对齐 sim/real）。
 
