@@ -41,35 +41,48 @@ bool confirm_suspended() {
     return !g_rl_stop;
 }
 
-bool init_all(MotorManager& mm, ThreadManager& tm) {
+bool init_all(MotorManager& mm, ThreadManager& tm, bool enable_wheels = true) {
     mm.SetTransport(&Usb2CanTransport::GetInstance());
     if (!mm.Initialize(tm)) { printf("[ERROR] MotorManager 初始化失败\n"); return false; }
     tm.start_thread("motor_receive");
     tm.start_thread("motor_send");
     sleep(1);
 
-    // 腿 IMPEDANCE（激励用位置/力矩）、轮 SPEED（速度环激励）——与 Ex36/37 同约定
+    // 腿 IMPEDANCE（激励用位置/力矩）
     for (int cp = 0; cp < 4; cp++)
         for (int mi = 1; mi <= 3; mi++) mm.SetControlMode(cp, mi, IMPEDANCE);
-    for (int cp = 0; cp < 4; cp++) mm.SetControlMode(cp, 4, SPEED);
+    // 轮子：默认走 SPEED（Ex60 的轮速伺服辨识要用）；**enable_wheels=false 时完全不碰轮子**
+    // —— 不设模式、不预置、不使能、不发帧。SendOnce 里有 `if (!motor.enabled) continue;`
+    //    （motor_manager.cpp:383，且模式同步写在它之后）⇒ 未使能的轮子不会被写任何帧。
+    if (enable_wheels) {
+        for (int cp = 0; cp < 4; cp++) mm.SetControlMode(cp, 4, SPEED);
+    }
     usleep(100000);
     for (int cp = 0; cp < 4; cp++)
-        for (int mi = 1; mi <= 4; mi++) mm.PreEnableZeroTorque(cp, mi);
+        for (int mi = 1; mi <= 3; mi++) mm.PreEnableZeroTorque(cp, mi);
+    if (enable_wheels) {
+        for (int cp = 0; cp < 4; cp++) mm.PreEnableZeroTorque(cp, 4);
+    }
     usleep(100000);
     for (int cp = 0; cp < 4; cp++)
-        for (int mi = 1; mi <= 4; mi++) mm.EnableMotor(cp, mi);
+        for (int mi = 1; mi <= 3; mi++) mm.EnableMotor(cp, mi);
+    if (enable_wheels) {
+        for (int cp = 0; cp < 4; cp++) mm.EnableMotor(cp, 4);
+    }
     usleep(300000);
 
     // 轮子先给 0 速（弱增益软启动，避免使能瞬间假速度偏移）
-    for (int cp = 0; cp < 4; cp++) mm.SendSpeed(cp, 4, 0.0f, rl::WHEEL_SOFT_KVP, 0.0f);
+    if (enable_wheels) {
+        for (int cp = 0; cp < 4; cp++) mm.SendSpeed(cp, 4, 0.0f, rl::WHEEL_SOFT_KVP, 0.0f);
+    }
     return true;
 }
 
-// 所有腿回到零扭矩自由、轮子 0 速
-void all_free(MotorManager& mm) {
+// 所有腿回到零扭矩自由；wheels=true 时轮子给 0 速（wheels=false 表示轮子未使能、不碰）
+void all_free(MotorManager& mm, bool wheels = true) {
     for (int cp = 0; cp < 4; cp++) {
         for (int mi = 1; mi <= 3; mi++) mm.SendImpedance(cp, mi, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
-        mm.SendSpeed(cp, 4, 0.0f, rl::WHEEL_SOFT_KVP, 0.0f);
+        if (wheels) mm.SendSpeed(cp, 4, 0.0f, rl::WHEEL_SOFT_KVP, 0.0f);
     }
 }
 
@@ -303,8 +316,9 @@ void Example62_PaceChirpCollect() {
     printf("\n⚠️ 前置条件（PACE §2.1，缺一不可）：\n");
     printf("   1) 狗必须**刚性固定**（吊带会摆动 ⇒ 违反 fixed-base 前提；有夹具则夹紧）\n");
     printf("   2) 机身尽量水平；**轮子与腿全部离地**、无任何接触（含腿间）\n");
-    printf("   3) 固件补偿开关（cogging/摩擦补偿）在整个辨识与后续部署期间**保持一致**\n");
-    printf("   4) kp/kd 与后续部署**完全相同**（PACE 禁止把 PD 增益与动力学联合优化）\n");
+    printf("   3) **轮子必须物理固定**（胶带/夹具按住）；本示例**不使能**轮电机 ⇒ 轮子是被冻结的刚性件\n");
+    printf("   4) 固件补偿开关（cogging/摩擦补偿）在整个辨识与后续部署期间**保持一致**\n");
+    printf("   5) kp/kd 与后续部署**完全相同**（PACE 禁止把 PD 增益与动力学联合优化）\n");
     printf("准备好后按回车开始（Ctrl+C 取消）: ");
     fflush(stdout);
     { int c; while ((c = getchar()) != '\n' && c != EOF) {} }
@@ -312,7 +326,11 @@ void Example62_PaceChirpCollect() {
 
     MotorManager& mm = MotorManager::GetInstance();
     ThreadManager tm;
-    if (!init_all(mm, tm)) return;          // 复用 ex_probe 的初始化（腿 IMPEDANCE / 轮 SPEED 0 速）
+    // ⚠️ 轮子**不使能**（enable_wheels=false）：本示例只辨识 12 个腿关节，轮子应是被**物理固定**的
+    //    刚性部件（真机用胶带/夹具按住），而不是一个有自己动力学的自由度。
+    //    不使能的好处：无电流/无发热、不会触发 WHEEL_ESTOP、不引入速度环动力学；
+    //    且 SendOnce 会跳过未使能电机（motor_manager.cpp:383）⇒ 连模式帧都不会写。
+    if (!init_all(mm, tm, /*enable_wheels=*/false)) return;
     signal(SIGINT, rl_signal_handler);
     g_rl_stop = 0;
 
@@ -424,7 +442,7 @@ void Example62_PaceChirpCollect() {
             }
         usleep(1000000 / HZ);
     }
-    all_free(mm);
+    all_free(mm, /*wheels=*/false);
     printf("\n========== 采集结果 ==========\n");
     printf("  有效拍数: %d / %d（%s）\n", written, N, aborted ? "有越限中止" : "完整");
     if (written > 1) {
