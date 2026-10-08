@@ -105,7 +105,7 @@
 
       <!-- FL (Front Left) leg: bodies 2-5, joints 0-3 -->
       <body name="FL_hip_link" pos="0.3265 0.08 0">
-        <inertial pos="0 0.1266 0" quat="1 0 0 0" mass="1.5" diaginertia="0.00162 0.00175 0.00162"/>
+        <inertial pos="-0.0096559 -0.00827404 0.00195208" quat="0.442032 0.549064 0.445917 0.551629" mass="1.5" diaginertia="0.00109134 0.000920711 0.000558709"/>
         <joint name="FL_hip_joint" pos="0 0 0" axis="1 0 0" range="-0.6 0.6" actuatorfrcrange="-150 150" frictionloss="0.2" armature="0.0289"/>
         <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.792157 0.819608 0.933333 1" mesh="FL_hip_mesh"/>
         <geom name="FL_hip_collision" size="0.0615 0.03" pos="0 -0.02 0" quat="0.707105 0.707108 0 0" type="cylinder" contype="0" conaffinity="1" group="3" rgba="0.792157 0.819608 0.933333 0"/>
@@ -135,7 +135,7 @@
 
       <!-- FR (Front Right) leg: bodies 6-9, joints 4-7 -->
       <body name="FR_hip_link" pos="0.3265 -0.08 0">
-        <inertial pos="0 -0.1266 0" quat="1 0 0 0" mass="1.5" diaginertia="0.00162 0.00175 0.00162"/>
+        <inertial pos="-0.0096559 0.00827404 -0.00195208" quat="0.442032 0.549064 0.445917 0.551629" mass="1.5" diaginertia="0.00108808 0.000917958 0.000557038"/>
         <joint name="FR_hip_joint" pos="0 0 0" axis="1 0 0" range="-0.6 0.6" actuatorfrcrange="-150 150" frictionloss="0.2" armature="0.0289"/>
         <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="FR_hip_mesh"/>
         <geom name="FR_hip_collision" size="0.0615 0.03" pos="0 0.02 0" quat="0.707105 0.707108 0 0" type="cylinder" contype="0" conaffinity="1" group="3" rgba="1 1 1 0"/>
@@ -165,7 +165,7 @@
 
       <!-- RL (Rear Left) leg: bodies 10-13, joints 8-11 -->
       <body name="RL_hip_link" pos="-0.3265 0.08 0">
-        <inertial pos="0 0.1266 0" quat="1 0 0 0" mass="1.5" diaginertia="0.00162 0.00175 0.00162"/>
+        <inertial pos="0.0096559 -0.008274 -0.0019521" quat="0.551629 0.445917 0.549064 0.442032" mass="1.5" diaginertia="0.00109135 0.000920719 0.000558714"/>
         <joint name="RL_hip_joint" pos="0 0 0" axis="1 0 0" range="-0.6 0.6" actuatorfrcrange="-150 150" frictionloss="0.2" armature="0.0289"/>
         <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.79216 0.81961 0.93333 1" mesh="RL_hip_mesh"/>
         <geom name="RL_hip_collision" size="0.0615 0.03" pos="0 -0.02 0" quat="0.707105 0.707108 0 0" type="cylinder" contype="0" conaffinity="1" group="3" rgba="0.79216 0.81961 0.93333 0"/>
@@ -195,7 +195,7 @@
 
       <!-- RR (Rear Right) leg: bodies 14-17, joints 12-15 -->
       <body name="RR_hip_link" pos="-0.3265 -0.08 0">
-        <inertial pos="0 -0.1266 0" quat="1 0 0 0" mass="1.5" diaginertia="0.00162 0.00175 0.00162"/>
+        <inertial pos="0.0096559 0.00827404 0.00195208" quat="0.549064 0.442032 0.551629 0.445917" mass="1.5" diaginertia="0.00109134 0.000920711 0.000558709"/>
         <joint name="RR_hip_joint" pos="0 0 0" axis="1 0 0" range="-0.6 0.6" actuatorfrcrange="-150 150" frictionloss="0.2" armature="0.0289"/>
         <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.792157 0.819608 0.933333 1" mesh="RR_hip_mesh"/>
         <geom name="RR_hip_collision" size="0.0615 0.03" pos="0 0.02 0" quat="0.707105 0.707108 0 0" type="cylinder" contype="0" conaffinity="1" group="3" rgba="0.792157 0.819608 0.933333 0"/>
