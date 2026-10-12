@@ -219,9 +219,9 @@ int main() {
     // printf("[INFO] Example62 completed.\n");
 
     // 运行示例61 - 站立/原地转向 专精策略手柄遥操作（右摇杆转向、A站立、B急停、START趴下；默认录 500Hz 数据集）
-    printf("[INFO] Running Example61_RLStandTurnTeleop...\n");
-    Example61_RLStandTurnTeleop();
-    printf("[INFO] Example61 completed.\n");
+    // printf("[INFO] Running Example61_RLStandTurnTeleop...\n");
+    // Example61_RLStandTurnTeleop();
+    // printf("[INFO] Example61 completed.\n");
 
     // 运行示例48 - 轮子扭矩方向安全验证（单轮开环测向，无 RL 失控风险）
     // printf("[INFO] Running Example48_WheelDirectionVerify...\n");
@@ -256,9 +256,9 @@ int main() {
     // printf("[INFO] Example49 completed.\n");
 
     // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，USB2CAN 4 路）
-    // printf("[INFO] Running Example37_RLTeleopControl...\n");
-    // Example37_RLTeleopControl();
-    // printf("[INFO] Example37 completed.\n");
+    printf("[INFO] Running Example37_RLTeleopControl...\n");
+    Example37_RLTeleopControl();
+    printf("[INFO] Example37 completed.\n");
 
     // 运行示例56 - 固定 yaw 转向真机遥测录制（sim2real 原地转向对比，落盘 log/s2r_fixedyaw_*.csv）
     // printf("[INFO] Running Example56_FixedYawRecord...\n");
