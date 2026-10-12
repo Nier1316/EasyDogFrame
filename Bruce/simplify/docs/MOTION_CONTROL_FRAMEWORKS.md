@@ -6,7 +6,7 @@
 > ⚠️ **2026-09-29 时效说明**：第 1~5 章的**选型调研清单仍然有效**（框架生态没变），可继续作为备选参考。
 > 但第 **§6「对本工程的对接建议」已被实际实现推翻**——工程实际走的是：**50Hz** 策略环（`rl::CONTROL_DT=0.02`）、
 > **手写 MLP**（`include/strategy/mlp.h`，零依赖，不用 ONNX Runtime / LibTorch）、腿 **kp/kd = 250/4**（`rl::LEG_KP/KD`，非 200/20）。
-> 详见 §6 开头的订正块。当前部署权重 `weights/iteration_9754.pkl`，`main.cpp` 激活 **Example37_RLTeleopControl**。
+> 详见 §6 开头的订正块。当前部署权重 `weights/iteration_5350.pkl`（⚠️ 2026-10-06 起；此前为 9754），`main.cpp` 激活 **Example37_RLTeleopControl**。
 
 ---
 
@@ -176,7 +176,7 @@
 2. **动作接口对齐**：仿真环境中的动作→力矩，与本工程 `SendImpedance(pos, vel, kp, kd, tau_ff)` 语义一致（位置增量 + 前馈力矩）这一点仍然成立；但 `kp/kd` 取 `rl::LEG_KP/KD = 250/4`（RL 闭环）或 `JOINT_IMPEDANCE`（起立，hip 300/10、thigh/calf 250/10）——**不是**旧文写的 `GetJointImpedance()` 默认 200/20。
 3. **部署侧（已被推翻）**：旧建议"导出 ONNX + ONNX Runtime + 100Hz 线程"**未采用**。现状：`tool/export_policy.py` 把手写网络权重导出为 C 头文件，`mlp_forward()` 直接内联推理，挂进 50Hz RL 循环。clamp 仍与仿真保持一致（动作/限位/扭矩）。
 4. **非 RL 备选**：若先做可解释的运控，用 `legged_control`（qiayuanl）+ `OCS2` 做 NMPC/WBC，或 `CHAMP` 快速搭步态。
-5. **sim-real 一致**：本工程 `leg_kinematics.h` 与仿真 `leg_kinematics.m` 已对齐；连杆/限位/站立姿态由 `robot_calibration.h` 定义，**RL 的 `kp/kd` 由 `include/strategy/rl_controller.h` 定义**（250/4），仿真侧参数要与之一致；sim2sim 侧另见 `dogurdf_sim2sim_deploy/src/sim2sim.py`（`SIM_DT=0.005 / DECIMATION=4`，默认与真机同权重 `weights/iteration_9754.pkl`）。
+5. **sim-real 一致**：本工程 `leg_kinematics.h` 与仿真 `leg_kinematics.m` 已对齐；连杆/限位/站立姿态由 `robot_calibration.h` 定义，**RL 的 `kp/kd` 由 `include/strategy/rl_controller.h` 定义**（250/4），仿真侧参数要与之一致；sim2sim 侧另见 `dogurdf_sim2sim_deploy/src/sim2sim.py`（`SIM_DT=0.005 / DECIMATION=4`，默认 checkpoint `weights/iteration_9754.pkl`（⚠️ 2026-10-06 起与真机 5350 **不一致**，对比须用 `SIM2SIM_CKPT` 指定））。
 
 ---
 

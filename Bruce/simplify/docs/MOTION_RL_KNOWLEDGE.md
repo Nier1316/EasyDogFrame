@@ -5,7 +5,7 @@
 > 数值若有出入，一律以对应源码头文件为准（下文每处都标注了唯一真值来源）。
 > 2026-08-30 整理：对齐分层重构 + USB2CAN + traj_v28 + 轮控 SPEED 迁移。
 >
-> ✅ **2026-09-29 更新**：权重 `weights/iteration_9754.pkl`（sim2sim 同步同一份）；`main.cpp` 激活 **Example37_RLTeleopControl**；
+> ⚠️ **2026-10-12 订正**：真机权重已是 `weights/iteration_5350.pkl`（Ex37 运行时强制）；sim2sim 默认仍为 9754，**两者已不一致**；`main.cpp` 激活 **Example37_RLTeleopControl**；
 > 示例总数 40（编号 17~57，`Example55` 从未实现已移除）；`gait_phase` 观测为**分组**布局；真机扭矩命令限幅 120/120/200/52；
 > 轮速软限位已失效，现由 `MotorManager` 的 `WHEEL_ESTOP_*` 承担。
 >
@@ -235,7 +235,7 @@ void leg_foot_force_to_torque(LegIndex leg, q_cmd[3], f[3], tau[3]);       // τ
   ⚠ 2026-09-30 更名：旧名 `POLICY_TO_MJX`/`MJX_TO_POLICY` 的**字面含义与实际语义正好相反**（历史上的坑），现已按语义重命名并保留旧名作为引用别名（`&` 绑定）。
 - **零位转换**：`sim2real_conv` 的 `CONV_A/CONV_B`（真机 GetStatus ↔ URDF）。
 - **sim-real**：真机↔MATLAB 仿真走 `SimSync`（12 关节，度，轮不在环内）；训练权威 `RL_Train/code`（其 sim2sim 用 SIM_DT=0.002/DECIMATION=10/MOTOR_DECIMATION=1，500Hz PD 子环）。
-  **本仓库自带**的 `dogurdf_sim2sim_deploy/src/sim2sim.py` 是另一套原生 MuJoCo 验证器：`SIM_DT=0.005 / DECIMATION=4`（同样 50Hz 控制），默认已与真机同权重 `weights/iteration_9754.pkl`。
+  **本仓库自带**的 `dogurdf_sim2sim_deploy/src/sim2sim.py` 是另一套原生 MuJoCo 验证器：`SIM_DT=0.005 / DECIMATION=4`（同样 50Hz 控制），默认 checkpoint `weights/iteration_9754.pkl`（⚠️ 2026-10-06 起与真机 5350 **不一致**）。
 - **部署入口**：`src/app/examples/ex_rl.cpp`（当前激活 **Example37_RLTeleopControl**，见 `src/app/main.cpp`）；RL 决策 50Hz，电机 500Hz。
 - **安全兜底**：动作 clamp 到限位、`TORQUE_CMD_LIMIT` 扭矩 clamp（120/120/200/52）、急停、`WHEEL_CMD_MOVE_THR` 移动门控锁轮。
   ⚠ 旧文写的"轮速软限位"（`WHEEL_SOFT_LIMIT_*` / `rl::wheel_torque()`）已失效、无调用者；轮速保护现由 `MotorManager` 的 `WHEEL_ESTOP_*`（15 rad/s 自动急停）承担。

@@ -1,7 +1,9 @@
 # 项目事实
 
 > 时效性标注：✅ 最新 / ⚠️ 过时（值或结论已变） / 🔴 失效（对象已删除） / 🗄️ 历史存档。
-> 本文件为工程事实总表，最后逐项对照代码：**2026-09-29**（HEAD `98ef8ea` + 本次审查修复）。
+> 本文件为工程事实总表，最后逐项对照代码：**2026-10-12**（HEAD `ca9486e`，已合并原 `stable` 分支）。
+> 2026-10-12 本次整理补入：反馈链路 100 ms 攒批（§反馈链路）、模型 armature/惯量（§模型与动力学参数）、
+> PACE 复现进度、运行时三变体策略、2026-10 变更要点。
 
 ## 工程位置与构建
 - 主工程：`/home/sysu/Desktop/Project/Bruce/EasyDogFrame/Bruce/simplify`（四足机器狗电机控制框架，CMake + C++17，分层重组后）。
@@ -12,15 +14,18 @@
 
 ## 硬件拓扑与节拍
 - 4 路总线 × 4 电机 = 16 电机：motor_id 1=髋 hip、2=大腿 thigh、3=小腿 calf、4=轮 wheel；tx_id=motor_id，rx_id=50+motor_id。
-- 线程：`motor_receive` / `motor_send` 各 **2ms（500Hz）**，SCHED_FIFO 优先级 80（`src/runtime/motor_io.cpp`）；`robot_calibration.h` `CONTROL_HZ=500`。
+- 线程：`motor_receive` / `motor_send` 各 **2ms（500Hz）**，注册 SCHED_FIFO 优先级 80（`src/runtime/motor_io.cpp`）；`robot_calibration.h` `CONTROL_HZ=500`。
+- ⚠️ **SCHED_FIFO 实际从未生效**（2026-10-08 实测）：本机 `ulimit -r` = **0** ⇒ `pthread_setschedparam` 返回 `EPERM`，500 Hz 收发线程一直跑在 **CFS** 上。现已改为**打印告警**（不再静默降级）。开启方式：`/etc/security/limits.conf` 加 `"<用户> - rtprio 99"`（重新登录生效）；**不要用 `setcap`** —— file capability 会让内核置 `AT_SECURE`，动态链接器随之**忽略 `LD_PRELOAD`**，反馈垫片失效（见 §反馈链路）。
+- ✅ **周期改用绝对 deadline 网格**（2026-10-06，`ThreadManager::run_thread`）：`next += period; sleep_until(next)`，不累积睡眠偏差（实测 500.000 Hz，原 486 Hz / −2.8%）；50 Hz 策略环另加 `LoopPacer`（`include/app/examples_common.h`）。Example62 的 400 Hz 采集循环也是同一套锚点等距调度。
 - 电机环：轮子走**固件 SPEED 速度环**（`SendSpeed(vel, kvp, ki)`，固件内部 1kHz 闭环）；腿关节走固件**阻抗环**（kp/kd/tau_ff）。
 - 标定单一真值来源：`MOTOR_CALIBRATION[4][4]`（`include/motor/motor_calibration.h`）；`robot_calibration.h` 直接引用其 `pos_offset`，勿手抄字面量。
 
 ## RL 部署（dogurdf 轮足策略）
-### 权重链路（✅ 2026-09-22 起 = iteration_9754）
-- 真机：`weights/iteration_9754.pkl` → `tool/export_policy.py`（默认 `CKPT`，`--ckpt` 可覆盖）→ `include/strategy/policy_weights.h` + `include/strategy/policy_test_ref.h`；三者 mtime 2026-09-22，与 HEAD `98ef8ea`（权重切换 9754，降低抬腿幅度）一致。
+### 权重链路（2026-10-06 起 = **运行时三变体**，默认 5350）
+- 三套权重头**同时编译进程序**（`policy_weights.h` / `_standturn.h` / `_5350.h`），由 `strategy/policy_set.{h,cpp}` 在运行时选择；**换策略不再需要重新编译**。`POLICY_VARIANT` 现在只是默认值（= 2 / 5350）。详见下文「### 策略变体与权重」。
+- 真机当前（main.cpp 激活 `Example37`）跑 **h52_s45_v4 / iteration_5350**（可前进 + 转向，宽摩擦 DR / 地形适应）；`Example61` 强制 `standstep_s4 / iteration_10000`。二者可同进程共存。
 - 网络：`64 → 512 → 256 → 128 → 16`，中间层 ELU 激活、输出层无激活（`include/strategy/mlp.h`）。
-- sim2sim：`dogurdf_sim2sim_deploy/run_sim2sim.sh` 默认 checkpoint = `../weights/iteration_9754.pkl`（**与真机同一份**），可用 `SIM2SIM_CKPT=<path.pkl>` 覆盖；此前硬编码 `iteration_3000`，2026-09-29 修正。
+- ⚠️ **sim2sim 默认 checkpoint 与真机已不一致**：`dogurdf_sim2sim_deploy/run_sim2sim.sh` 默认 `../weights/iteration_9754.pkl`（2026-09-29 按当时真机 9754 对齐而定），而真机 `Example37` 自 2026-10-06 起用 **5350** ⇒ 做对比**必须** `SIM2SIM_CKPT=../weights/iteration_5350.pkl`，否则两边跑的是**两个不同策略**、结论无效。（`SIM2SIM_CKPT=<path.pkl>` 可覆盖已有。）
 - 🗄️ 历史存档（**不再与真机同步**）：`dogurdf_sim2sim_deploy/checkpoints/dogurdf_velocity/{iteration_450,iteration_3000}.pkl`；`weights/` 现有 **`iteration_5350.pkl`（稳定/演示，2026-10-06 从 git 历史恢复）** + `iteration_9754.pkl` + `iteration_2100.pkl`（历史），`iteration_3500/4350.pkl` 仍已删除。
 - ⚠️ 9754 / 2100 / 3000 三个 checkpoint 的 actor 形状相同（64-512-256-128-16），可互换加载。
 
@@ -90,7 +95,43 @@
 - 时延：真机纯传输延迟实测 ≈24ms（可信区间 18~30ms），建议 `action_delay_steps=1`（见 `docs/ACTION_DELAY_MEASURE.md`）；**训练是否含 action delay 的旧文档说法互斥，以 `RL_Train/code` 训练配置为唯一真源**。
 - 固件速度环：驱动器手册（`Doc/集成驱动器使用说明-V1.pdf`）明确 `τ_des = Kvp(ω_des−ω_act) + Kvi·Dt·Σ(ω_des−ω_act)`，**`Dt = 50 µs`**（固件内 20 kHz）——远快于上位机 500 Hz 指令率，故 sim2sim 的差异主要在**指令路径/饱和/死区**而非内环带宽。
 
-## 触地检测 / 相位 / sim2real（专题）
+## 模型与动力学参数（`dogurdf_sim2sim_deploy/assets/bot_model/dogurdf/dogurdf.xml`，2026-10-07/08）
+
+- **armature = PACE 的 `I_a` 物理基线**（替换原先无依据的统一 0.01）= 规格书转子惯量 × 减速比²：
+  hip/thigh **0.0289**（SEAF90A16NG01 0.11 g·m² × 16.221²）、calf **0.1575**（SETZ120CI-1JD 0.346 × 21.333²）、
+  wheel **0.00396**（SEAF90A6NL01 0.11 × 6²）。
+  ⚠️ 这是**关节侧折算值**；固件寄存器 `0x45` 是**电机侧**（1.10e-4 / 3.46e-4 / 1.10e-4），两者差 N²，勿混用。
+  仅含转子、不含减速机齿轮 ⇒ 属**下限**，真值可能再高 10~30%。
+- **质量/惯量修正（10-07 `6aca882` / 10-08 `debd015`→`18d0210`）**：
+  thigh m=4.40、CoM 距 HFE 轴 (0,0,−0.0639)、diag=(0.0498,0.0498,0.0040)（KFE 电机 2.55 在轴心 + 曲柄 0.23 + 连杆 0.29 + 结构 1.33）；
+  calf m=0.82、CoM 取中点、diag=(0.00804,0.00804,0.0002)；
+  **髋连杆惯量回退到原 CAD 值**（CoM=0.0129 m、diag=(0.00109,0.00092,0.00056)）—— 结论是
+  **HFE 电机装在 HAA 轴上、随侧摆一起转**，故髋连杆 CoM 本就贴近侧摆轴，原 CAD 值是对的。
+- 当前状态：**总质量 57.94 kg**（真机 57.46，**+0.8%**）；FL 腿关节空间惯量 hip 0.7537 / thigh 0.6699 / calf 0.4680。
+- ⚠️ 髋连杆 1.5 kg = HFE 电机 1.4 + 支架 0.1；躯干 21.5 kg **不含** HFE 电机 ⇒ 无重复计算。
+- 🔴 仍空缺：`robot_calibration.h` 的 `LINK_DYNAMICS` 全 0、`BODY_MASS=0`（TODO 未实测，Ex58/59 工具已就绪）；
+  `MOTOR_DRIVE[].inertia` 是**电机侧**占位 0，应填 1.10e-4 / 3.46e-4 / 1.10e-4。
+
+## PACE 复现（2026-10-04 起，专题见 `docs/PACE_*.md`）
+
+- **方法**（arXiv [2509.06342](https://arxiv.org/abs/2509.06342)，IJRR 2026）：辨识 `p = [I_a, d, τ_f, q̃_b, T_d]ᵀ ∈ R^{4n+1}`
+  （12 腿关节 = **49 参**），损失 = 时均关节位置平方误差（Eq.3），激励 = **固定基座 + 悬空 + 位置 chirp 20 s**，
+  优化 = CMA-ES / 4096 并行回放。目标是**取消动力学域随机化**。
+- **Phase 0 已完成**：Isaac Lab 2.3.2 vs mjlab 1.2.0 双仿真器对照，两侧各自拟合自产数据、**五个真值全部还原**
+  （I_a 0.1000/0.1000、d 4.5000/4.5001、τ_f 0.0500/0.0498、q̃_b 0.0500/0.0501、T_d 均 5 步，误差 ≤0.33%）——
+  但这是**自洽拟合**，只证明实现正确、**不能区分仿真器**。
+- **资产归因**（P0 阻塞已解）：上游 URDF 声明 57.0279 kg / 96 links，MuJoCo 编译后仅 30.4490 kg（基座侧掉 26.58 kg）；
+  Isaac USD 实测 51.6357 kg / 17 bodies。**运动链质量逐项吻合**（THIGH 5.1322 两侧相同、SHANK+FOOT 焊合等价、HIP 在场），
+  差异全在被焊死的基座上 ⇒ 对固定基座辨识**等价**；但用于浮动基座 RL 训练**必须先修**（那是另一台机器人）。
+- **真机侧**：`Example62_PaceChirpCollect`（12 腿关节同时 chirp，0.1→10 Hz / 20 s / 400 Hz / 0.06 rad，
+  **PD = 部署值 `rl::LEG_KP/LEG_KD` = 250/4**，轮子不使能且胶带物理固定）→ `log/pace/chirp_*.csv`
+  → `tool/pace_export_dataset.py` 转 `chirp_data.pt`。**前置：狗刚性固定、离地、固件补偿开关冻结。**
+- **节拍已修**：`usleep(1e6/HZ)`（= 睡 2.5 ms + 循环体 0.22 ms）→ 绝对 deadline 等距调度，
+  真机实测 **+8.6~8.9% → −0.003%**（20.00 s 整 8000 拍），过 `pace_export_dataset.py` 的 <1% 门。
+- **体检工具**：`tool/pace_qc.py`（拍数 / 周期偏差 / 最大单拍 / `meas` 刷新率 / 各关节最长保持 /
+  无反馈通道 / 末行截断；`--compare A B` 对比两次运行；退出码 0 = 全过）。
+- **未完成**：`tool/pace_fit.py`（CMA-ES + MJX 批量回放）、`sim2sim --replay`、`pace_validate.py` 均**未编写**；
+  **且受 §反馈链路 的 100 ms 攒批制约，`I_a`/`T_d` 目前辨不出来**。
 - 📌 **专题文档：`docs/CONTACT_PHASE_SIM2REAL.md`**（2026-09-29）—— 开源框架（legged_gym / Isaac Lab / unitree_rl_{gym,mjlab} / walk-these-ways / HIM / DreamWaQ / RMA / Cheetah-Software / OCS2 / Quad-SDK / ANYmal-W / Go2-W / CTBC / Wheel-Legged-Gym）在**触地接触检测、相位检测、sim2real gap 补偿**上的代码级做法，以及本项目分阶段落地建议。
 - 现状：**本项目没有任何触地/接触检测代码**（全仓 grep 仅命中"腿悬空不触地"之类注释）。相位为**开环** `gait_phase`（8 维分组 sin/cos）。
 - 可用的接触信号条件：**16 路关节力矩反馈（含 4 轮，500 Hz）** + 腿 FK + 轮子连续接地。**缺**：足端/轮端力传感器、质量与惯量模型（`LINK_DYNAMICS` 全 0、`BODY_MASS=0`）、`leg_kinematics.h` 的**雅可比**（需新增）。
@@ -98,7 +139,7 @@
 - ⚠️ 不要做**接触触发的相位重置**：轮足无清晰 GRF 上升沿，有噪时可能永不重置（ANYmal 的 `GaitAdaptation` 也只做"提前触地"一种）。
 
 ## 示例（demo）与运行方式
-- 示例总数 **43**，编号 **17~60**（编号不连续；1~16 已清理，**Example55 从未实现，2026-09-29 删除其声明与注释调用**；**58/59/60 为 2026-09-29 新增**）。
+- 示例总数 **45**，编号 **17~62**（编号不连续；1~16 已清理，**Example55 从未实现、2026-09-29 删除其声明**；58/59/60 为 2026-09-29 新增，**61 为 10-02、62 为 10-06** 新增）。
 - 分发机制：改 `src/app/main.cpp` 的注释 + 重新编译，**无命令行参数、无注册表**。
 - **当前激活 = `Example37_RLTeleopControl`**（`main.cpp` 结尾唯一未注释的调用）。
 
@@ -110,8 +151,8 @@
   - **Example58 `TorqueChannelCheck`**：力矩通道校验（零偏/增益/符号/线性度）。`kp=kd=0 ⇒ τ=τ_ff`，逐电机 `0→+T1→+T2→0→−T1→−T2→0`；轮子默认跳过（会转起来）。落盘 `log/sysid/torque_check_*.csv`。
   - **Example59 `GravityMassIdentify`**：重力矩系数 `G_j = m·g·d` 与质量-质心。单关节小幅慢扫 14 点 → 对 `[sinθ, cosθ, 1]` 最小二乘 ⇒ `G_j = √(a²+b²)`（与角度零点约定无关）；配合称重反推 `d`、配合 Ex47 的 `J` 得 `I_c = J − m·d²`；打印建议的 `LINK_DYNAMICS`/`BODY_MASS`。落盘 `log/sysid/gravity_summary_*.csv`。
 - ⚠️ 分工：`J/B/f_c/K_g` 由 **Example47** 辨识、腿摩擦由 **Example54** 辨识 —— 58/59 **不重复**，只补 Ex47 给不出的"大范围重力矩幅值"与"质量/质心"。
-- 文件分工：`ex_basic.cpp`（17~23，7 个）、`ex_diag.cpp`（24, 26~29, 33, 34, 39~50, 54, 57，21 个）、`ex_rl.cpp`（25, 30~32, 35~38, 51~53, 56，12 个）、**`ex_sysid.cpp`（58~59，2 个）**、**`ex_probe.cpp`（60，1 个）** = 共 **43 个**。
-- 关键示例：Ex25 完整 RL + 手柄；Ex30 离线链路回归（不碰 CAN）；Ex34 轮子方向核对；Ex35 轮摩擦前馈标定（历史）；Ex36 RL 站立循环；**Ex37 RL 遥操作（当前激活）**；Ex38 动作延迟辨识；Ex47 整狗 chirp 辨识；Ex49 轮 SPEED 环 kvp 扫描；Ex51 站立→趴下；**Ex58 力矩通道校验**；**Ex59 重力矩/质量-质心辨识**；Ex54 吊装摩擦辨识；Ex56 固定 yaw 遥测落盘；Ex57 单腿零位对照（验证 CONV_A/B）。
+- 文件分工：`ex_basic.cpp`（17~23，7 个）、`ex_diag.cpp`（24, 26~29, 33, 34, 39~50, 54, 57，21 个）、`ex_rl.cpp`（25, 30~32, 35~38, 51~53, 56, **61**，13 个）、**`ex_sysid.cpp`（58~59，2 个）**、**`ex_probe.cpp`（60, 62，2 个）** = 共 **45 个**。
+- 关键示例：Ex25 完整 RL + 手柄；Ex30 离线链路回归（不碰 CAN，**同时校验三套权重**）；Ex34 轮子方向核对；Ex35 轮摩擦前馈标定（历史）；Ex36 RL 站立循环；**Ex37 RL 遥操作（当前激活，强制 5350）**；Ex38 动作延迟辨识；Ex47 整狗 chirp 辨识；Ex49 轮 SPEED 环 kvp 扫描；Ex51 站立→趴下；**Ex58 力矩通道校验**；**Ex59 重力矩/质量-质心辨识**；Ex54 吊装摩擦辨识；Ex56 固定 yaw 遥测落盘；Ex57 单腿零位对照（验证 CONV_A/B）；**Ex61 站立/原地转向遥操作（强制 10000）**；**Ex62 PACE 式全关节同时 chirp 采集（400 Hz，写 `log/pace/`）**。
 - `examples_common` 只有 4 个 helper：`RawTerminal`、`poll_key`、`g_rl_stop`+`rl_signal_handler`、`EnableRlFrictionFF/DisableRlFrictionFF`。
 - ⚠️ 安全现状（2026-09-29 脚本复核）：42 个示例中 **29 个会使能电机**（脚本按函数体内直接调 `EnableMotor`/`PreEnableZeroTorque` 统计为 27 个；Ex58/59 经公共 helper `init_zero_torque()` 使能），其中 **13 个装了 `SIGINT` 急停** —— Ex25/34/35/36/37/38/51/52/53/54/56/**58/59**；其余 **16 个**（Ex18/19/20/21/22/23/29/32/41/44/45/46/47/48/49/57）会使能但没有软急停，运行前须留安全距离、可随时断电。
 
@@ -143,7 +184,7 @@
   **C++ 侧 Ex30 离线回归 `mlp_forward(REF_OBS)` vs `REF_ACTION` 最大绝对误差 4.29e-6（通过）**。
 - 训练命令范围（standturn）：`wz ∈ ±1.0`（"turn [0,0,wz] commands only"，见 standturn 实验的 notes），
   `vx` 不在分布内 ⇒ **新示例把 `mcfg.cmd_bias_vx` 设为 0**（Ex37 的 `-0.05` 是给前进策略抵轮子偏置的）。
-- 新示例 **Example61_RLStandTurnTeleop**（`ex_rl.cpp`，main.cpp 当前激活；**运行时强制变体 1**）：
+- 新示例 **Example61_RLStandTurnTeleop**（`ex_rl.cpp`；运行时**强制变体 1**；⚠️ main.cpp **当前激活的是 Example37**，不是它）：
   右摇杆水平=原地转向（死区内=精确 `[0,0,0]`=站立）、A=强制站立、B/START=优雅趴下、q=退出（Ctrl+C 硬急停）、
   **手柄 Y=跑标准对比序列**（站立 5s → 左转 8s → 站立 3s → 右转 8s → 站立 3s，上升沿触发）、推摇杆=中止序列回手动、键盘 x=中止序列；
   默认开 500 Hz 统一数据集录制（`cmd_wz` 列即为命令串，离线可直接按命令分段对齐 sim/real）。
@@ -170,7 +211,35 @@
 - 自测：`/tmp/test_dataset`（合成 3000 行）→ 188 列、行数一致、`t_ms` 单调、0 丢弃，全部通过。
 - 详见 `docs/SIM2REAL_DATA_FEEDBACK.md`（§7 是**真机测试清单 T0~T8**）。
 
-## 其他事实
+## 反馈链路：CAN 回帧被攒成 ~100 ms 一批（🚩 2026-10-08 新发现，**未解决**）
+
+- **现象**：`MotorManager::GetStatus()` 的位置在两次刷新之间**冻住**，控制环实际只看到 **~10 Hz**
+  的位置反馈。实测（2026-10-08 PACE 采集 `log/pace/chirp_20261008_205728.csv`）：**8000 拍里只有 387 拍**
+  有任何关节发生变化，更新间隔中位数 **96.8 ms**，且 12 个关节**同时**跳变（阶梯步长 0.03~0.04 rad，
+  是 16-bit LSB 的 80~110 倍 ⇒ 不是量化误差）。
+- **证据链**：`log/recv_*.csv` 里 `raw_pos` 每簇 35~50 帧、**簇间 99~101 ms**，同簇内多帧共享同一个
+  `wall_ms`（一次性排空积压）；自 **2026-09-04**（最早的 recv 日志）起、跨所有示例与负载，周期都钉在
+  99~101 ms。500 Hz 数据集（`log/dataset_*.csv`）的 `m_pos/m_vel` 游程同样是 49 拍 = 98 ms。
+- **根因已定位到厂商栈**：`lib/damiao_sdk/linux/x86_64/libdm_device.so` 的
+  `can_bus_box::usb_handle_thread_func()` 把 `libusb_handle_events_timeout_completed()` 的等待超时
+  **写死成 100 ms** —— `.rodata@0x151d8 = timeval{0,100000}`，**全库仅此一处 100000**；反汇编
+  `dba0: movdqa 0x151d0 → dbbd: call libusb_handle_events_timeout_completed`。该 SDK **不提供**任何
+  轮询/超时可调项（`dmcan.h` 全是 `dmcan_device_*`）。
+- **对策 A（已实现，真机实测未生效）**：`tool/libusb_fastpoll.c` LD_PRELOAD 垫片把该超时压到
+  `DMCAN_POLL_US`（默认 1 ms；0 = 关闭），`run.sh` 自动加载，`main.cpp` 启动时自检垫片是否真的在。
+  硬件无关验证：不加载 100.157 ms / 加载 1.193 ms / 5000µs→5.089 ms / 0→100.156 ms。
+  **但 2026-10-08 真机三次采集的突发间隔仍是 99~100 ms**（`meas` 20.1 Hz，垫片前 17.8 Hz）
+  ⇒ 攒批在 libusb **之下**（SDK 内部派发线程或设备侧），垫片不够。
+- **诊断位已就位**：`DMCAN_RXDIAG=1` 打印 `onRecv` 到达间隔直方图 —— 峰值在 **≈2 ms** 说明厂商栈投递
+  正常、瓶颈在我们自己的消费路径（16 核负载 1，可能性低）；在 **≈100 ms** 则只能**换传输层**。
+- **对策 B（未做）**：新写 `SocketCanTransport`（内核 socketcan，逐帧投递 + 内核时间戳），
+  `CanTransport` 接口现成，参照 `src/transport/usb2can_transport.cpp` 约 150 行。
+- **影响面（都基于同一份反馈，结论需复核）**：`docs/ACTION_DELAY_MEASURE.md` 的"≈24 ms 纯传输延迟"
+  （4~6 Hz 已贴 Nyquist 5 Hz）、Ex47 的 `J/B`（当时归因速度反馈延迟）、Ex54 摩擦、Ex58/59 力矩与重力辨识、
+  以及 **PACE 辨识**（400 Hz chirp 被记成 10 Hz 阶梯 ⇒ 5~10 Hz 激励段不可观测，`I_a`/`T_d` 辨不出来，
+  只剩 `d`/`τ_f`/`q̃_b` 等低频项可信）。
+- 附带（未证实）：`Usb2CanTransport::send()` 在持全局 `m_mutex` 状态下做 USB 调用（~8000 次/s），
+  `onRecv` 每帧取锁两次 —— 属可优化项。
 - 手柄：左摇杆上推=+vx 前进、右摇杆左推=+wz 左转(CCW)，vy 恒 0，量程 vx±1.0 m/s、wz±1.0 rad/s；B 键急停；Ctrl+C 急停。
 - 站立前冲补偿 `CMD_BIAS_VX = −0.05`（Ex36/Ex37/Ex51/Ex53 + `MotionController::cmd_bias_vx`）：抵消策略 wheel action 正向偏置。⚠️ 其绝对值必须 < 训练 `turn_lin_threshold`(0.1)，否则退出纯 yaw gate 变扭腿。
 - IMU（维特 HWT606，`/dev/ttyUSB0`，安装 `Z_DOWN_X`，115200）：`base_ang_vel`=gyro（机体系 rad/s）；`projected_gravity`=world2self(quat,[0,0,−1])。放平判读 pgr≈(0,0,−1)；右倾→pgr.y 变负；开机需机身水平（水平校准基准）。
@@ -187,6 +256,16 @@
 - 09-07 `0544f6c` Ex37 遥操作行走稳定（设为激活示例）；`0ee431f` gait_phase 交错→分组（对齐训练）。
 - 09-11 `3039927` iteration_3500；09-12 `33b672e` iteration_4350；09-15 `b61216e` 回退到 iteration_2100；09-17 `0d0257c` iteration_5350；09-22 `98ef8ea` iteration_9754（当前）。
 - 09-13 `bfadc76` 新增 Ex57 单腿零位对照；`6546688` 真机参数调整（腿重力前馈清零 / 轮软限位 30Nm / Ex37 量程 0.7）；`88a64e1` sim2sim `--wheel_gate`。
+
+## 2026-10 变更要点
+- 10-02 `65d7a5e` 接入 standstep_s4/iteration_10000（站立/原地转向）+ Example61 + 策略变体开关；`ebafe11` 对比序列改由手柄 Y 键触发（上升沿检测）。
+- 10-04~05 PACE 调研与方案：`e27b19f` 开源框架 sim2real gap 检索、`a115bbe` 复现方案、`a4c8dc1`/`f4643ac` 回填论文未给项、`c565295`/`15c4a3e` Phase 0 双仿真器协议与可比性核对、`44558fc` 资产同源锁定 + P0 阻塞（编译模型丢 26.6 kg）、`f47e73b`/`a8af6b9` Isaac USD 实测归因。
+- 10-06 `6329cd2` Phase 0 正式拟合完成；`84e1a9b` Example62 真机采集 + 流程文档；`69da793` 修坐标系 bug（下发 `urdf_to_status` / 记录 `status_to_urdf`）；`cc1318e` 轮子改不使能 + 胶带物理固定。
+- 10-06 `56d89a6`（原 `stable`）**运行时三变体**（9754/10000/5350 同时编译）+ 默认 **5350 演示/稳定策略** + Example37 强制 5350 + 恢复 `weights/iteration_5350.pkl` + `ThreadManager` 绝对 deadline 网格 + `LoopPacer` + Ex61 B 键改优雅趴下。见 `STABLE.md`。
+- 10-07 `a96a4d3` armature 改逐关节实测基线；`6aca882` 修正远端质量并消除 sim2sim 与训练模型的连杆质量不一致。
+- 10-08 `debd015`→`18d0210` 重算 hip/thigh/calf 惯量后又**回退髋连杆改动**（原 CAD 值正确，HFE 电机在 HAA 轴上）。
+- 10-08 **反馈链路 100 ms 攒批定位**（`e4f9ad4`：垫片 + 自检 + SCHED_FIFO 告警 + RXDIAG 探针）——见 §反馈链路；同日 Example62 起立改线性插值 + 静置 5 s、PD 取部署值 250/4、400 Hz deadline 等距节拍（`4dad2f7`，真机 −0.003%）、新增 `tool/pace_qc.py`。
+- 10-12 激活示例切到 Example37（`37ad2d2`），随后 `ca9486e` **合并 `stable` 进 `develop`**（冲突仅 `main.cpp`，Ex30 三套权重回归 1.67e-6 / 4.29e-6 / 2.38e-6 全通过）。
 
 ## 本次审查修复（2026-09-29）
 1. `dogurdf_sim2sim_deploy/run_sim2sim.sh`：默认 checkpoint → `../weights/iteration_9754.pkl`（与真机同权重），支持 `SIM2SIM_CKPT` 覆盖。
@@ -205,3 +284,6 @@
 - 零位偏移唯一真值来源是 `MOTOR_CALIBRATION[].pos_offset`；`robot_calibration.h` 直接引用它，勿再手抄字面量。
 - 训练权威 = `RL_Train/code`（非 `dogurdf_sim2sim_deploy`，后者是历史快照）。
 - `RobotDog` 类仍未实现；`include/runtime` 的 `state_calc`/`monitor` 预留线程至今未实现；`RobotApp` 当前无调用者（示例各自建局部 `ThreadManager`）。
+- ⚠️ **sim2sim 与真机现在不是同一个策略**：`run_sim2sim.sh` 默认仍是 `iteration_9754`，而真机 Ex37 用 **5350** ⇒ 对比必须 `SIM2SIM_CKPT=../weights/iteration_5350.pkl`，否则结论无效。
+- ⚠️ **SCHED_FIFO 从未生效**（本机 `ulimit -r`=0）：500 Hz 收发线程一直跑在 CFS 上。要用 `limits.conf` 的 `rtprio`；**别用 setcap**（置 `AT_SECURE` 会让 `LD_PRELOAD` 垫片失效）。
+- ⚠️ **两处"文档 vs 代码"的悬案仍保持原值、仅标注**：`JOINT_IMPEDANCE[..][THIGH].tau_ff`（代码 `+5.0f` / 注释与 `6546688` 写 `−5`）、`UPPER_LIMIT_THETA1_DEG`（代码 `15.0f` / 旧注释 `+30°`）——上真机前人工确认。

@@ -6,7 +6,7 @@
 >
 > 🆕 **2026-10-04 更新**：两套策略权重现在**同时编译进程序**，示例在运行时选择
 > （`include/strategy/policy_set.h`：`rl::SetPolicyVariant()` / `rl::CurrentPolicy()`）：
-> - **Example37（可前进遥操作）→ smalllift_s45 / iteration_9754**
+> - **Example37（可前进遥操作）→ h52_s45_v4 / iteration_5350**（2026-10-06 起，运行时强制、与全局默认无关）
 > - **Example61（站立/原地转向）→ standstep_s4 / iteration_10000**（只有 `[0,0,0]` 与 `[0,0,wz]`，不支持前进）
 >
 > `include/strategy/policy_variant.h` 的 `POLICY_VARIANT` 现在只是**默认变体**（未显式选择的示例才用它）。

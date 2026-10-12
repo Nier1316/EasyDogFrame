@@ -202,3 +202,71 @@
 ### Example61 按键
 - `B` 键由「硬急停」改为**与 Example37 一致的优雅趴下**（`do_lie_down`），并把判断提升到每拍执行，
   使**标准对比序列进行中也能按 B/START 安全退出**；`Ctrl+C` 仍为硬急停。
+
+---
+
+## 2026-10-04 ~ 10-08 | PACE 复现 Phase 0 + 模型参数修正 + 反馈链路定位（补记）
+
+> 这一段当时只写了提交信息、没进本文件，2026-10-12 整理时补记（详见 `memory/FACT.md` 对应章节）。
+
+### PACE 复现（新增专题，`docs/PACE_*.md` + `paper_2509.06342/`）
+- 方法依据 arXiv 2509.06342（IJRR 2026）：辨识 `p = [I_a, d, τ_f, q̃_b, T_d]ᵀ ∈ R^{4n+1}`（12 腿 = **49 参**），
+  损失 = 时均关节位置平方误差，激励 = 固定基座 + 悬空 + **位置 chirp 20 s**，优化 = CMA-ES / 4096 并行回放。
+- **Phase 0 完成**：Isaac Lab 2.3.2 vs mjlab 1.2.0 双仿真器对照；配置层 49 维上下界逐字一致、
+  资产同源（URDF 字节相同）；两侧各自拟合自产数据、**五个真值全部还原**（误差 ≤0.33%）——
+  但属自洽拟合，只证明实现正确、不能区分仿真器。
+- **资产归因（解掉 P0 阻塞）**：上游 URDF 57.0279 kg / 96 links，MuJoCo 编译后仅 30.4490 kg（基座掉 26.58 kg），
+  Isaac USD 实测 51.6357 kg / 17 bodies；**运动链质量逐项吻合**（THIGH 5.1322 相同、SHANK+FOOT 焊合等价、HIP 在场），
+  差异全在被焊死的基座上 ⇒ 对固定基座辨识等价；浮动基座 RL 训练前**必须修**。
+- **真机侧**：新增 `Example62_PaceChirpCollect`（12 腿同时位置 chirp，0.1→10 Hz / 20 s / 400 Hz）
+  + `tool/pace_export_dataset.py` + `docs/PACE_REAL_ROBOT_PROCEDURE.md`（前置条件 / 固件补偿寄存器 / 验收判据）。
+  中途修了一个真 bug：下发必须 `urdf_to_status`、记录必须 `status_to_urdf`（否则 thigh 差 ~78°）。
+  轮子改为**不使能 + 胶带物理固定**（PACE 无轮式平台，轮关节无重力负载）。
+
+### 模型与动力学参数（`dogurdf.xml`）
+- `armature` 由无依据的统一 `0.01` 改为**逐关节物理基线** = 规格书转子惯量 × 减速比²：
+  hip/thigh **0.0289**、calf **0.1575**、wheel **0.00396**（关节侧折算值；固件 `0x45` 是电机侧，差 N²）。
+- 远端质量与 hip/thigh/calf 惯量重算后，**髋连杆改动被回退**（结论：HFE 电机装在 HAA 轴上、原 CAD 值正确）。
+- 现状：总质量 **57.94 kg**（真机 57.46，+0.8%）；sim2sim 与训练模型的连杆质量已对齐。
+
+### 反馈链路 100 ms 攒批（新发现，见 `memory/FACT.md` §反馈链路）
+- 用 `log/pace/` 的 10 次采集查明：`GetStatus()` 的位置更新间隔中位数 **96.8 ms**，
+  8000 拍里只有 **387 拍**有变化 ⇒ 控制环实际只看到 **~10 Hz** 的位置反馈。
+- 根因定位到厂商 SDK：`libdm_device.so` 的 `usb_handle_thread_func()` 把 libusb 事件收割超时写死 **100 ms**
+  （`.rodata@0x151d8`，全库仅此一处），且不提供任何可调项。
+
+---
+
+## 2026-10-12 | 反馈链路诊断落地 + Example62 采集修复 + 合并 stable
+
+### 新增：反馈链路诊断工具链
+- `tool/libusb_fastpoll.c`（新）：LD_PRELOAD 垫片，把上述 100 ms 事件收割超时压到 `DMCAN_POLL_US`（默认 1 ms，0 = 关闭）。
+  CMake 目标 `usb_fastpoll` → `bin/libusb_fastpoll.so`；`run.sh` 自动接线；不加载即原行为。
+  硬件无关实测：不加载 100.157 ms / 加载 1.193 ms / `DMCAN_POLL_US=5000` → 5.089 ms / `=0` → 100.156 ms。
+- `src/app/main.cpp`：启动时**自检垫片是否真的加载**（漏写 `LD_PRELOAD`、被 `setcap` 的 `AT_SECURE` 忽略、
+  被 `DMCAN_POLL_US=0` 关闭——这三种情况从外部完全看不出来）。
+- `src/transport/usb2can_transport.cpp`：新增 `DMCAN_RXDIAG=1` 探针，打印 `onRecv` 到达间隔直方图，
+  用于判定攒批发生在厂商栈内部还是我们自己的消费路径。
+- `src/runtime/thread_manager.cpp`：`pthread_setschedparam` 失败**不再静默降级**，打印一次告警并说明开启方式。
+  （实测本机 `ulimit -r` = 0 ⇒ **SCHED_FIFO 从未生效**，500 Hz 收发线程一直跑在 CFS 上；
+  ⚠️ 开启请用 `limits.conf` 的 `rtprio`，**不要用 `setcap`** —— 那会让 `LD_PRELOAD` 失效、垫片白做。）
+- ⚠️ **真机实测结论**：垫片加载后突发间隔**仍是 99~100 ms**（`meas` 20.1 Hz，垫片前 17.8 Hz）
+  ⇒ 攒批在 libusb 之下，垫片不够；下一步按 `DMCAN_RXDIAG` 直方图决定是否换 socketcan 传输层。
+
+### Example62 采集修复
+- **PD 增益** `50/1` → `rl::LEG_KP/rl::LEG_KD`（= **250/4**，与真机部署同源）：PACE 硬规则是"辨识与部署同一套增益"。
+- **起立方式**：原为"目标直接等于 `DEFAULT_POSE`"（一个 tick 到位，kp=250 下变成猛拽）⇒ 改为
+  读当前位 → **线性插值 10 s**（对齐 `Example47`）→ **静置 5 s** → 取实测角作 chirp 偏置；新增该阶段越限保护。
+- **节拍**：删除 `usleep(1e6/HZ)`（= 睡 2.5 ms + 循环体 0.22 ms），改绝对 deadline 等距调度。
+  真机实测 **+8.6~8.9% → −0.003%**（20.00 s 整 8000 拍），`pace_export_dataset.py` 的时间基判据由"全部拒收"变为通过。
+- 新增 `tool/pace_qc.py`：一条命令出体检表（拍数/周期偏差/最大单拍/`meas` 刷新率/各关节最长保持/
+  无反馈通道/末行截断），`--compare A B` 对比两次运行，退出码 0 = 全过。
+
+### 合并 stable
+- `ca9486e` 把 `stable`（运行时三变体 + 5350 演示策略 + 节拍修正）合并进 `develop`。
+  冲突仅 `main.cpp`（示例激活 + 顶部注释），其余（`CMakeLists.txt`/`thread_manager.cpp`/`SIM2REAL_DATA_FEEDBACK.md`）自动合并且**双方改动均保留**。
+- 合并后验证：编译零告警；二进制内**三套权重俱在**；`Example30` 离线回归
+  **9754 = 1.67e-6 / 10000 = 4.29e-6 / 5350 = 2.38e-6 全通过**；`weights/iteration_5350.pkl` 与 git 历史 `0d0257c` **逐字节一致**。
+- 激活示例切到 **Example37**（`37ad2d2`），运行时会自报 `[策略] h52_s45_v4/iteration_5350（可前进）`。
+- ⚠️ 遗留：`run_sim2sim.sh` 默认 checkpoint 仍是 `iteration_9754`，与真机（5350）不一致 ⇒
+  对比须 `SIM2SIM_CKPT=../weights/iteration_5350.pkl`。

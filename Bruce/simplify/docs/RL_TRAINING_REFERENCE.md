@@ -9,7 +9,7 @@
 > - 真机**轮子不再走上位机闭环**，已改为**固件 SPEED 速度环**（`SendSpeed(vel, kvp, ki)`，`WHEEL_KVP=3.0/WHEEL_KVI=0.05`，固件内部 1kHz）。§1/§4.1/§5 中"上位机 500Hz 闭环/阻抗扭矩控轮"的写法见各节订正。
 > - 轮速**软限位已失效**（`WHEEL_SOFT_LIMIT_*` / `rl::wheel_torque()` 无调用者）；现由 `MotorManager` 的 `WHEEL_ESTOP_*`（15 rad/s 自动急停）承担。
 > - 真机扭矩命令限幅现为 **Hip 120 / Thigh 120 / Calf 200 / Wheel 52 N·m**（`TORQUE_CMD_LIMIT`），§6.3 的"±150"已作废。
-> - 当前部署权重 `weights/iteration_9754.pkl`，`main.cpp` 激活 **Example37_RLTeleopControl**（示例编号 17~57，共 40 个；`Example55` 从未实现已移除）。
+> - 当前部署权重 `weights/iteration_5350.pkl`（2026-10-06 起），`main.cpp` 激活 **Example37_RLTeleopControl**（示例编号 17~57，共 40 个；`Example55` 从未实现已移除）。
 
 ---
 
@@ -183,7 +183,8 @@ tau_ff（前馈）= 抵消重力/摩擦（消稳态误差）
 | `src/runtime/motor_io.cpp` | motor_receive/send 线程（2ms，优先级 80） |
 | `src/app/examples/ex_diag.cpp` | Example47 整狗 chirp 辨识、Example54 吊装摩擦辨识 |
 | `docs/ACTION_DELAY_MEASURE.md` | 真机传输延迟实测（建议 action_delay_steps=1） |
-| `weights/iteration_9754.pkl` | 当前部署权重（`tool/export_policy.py` 默认输入） |
+| `weights/iteration_5350.pkl` | 当前部署权重（2026-10-06 起；Ex37 运行时强制，可前进） |
+| `weights/iteration_9754.pkl` | 历史权重（`tool/export_policy.py` 默认输入、sim2sim 默认 checkpoint） |
 
 ---
 

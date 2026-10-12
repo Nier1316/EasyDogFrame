@@ -36,7 +36,7 @@ cd .. && ./run.sh
 - **当前激活的示例 = `Example61_RLStandTurnTeleop`**（站立/原地转向 手柄遥操作）。
 - **两套策略权重同时编译进程序，由示例在运行时选择**（`include/strategy/policy_set.h`）：
   - `Example61` 强制 **standstep_s4/iteration_10000**（**只有站立与原地转向，不支持前进**）；
-  - `Example37` 强制 **smalllift_s45/iteration_9754**（可前进）。
+  - `Example37` 强制 **h52_s45_v4/iteration_5350**（可前进 + 转向；2026-10-06 起，宽摩擦 DR / 地形适应）。
   `include/strategy/policy_variant.h` 的 `POLICY_VARIANT` 只决定**未显式选择的示例**的默认变体，
   **换策略不再需要重新编译**。
 - 本仓库**没有命令行参数分发**：一次只能跑一个示例。
@@ -234,6 +234,16 @@ python3 tool/compare_sim2real.py <sim_record.csv> log/rl_*.csv log/recv_*.csv   
 11. `rl_controller.h` 的顺序置换已更名：新名 `POLICY_TO_CAN`（policy→can）/ `CAN_TO_POLICY`（can→policy）；
     旧名 `POLICY_TO_MJX`/`MJX_TO_POLICY` **字面含义与实际语义相反**（历史坑），仍作为别名保留。
     **新写代码一定用新名**，别按旧名字面意思猜。
+12. **⚠️ CAN 回帧被攒成 ~100 ms 一批（2026-10-08 查明，未解决）**：达妙 SDK 把 libusb 事件收割
+    超时写死 100 ms ⇒ `GetStatus()` 的位置/速度实际只有 **~10 Hz** 刷新率（2026-10-08 的 PACE 采集里
+    8000 拍仅 387 拍发生变化）。**所有基于关节反馈的量化结论都受影响**（力矩/延迟/辨识/接触力）。
+    用 `./run.sh` 启动会自动 `LD_PRELOAD` 垫片（`bin/libusb_fastpoll.so`）试图修正，
+    **启动第一行会自报垫片是否生效**（✅/🔴）；想抓现场证据用 `DMCAN_RXDIAG=1 ./run.sh`，
+    退出时会打印 `onRecv` 到达间隔直方图（≈100 ms 峰值 ⇒ 攒批在厂商栈/设备侧）。
+13. **SCHED_FIFO 从未生效**（本机 `ulimit -r` = 0）：500 Hz 收发线程实际跑在 CFS 上，程序启动会打告警。
+    要开启请用 `/etc/security/limits.conf` 的 `rtprio`；**不要用 `setcap`** —— file capability 会让内核置
+    `AT_SECURE`，动态链接器随之**忽略 `LD_PRELOAD`**，第 12 条的垫片就白做了。
+14. **别用 `./bin/can_motor_app` 直接跑**：只有 `./run.sh` 会加载第 12 条的垫片（其余行为完全一样）。
 
 ---
 
