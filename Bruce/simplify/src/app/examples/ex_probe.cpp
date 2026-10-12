@@ -17,6 +17,7 @@
 #include <cstring>
 #include <ctime>
 #include <chrono>
+#include <thread>   // std::this_thread::sleep_until（主循环 deadline 等距调度）
 #include <sys/stat.h>
 #include <cmath>
 #include <string>
@@ -302,8 +303,15 @@ void Example62_PaceChirpCollect() {
     constexpr float F0_HZ      = 0.1f;     // 起始频率
     constexpr float F1_HZ      = 10.0f;    // 终止频率（PACE 官方例程上限）
     constexpr float AMP_RAD    = 0.06f;    // chirp 幅值（保守；现场按机械余量确认）
-    constexpr float KP         = 50.0f;    // ⚠ 论文明确要求**低增益**（ANYmal 用 85/0.6；Go2W 部署用 50/1.0）
-    constexpr float KD         = 1.0f;
+    // ---- PD 增益：**必须与真机部署腿 PD 逐字相同**（PACE §2.1 / Eq.7：增益参与闭环，与动力学
+    //   联合优化会不唯一，故禁止"辨识一套、部署另一套"）。
+    //   2026-10-08 决定：由 50/1（借 Go2W 的部署值）改为**直接取本工程部署值** rl::LEG_KP / rl::LEG_KD。
+    //   ⚠ 权衡（两者不可兼得，此处以"与部署一致"为准）：论文自己的部署增益本就偏低（ANYmal 85/0.6），
+    //     低增益使闭环极点落在 0.1~10 Hz 激励带宽内 ⇒ 执行器动态更可观测；取 250/4 后闭环更硬、
+    //     带宽更高，高频段可观测性会下降，换来的是硬规则成立 + 位置跟踪显著变好（50/1 时实测跟踪失真）。
+    //     若日后要回到低增益，必须**同时**改部署 PD，不可只改这里。
+    constexpr float KP         = rl::LEG_KP;   // = 250，单一真值源，勿写字面量
+    constexpr float KD         = rl::LEG_KD;   // = 4
     constexpr int   HZ         = 400;      // 辨识采样/控制频率（PACE 整机日志用 400 Hz）
     constexpr float POS_LIMIT  = 2.5f;     // status 坐标的硬保护（thigh 在 DEFAULT_POSE 就有 ~-1.16）
     constexpr float DEV_LIMIT  = 0.5f;     // 偏离 chirp 偏置超过该值即中止（真正有意义的保护）
@@ -318,7 +326,8 @@ void Example62_PaceChirpCollect() {
     printf("   2) 机身尽量水平；**轮子与腿全部离地**、无任何接触（含腿间）\n");
     printf("   3) **轮子必须物理固定**（胶带/夹具按住）；本示例**不使能**轮电机 ⇒ 轮子是被冻结的刚性件\n");
     printf("   4) 固件补偿开关（cogging/摩擦补偿）在整个辨识与后续部署期间**保持一致**\n");
-    printf("   5) kp/kd 与后续部署**完全相同**（PACE 禁止把 PD 增益与动力学联合优化）\n");
+    printf("   5) kp/kd 取**部署值** %.0f/%.1f（rl::LEG_KP/LEG_KD；PACE 禁止把 PD 增益与动力学联合优化）\n",
+           KP, KD);
     printf("准备好后按回车开始（Ctrl+C 取消）: ");
     fflush(stdout);
     { int c; while ((c = getchar()) != '\n' && c != EOF) {} }
@@ -334,35 +343,94 @@ void Example62_PaceChirpCollect() {
     signal(SIGINT, rl_signal_handler);
     g_rl_stop = 0;
 
-    // ---------- 初始姿态：用 DEFAULT_POSE 作为 chirp 的偏置（= PACE 的 trajectory_bias）----------
-    // 注意：不是"起立"，本示例假设狗已被固定、腿悬空；直接把腿 PD 拉到 DEFAULT_POSE 附近。
-    float base[12];
-    for (int leg = 0; leg < 4; leg++)
-        for (int j = 0; j < 3; j++) base[leg * 3 + j] = rl::DEFAULT_POSE[leg * 3 + j];
+    // ---------- 初始姿态：读当前姿态 →【线性插值】缓慢摆到 DEFAULT_POSE → 静置 → 取 bias ----------
+    // 2026-10-08 改：原实现令目标**直接等于** DEFAULT_POSE（一个控制 tick 内到位），kp=50 时表现为
+    //   "被拉过去"，kp 提到部署值 250 后会变成**猛拽**（快速激烈）。现改为与 **Example47 相同**的做法：
+    //   读当前位 → 按固定时长线性插值 → 静置稳定 → 再进录制循环。
+    // 注意：本示例假设狗已被刚性固定、腿悬空，插值只是把腿**缓慢摆到** DEFAULT_POSE（不是"起立"）。
+    constexpr float APPROACH_S  = 10.0f;   // 插值时长（对齐 Example47 的 500 帧 @50 Hz）
+    constexpr float SETTLE_S    = 5.0f;    // 到位后静置稳定时间（之后才取偏置 = PACE trajectory_bias）
+    constexpr int   APPROACH_HZ = 50;      // 插值/静置的刷新率
     // ⚠️ 坐标约定（2026-10-05 修的一个真 bug）：
     //   `rl::DEFAULT_POSE` / 观测 / 动作 / 仿真 都在 **URDF 约定**；
     //   而 `SendImpedance` 收的是 **GetStatus(status) 约定**，两者差一个
     //   `URDF = CONV_A·status + CONV_B`（thigh 还要**反号**且差 ~0.96 rad、calf 差 ~1.28 rad）。
     //   所以：**下发前必须 urdf_to_status，记录时必须 status_to_urdf**，
     //   否则一来拉到的姿态完全不对（thigh 会差 ~78°），二来导出的 .pt 不在仿真坐标系里。
-    printf("\n[1/3] 把 12 个腿关节 PD 拉到 DEFAULT_POSE（3 s）...\n");
-    for (int k = 0; k < 3 * HZ && !g_rl_stop; k++) {
-        for (int leg = 0; leg < 4; leg++)
-            for (int j = 0; j < 3; j++) {
-                const int i = leg * 3 + j;
-                mm.SendImpedance(leg, j + 1, rl::urdf_to_status(base[i], i), 0, KP, KD, 0);
-            }
-        usleep(1000000 / HZ);
-    }
+    float target_urdf[12], start_urdf[12], base[12];
     for (int leg = 0; leg < 4; leg++)
         for (int j = 0; j < 3; j++) {
             const int i = leg * 3 + j;
-            // 用实测（转回 URDF）作为 chirp 偏置，比标称值更稳
+            target_urdf[i] = rl::DEFAULT_POSE[i];
+            start_urdf[i]  = rl::status_to_urdf(mm.GetStatus(leg, j + 1).position, i);
+            base[i]        = target_urdf[i];   // 兜底：中途异常退出也不会用到未初始化值
+        }
+
+    printf("\n[1/4] 从当前姿态线性插值到 DEFAULT_POSE（%.0f s @%d Hz，kp/kd %.0f/%.1f）...\n",
+           APPROACH_S, APPROACH_HZ, KP, KD);
+    printf("      起始（URDF）: ");
+    for (int i = 0; i < 12; i++) printf("%+.3f ", start_urdf[i]);
+    printf("\n");
+
+    bool pose_bad = false;
+    const int AP_N = (int)(APPROACH_S * APPROACH_HZ);
+    for (int f = 0; f <= AP_N && !g_rl_stop; f++) {
+        const float t = (float)f / (float)AP_N;
+        for (int leg = 0; leg < 4; leg++)
+            for (int j = 0; j < 3; j++) {
+                const int i = leg * 3 + j;
+                const float q = start_urdf[i] + (target_urdf[i] - start_urdf[i]) * t;
+                mm.SendImpedance(leg, j + 1, rl::urdf_to_status(q, i), 0, KP, KD, 0);
+            }
+        // 越限保护：与 chirp 段同一判据（status 坐标）
+        for (int leg = 0; leg < 4 && !pose_bad; leg++)
+            for (int j = 0; j < 3; j++)
+                if (fabsf(mm.GetStatus(leg, j + 1).position) > POS_LIMIT) { pose_bad = true; break; }
+        if (pose_bad) { printf("\n[WARN] 插值中位置越限（>%.2f rad），中止\n", POS_LIMIT); break; }
+        if (f % (APPROACH_HZ * 2) == 0) printf("      插值 %3.0f%%\n", t * 100.0f);
+        usleep(1000000 / APPROACH_HZ);
+    }
+
+    if (!pose_bad && !g_rl_stop) {
+        printf("\n[2/4] 静置稳定 %.0f s（等关节收敛，之后才取 chirp 偏置）...\n", SETTLE_S);
+        const int SET_N = (int)(SETTLE_S * APPROACH_HZ);
+        for (int f = 0; f < SET_N && !g_rl_stop; f++) {
+            for (int leg = 0; leg < 4; leg++)
+                for (int j = 0; j < 3; j++) {
+                    const int i = leg * 3 + j;
+                    mm.SendImpedance(leg, j + 1, rl::urdf_to_status(target_urdf[i], i), 0, KP, KD, 0);
+                }
+            for (int leg = 0; leg < 4 && !pose_bad; leg++)
+                for (int j = 0; j < 3; j++)
+                    if (fabsf(mm.GetStatus(leg, j + 1).position) > POS_LIMIT) { pose_bad = true; break; }
+            if (pose_bad) { printf("\n[WARN] 静置中位置越限（>%.2f rad），中止\n", POS_LIMIT); break; }
+            usleep(1000000 / APPROACH_HZ);
+        }
+    }
+
+    // 偏置取【静置后实测值】（比标称值稳，也是 PACE 的 trajectory_bias 语义）
+    for (int leg = 0; leg < 4; leg++)
+        for (int j = 0; j < 3; j++) {
+            const int i = leg * 3 + j;
             base[i] = rl::status_to_urdf(mm.GetStatus(leg, j + 1).position, i);
         }
     printf("      偏置（URDF 坐标，实测 joint_order）: ");
     for (int i = 0; i < 12; i++) printf("%.3f ", base[i]);
     printf("\n");
+
+    // 起立/静置阶段异常 ⇒ 不进录制循环，直接卸载退出
+    if (pose_bad || g_rl_stop) {
+        printf("[WARN] 未进入录制循环（%s），立即卸载（腿 0 扭矩）并失能\n",
+               g_rl_stop ? "Ctrl+C" : "位置越限");
+        all_free(mm, /*wheels=*/false);
+        for (int cp = 0; cp < 4; cp++)
+            for (int mi = 1; mi <= 4; mi++) mm.DisableMotor(cp, mi);
+        signal(SIGINT, SIG_DFL);
+        tm.stop_thread("motor_receive");
+        tm.stop_thread("motor_send");
+        mm.Stop();
+        return;
+    }
 
     // ---------- 建 CSV ----------
     ::mkdir("log", 0755); ::mkdir("log/pace", 0755);
@@ -383,18 +451,42 @@ void Example62_PaceChirpCollect() {
         fprintf(fm, "source=Example62_PaceChirpCollect\n");
         fprintf(fm, "duration_s=%.3f\nf0_hz=%.3f\nf1_hz=%.3f\namp_rad=%.4f\n", DURATION_S, F0_HZ, F1_HZ, AMP_RAD);
         fprintf(fm, "kp=%.2f\nkd=%.2f\nrate_hz=%d\n", KP, KD, HZ);
+        fprintf(fm, "approach_s=%.1f\nsettle_s=%.1f\n", APPROACH_S, SETTLE_S);
         fprintf(fm, "joint_order=");
         for (int i = 0; i < 12; i++) fprintf(fm, "%s%s", jn[i], i < 11 ? "," : "");
         fprintf(fm, "\nnote=固定基座/离地/固件补偿开关 由操作者填写\n");
         fclose(fm);
     }
 
-    // ---------- 主循环：400 Hz 严格等距 ----------
-    printf("\n[2/3] 开始 chirp（%.0f s @ %d Hz）... Ctrl+C 中止\n", DURATION_S, HZ);
+    // ---------- 主循环：400 Hz 严格等距（绝对 deadline 调度）----------
+    // ⚠ 2026-10-08 修：原实现是每拍 `usleep(1000000 / HZ)`，即"睡 2.5 ms **再加**循环体耗时"，
+    //   实测周期 2.714~2.730 ms = **+8.6~8.9%**（10 次真机采集无一例外），被
+    //   tool/pace_export_dataset.py 的时间基校验（|偏差| < 1%、最大跳 < 3×周期）**全部拒收**。
+    //   现改为按锚点的**绝对时刻**排程：第 k 拍目标时刻 = anchor + k·(1e9/HZ) ns，
+    //   先 sleep_until 到该时刻再下发/记录 ⇒ t_actual_s 严格等距，与循环体耗时解耦。
+    printf("\n[3/4] 开始 chirp（%.0f s @ %d Hz，deadline 等距调度）... Ctrl+C 中止\n", DURATION_S, HZ);
     const auto t0 = std::chrono::steady_clock::now();
+    auto anchor = t0;                                  // 第 0 拍的理想时刻（落后过多时整体平移）
+    const std::chrono::nanoseconds period(1000000000LL / HZ);   // 400 Hz → 2.5 ms（整数纳秒，无累积误差）
     int written = 0; double sum_dt = 0; double max_dt = 0; int aborted = 0;
+    int resync = 0; double worst_late = 0.0;
     auto prev = t0;
     for (int k = 0; k < N && !g_rl_stop; k++) {
+        // 等到本拍的绝对时刻（在 sleep 上对齐，而不是"工作完再睡"，否则循环体耗时会累加成偏差）
+        {
+            const auto ideal = anchor + std::chrono::nanoseconds((long long)k * 1000000000LL / HZ);
+            const auto nw    = std::chrono::steady_clock::now();
+            if (nw > ideal + period * 3) {
+                // 落后超过 3 拍：不追赶（追赶会形成突发），把锚点整体后移让后续恢复等距。
+                // 本次采集的时间基已不合格（结尾汇总会告警），应重采。
+                const double late = std::chrono::duration<double>(nw - ideal).count();
+                if (late > worst_late) worst_late = late;
+                anchor += std::chrono::duration_cast<std::chrono::steady_clock::duration>(nw - ideal);
+                ++resync;
+            } else if (nw < ideal) {
+                std::this_thread::sleep_until(ideal);
+            }
+        }
         const float t = (float)k / HZ;                       // 理想等距时间
         const float ph = 2.0f * (float)M_PI *
                          (F0_HZ * t + (F1_HZ - F0_HZ) / (2.0f * DURATION_S) * t * t);
@@ -428,12 +520,11 @@ void Example62_PaceChirpCollect() {
         const double dt = std::chrono::duration<double>(now - prev).count();
         prev = now; sum_dt += dt; if (dt > max_dt) max_dt = dt;
         if (aborted) { printf("\n[WARN] 位置越限（>%.2f rad），中止\n", POS_LIMIT); break; }
-        usleep(1000000 / HZ);
     }
     fclose(f);
 
     // ---------- 收尾 ----------
-    printf("[3/3] 结束：回偏置姿态、失能\n");
+    printf("[4/4] 结束：回偏置姿态、失能\n");
     for (int k = 0; k < HZ && !g_rl_stop; k++) {
         for (int leg = 0; leg < 4; leg++)
             for (int j = 0; j < 3; j++) {
@@ -450,6 +541,11 @@ void Example62_PaceChirpCollect() {
         printf("  实际平均周期: %.6f s（目标 %.6f，偏差 %+.3f%%）  最大单拍 %.6f s\n",
                mean_dt, 1.0 / HZ, (mean_dt - 1.0 / HZ) / (1.0 / HZ) * 100.0, max_dt);
         printf("  ⚠ 判据：平均周期偏差应 <1%%，且无长于 3 倍周期的大跳（否则该次采集作废重采）\n");
+        if (resync)
+            printf("  🔴 deadline 重锚 %d 次（最长落后 %.1f ms）—— 时间基已不合格，请重采\n",
+                   resync, worst_late * 1000.0);
+        else
+            printf("  ✅ 无 deadline 重锚（等距调度未掉拍）\n");
     }
     printf("  CSV: %s\n", path);
     printf("  下一步: python3 tool/pace_export_dataset.py %s   （导出 PACE .pt）\n", path);

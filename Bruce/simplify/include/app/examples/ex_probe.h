@@ -16,7 +16,10 @@
 void Example60_SysIdProbe();
 
 // 【2026-10-05 新增】PACE 式真机辨识数据采集：**12 个腿关节同时**做位置 chirp
-// （0.1→10 Hz、20 s、400 Hz 采样、低增益），写 PACE 兼容 CSV 供 tool/pace_export_dataset.py 转 .pt。
+// （0.1→10 Hz、20 s、400 Hz 采样、PD = 部署值 rl::LEG_KP/LEG_KD = 250/4），写 PACE 兼容 CSV
+// 供 tool/pace_export_dataset.py 转 .pt。
+// 时序（2026-10-08 改）：读当前姿态 → **线性插值 10 s** 缓慢摆到 DEFAULT_POSE（与 Example47 同一做法，
+//   避免一个 tick 打到目标的猛拽）→ **静置 5 s** 等收敛 → 取实测角作 chirp 偏置 → 400 Hz 录制 20 s。
 // 前置：狗**刚性固定**（吊带会摆，违反 PACE 的 fixed-base 前提）、机身水平、轮子离地。
 // 与 Example60 的分工：Ex60 是逐关节激励探针（延迟/轮速伺服）；本示例专做 PACE 辨识所需的全关节同时激励。
 void Example62_PaceChirpCollect();
