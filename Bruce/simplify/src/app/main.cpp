@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <dlfcn.h>   // dlsym：自检 LD_PRELOAD 垫片（tool/libusb_fastpoll.c）是否已加载
 #include "app/examples.h"
 
 // =====================================================================
@@ -17,6 +18,25 @@
 //    这些示例中断只能靠固件 CAN_Timeout 兜底，使用前务必确认急停手段（电源开关）。
 //  =====================================================================
 int main() {
+    // ------------------------------------------------------------------
+    // 反馈链路自检（2026-10-08）
+    // 达妙 SDK 把 libusb 事件收割超时写死成 100 ms（.rodata@0x151d8），导致 CAN 回帧被
+    // 攒成 ~100 ms 一批、关节位置反馈只有 ~10 Hz。修正手段是 LD_PRELOAD 垫片
+    // （tool/libusb_fastpoll.c，run.sh 已自动接线）。这里显式报告它到底在不在——
+    // 否则"以为开了其实没开"（漏写 LD_PRELOAD / 被 setcap 的 AT_SECURE 忽略 / 被
+    // DMCAN_POLL_US=0 关闭）会让人在生产数据里白找半天。
+    // ------------------------------------------------------------------
+    {
+        const char* (*marker)() =
+            (const char* (*)())dlsym(RTLD_DEFAULT, "dsh_libusb_fastpoll_marker");
+        if (marker)
+            printf("[INFO] libusb 回帧垫片: ✅ 已加载（%s）\n", marker());
+        else
+            printf("[INFO] libusb 回帧垫片: 🔴 **未加载** ⇒ CAN 回帧将被攒成 ~100 ms 一批，\n"
+                   "       关节位置反馈只有 ~10 Hz。修复：用 ./run.sh 启动，或\n"
+                   "       LD_PRELOAD=<绝对路径>/bin/libusb_fastpoll.so ./bin/can_motor_app\n");
+    }
+
     // 运行示例17 - SimSync 仿真集成
     // printf("[INFO] Running Example17_SimSyncIntegration...\n");
     // Example17_SimSyncIntegration();

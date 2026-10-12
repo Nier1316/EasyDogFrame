@@ -7,9 +7,51 @@
 #include <cstring>
 #include <chrono>
 #include <atomic>
+#include <cstdlib>   // getenv（DMCAN_RXDIAG）
 
 // 诊断计数
 static std::atomic<int> g_u2c_send_fail{0};   // 发送失败计数（仅诊断，成功后清零）
+
+// =====================================================================
+//  onRecv 到达间隔探针（2026-10-08）
+// =====================================================================
+//  目的：判定"CAN 回帧被攒成 ~100 ms 一批"到底发生在哪一层。onRecv 是我们代码
+//  第一次看到帧的地方，它前面的整条链（驱动器 → USB → libusb → libdm_device.so 内部
+//  的 usb_handle_thread_func / moodycamel 队列 → 回调派发）全是黑箱。
+//
+//    回调到达间隔 ≈ 2 ms   ⇒ 厂商栈投递正常 ⇒ 瓶颈在我们自己的消费路径
+//    回调到达间隔 ≈ 100 ms ⇒ 攒批在 SDK 内部或设备侧 ⇒ 只能换传输层（见 docs）
+//
+//  开关：环境变量 DMCAN_RXDIAG=1（默认关）。关时只有一次 atomic 读，无开销。
+//  输出：Usb2CanTransport::shutdown() 时打印对数分桶直方图。
+//  注意：直方图用 relaxed 原子，允许多设备多回调线程并发；诊断时会略微扰动时序，
+//        但只影响 onRecv 内部几条指令，不改变攒批结论。
+namespace {
+std::atomic<uint64_t> g_rx_gap_bucket[24];   // 桶 i：间隔 ∈ [2^(i-1), 2^i) µs
+std::atomic<uint64_t> g_rx_gap_total{0};
+std::atomic<int>      g_rxdiag_flag{-1};     // -1 未读环境变量 / 0 关 / 1 开
+
+inline bool rxdiag_on() {
+    int v = g_rxdiag_flag.load(std::memory_order_relaxed);
+    if (v < 0) {
+        const char* s = getenv("DMCAN_RXDIAG");
+        v = (s && *s && *s != '0') ? 1 : 0;
+        g_rxdiag_flag.store(v, std::memory_order_relaxed);
+    }
+    return v == 1;
+}
+
+inline int gap_bucket(uint64_t us) {
+    int i = 0;
+    while (us > 1 && i < 23) { us >>= 1; ++i; }
+    return i;
+}
+
+inline int64_t now_us() {
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+               std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+}  // namespace
 
 Usb2CanTransport& Usb2CanTransport::GetInstance() {
     static Usb2CanTransport instance;
@@ -120,6 +162,13 @@ static bool g_rx_dump = false;
 // dmcan 接收回调（SDK 内部线程）：handle→设备索引, frame->head.channel→物理通道 → 逻辑 idx
 void Usb2CanTransport::onRecv(dmcan_device_handle* handle, usb_rx_frame_t* frame) {
     RxCount().fetch_add(1, std::memory_order_relaxed);   // 心跳：回调是否还在触发
+    if (rxdiag_on()) {            // 诊断：记录本次回调与上一次的到达间隔（每个回调线程各一份）
+        static thread_local int64_t last = 0;
+        const int64_t t = now_us();
+        if (last) g_rx_gap_bucket[gap_bucket((uint64_t)(t - last))].fetch_add(1, std::memory_order_relaxed);
+        last = t;
+        g_rx_gap_total.fetch_add(1, std::memory_order_relaxed);
+    }
     if (!frame) return;
 
     CanFrame cf;
@@ -194,6 +243,19 @@ bool Usb2CanTransport::close(uint8_t idx) {
 }
 
 void Usb2CanTransport::shutdown() {
+    if (rxdiag_on() && g_rx_gap_total.load() > 1) {
+        printf("\n[DMCAN_RXDIAG] onRecv 到达间隔直方图（共 %llu 次回调，总帧数 %llu）\n",
+               (unsigned long long)g_rx_gap_total.load(),
+               (unsigned long long)RxCount().load());
+        for (int i = 1; i < 24; i++) {
+            const uint64_t c = g_rx_gap_bucket[i].load();
+            if (!c) continue;
+            printf("    %7llu µs ~ %7llu µs : %8llu 次%s\n",
+                   1ULL << (i - 1), (1ULL << i) - 1, (unsigned long long)c,
+                   (i <= 2) ? "   ← 连续投递（健康）" : (i >= 16 ? "   ← ~100 ms 一批（攒批在 SDK/设备侧）" : ""));
+        }
+        printf("  判读：绝大多数落在 ≈2 ms(桶 9~11) ⇒ 厂商栈正常；落在 ≈100 ms(桶 16~17) ⇒ 只能换传输层\n");
+    }
     std::lock_guard<std::mutex> lock(m_mutex);
     for (auto& p : m_devices)
          if (p.second) dmcan_device_close(p.second);   // 有 "libusb_transfer_cancelled" 噪音，不崩

@@ -6,6 +6,8 @@
 #include "runtime/thread_manager.h"
 #include <pthread.h>
 #include <stdexcept>
+#include <cstdio>    // fprintf（apply_priority 失败告警）
+#include <cstring>   // strerror
 
 /**
  * 析构时遍历所有线程，置 stop_flag 后 join，确保没有线程在后台游离。
@@ -24,12 +26,27 @@ ThreadManager::~ThreadManager() {
  * 使用 POSIX pthread_setschedparam 为当前线程设置实时调度策略。
  * SCHED_FIFO：先进先出实时调度，同优先级线程不会被抢占，直到主动让出或阻塞。
  * 注意：priority 1~99，数值越大优先级越高；需要 CAP_SYS_NICE 权限，
- *       普通用户调用会静默失败（不抛出异常）。
+ *       普通用户调用会失败（EPERM）—— 2026-10-08 起会**打印一次告警**，
+ *       不再静默降级：500 Hz 收发线程退化成 CFS 会显著增加周期抖动，
+ *       排查时序问题（延迟/辨识/抖动）前必须先确认这里到底有没有生效。
  */
 void ThreadManager::apply_priority(int priority) {
+    static bool warned = false;
     sched_param param{};
     param.sched_priority = priority;
-    pthread_setschedparam(pthread_self(), SCHED_FIFO, &param);
+    const int rc = pthread_setschedparam(pthread_self(), SCHED_FIFO, &param);
+    if (rc != 0 && !warned) {
+        warned = true;   // 只喊一次，避免每注册一个线程刷一屏
+        fprintf(stderr,
+                "[ThreadManager] ⚠ 设置 SCHED_FIFO 优先级 %d 失败：%s（%d）\n"
+                "                ⇒ 实时线程退化为普通 CFS 调度，周期抖动会变大。\n"
+                "                排查时序问题前请先确认。开启方式（推荐第 1 条）：\n"
+                "                  ① /etc/security/limits.conf 加 \"<用户> - rtprio 99\"，重新登录生效；\n"
+                "                  ② sudo env LD_PRELOAD=<绝对路径>/bin/libusb_fastpoll.so ./bin/can_motor_app\n"
+                "                ⚠ 不要用 setcap：file capability 会让内核置 AT_SECURE，\n"
+                "                   动态链接器将**忽略 LD_PRELOAD**，libusb_fastpoll.so 垫片随之失效。\n",
+                priority, strerror(rc), rc);
+    }
 }
 
 /**

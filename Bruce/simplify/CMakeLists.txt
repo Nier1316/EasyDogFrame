@@ -88,7 +88,7 @@ set(SOURCES
 add_executable(can_motor_app ${SOURCES})
 
 # ============ 链接库 ============
-target_link_libraries(can_motor_app PRIVATE Threads::Threads)
+target_link_libraries(can_motor_app PRIVATE Threads::Threads ${CMAKE_DL_LIBS})   # libdl: 自检垫片
 
 # 条件链接 SDL2
 if(SDL2_FOUND OR SDL2_LIBRARIES)
@@ -155,6 +155,24 @@ if(ENABLE_ASAN)
     target_compile_options(can_motor_app PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
     target_link_options(can_motor_app PRIVATE -fsanitize=address)
 endif()
+
+# ============ 达妙 SDK 的 libusb 事件收割超时修正（LD_PRELOAD 垫片）============
+# 背景：libdm_device.so 的 can_bus_box::usb_handle_thread_func() 把
+#   libusb_handle_events_timeout_completed() 的等待超时写死成 100 ms
+#   （.rodata@0x151d8 = timeval{0,100000}，**全库仅此一处 100000**）⇒ CAN 回帧被攒成
+#   ~100 ms 一批，上位机看到的位置反馈只有 ~10 Hz。详见 tool/libusb_fastpoll.c 的文件头。
+# 本目标产出 ./bin/libusb_fastpoll.so，由 run.sh 用 LD_PRELOAD 加载；不加载 = 原行为。
+add_library(usb_fastpoll SHARED tool/libusb_fastpoll.c)
+set_target_properties(usb_fastpoll PROPERTIES
+    # 顶层设了 CMAKE_LIBRARY_OUTPUT_DIRECTORY=lib/（那是入库的 SDK 目录），
+    # 垫片是构建产物，改放 bin/（已在 .gitignore 里）。
+    LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin
+)
+target_link_libraries(usb_fastpoll PRIVATE ${CMAKE_DL_LIBS})
+if(UNIX)
+    target_compile_options(usb_fastpoll PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+message(STATUS "libusb 垫片: ${PROJECT_SOURCE_DIR}/bin/libusb_fastpoll.so")
 
 # ============ 编译信息 ============
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
