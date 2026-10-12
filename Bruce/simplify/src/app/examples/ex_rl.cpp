@@ -1264,7 +1264,11 @@ void Example37_RLTeleopControl() {
     constexpr bool RECORD_DATASET = false;
     if (RECORD_DATASET) {
         S2RDataset::inst().Begin("Example37 RL 遥操作（手柄）");
-        S2RDataset::inst().Meta("weight", "iteration_9754.pkl");
+        // ⚠ 勿硬编码权重名：Ex37 运行时强制 5350，写死会导致录下来的数据自带错误标签。
+        //   与 Example61 一致，取运行时真实策略（含 ckpt 路径）。
+        S2RDataset::inst().Meta("weight", rl::CurrentPolicy().name);
+        S2RDataset::inst().Meta("ckpt", rl::CurrentPolicy().ckpt);
+        S2RDataset::inst().Meta("policy_id", std::to_string(rl::PolicyVariant()).c_str());
         S2RDataset::inst().Meta("example", "Example37");
         printf("[DATA] 统一数据集已开启 → %s（约 420 KB/s）\n", S2RDataset::inst().path());
     }

@@ -209,8 +209,9 @@ void Example60_SysIdProbe() {
     snprintf(note, sizeof note, "Example60 SysIdProbe mode=%d", mode);
     if (!S2RDataset::inst().Begin(note)) { imu.Shutdown(); return; }
     S2RDataset::inst().Meta("example", "Example60_SysIdProbe");
-    // 策略权重版本（追溯"同一策略下的数据"用；换权重时同步改这里）
-    S2RDataset::inst().Meta("weight", "iteration_9754.pkl");
+    // 本示例是**纯激励探针**：腿由位置/力矩激励直接驱动，**不加载任何策略** ⇒
+    // 不写 weight 字段（此前硬编码 iteration_9754 属误导；dataset_health.py 只要求该键存在）。
+    S2RDataset::inst().Meta("weight", "n/a (Example60 纯激励探针，无策略)");
     S2RDataset::inst().Meta("mode", std::to_string(mode).c_str());
 
     all_free(mm);

@@ -2,8 +2,9 @@
 // ============================================================================
 //  运行时策略变体选择
 //
-//  两套 actor 权重（smalllift_s45 / iteration_9754 与 standstep_s4 / iteration_10000）
-//  同时编译进程序（见 src/strategy/policy_set.cpp），由本模块在运行时按 id 选择。
+//  三套 actor 权重（smalllift_s45 / iteration_9754、standstep_s4 / iteration_10000、
+//  h52_s45_v4 / iteration_5350）同时编译进程序（见 src/strategy/policy_set.cpp），
+//  由本模块在运行时按 id 选择。
 //
 //  默认变体 = policy_variant.h 的 POLICY_VARIANT；示例可在进入 RL 循环前覆盖，例如：
 //      rl::SetPolicyVariant(rl::POLICY_H52S45_V4_5350);   // Example37：稳定演示策略（可前进）
