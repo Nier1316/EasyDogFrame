@@ -2,11 +2,12 @@
 // 由原单文件 example.cpp 示例拆包而来（现拆到 src/app/examples/），公共 helper 见 app/examples_common.h
 //
 // ---- RL 示例（25 策略控制 / 30 链路验证 / 36 站立 / 37 遥操作 / 51-53 流程）的权重来源 ----
-// 策略权重编译进 include/strategy/policy_weights.h，由 tool/export_policy.py 从
-// 入库 checkpoint weights/iteration_9754.pkl 导出（当前部署版，2026-09-19，
-// smalllift_s45 stage4.5，来自 checkpoints_20260919_115617_smalllift_s45）。换权重流程：
-// export_policy.py（默认读 weights/iteration_9754.pkl，--ckpt 覆盖）→ 重新编译 →
-// 跑 Example30 做 MLP 数值回归门（REF_OBS/REF_ACTION 核对）。
+// 两套策略权重**同时编译进程序**：include/strategy/policy_weights.h = 9754（可前进）、
+// policy_weights_standturn.h = 10000（站立/原地转向），均由 tool/export_policy.py 从
+// weights/*.pkl 导出。示例在进入 RL 前用 rl::SetPolicyVariant() 选自己那一套：
+//   Example37 → POLICY_SMALLLIFT_9754（可前进）；Example61 → POLICY_STANDTURN_10000。
+// 换权重流程：export_policy.py（--ckpt 指定，--out-weights 指定变体头）→ 重新编译 →
+// 跑 Example30 做 MLP 数值回归门（同时核对两套 REF_OBS/REF_ACTION）。
 #include "app/examples/ex_rl.h"
 #include "app/examples_common.h"
 #include "motion/motion_controller.h"
@@ -30,7 +31,7 @@
 using logctl::LogCat;
 #include "strategy/rl_controller.h"
 #include "strategy/mlp.h"
-#include "strategy/policy_variant.h"    // 权重 + 参考 obs/action（随变体切换）
+#include "strategy/policy_set.h"        // 运行时策略权重（两套都编译进来）
 #include "strategy/imu_device.h"
 #include "strategy/xbox_controller.h"
 #include <termios.h>
@@ -260,26 +261,40 @@ void Example25_RLPolicyControl() {
 // 纯 CPU，不初始化 CAN、不使能电机。
 void Example30_RLPolicyLinkTest() {
     printf("\n========== 示例 30：RL 策略链路离线验证 ==========\n");
-    printf("[INFO] 不碰 CAN。用 REF_OBS(64) 跑 mlp_forward，对比 REF_ACTION(16)。\n");
+    printf("[INFO] 不碰 CAN。三套权重各用 REF_OBS(64) 跑 mlp_forward，对比 REF_ACTION(16)。\n");
 
-    // 1) MLP 前向 vs 参考输出
-    float act[16];
-    rl::mlp_forward(REF_OBS, act);
-    float max_err = 0.0f;
-    int   max_idx = -1;
-    for (int i = 0; i < rl::ACTION_DIM; i++) {
-        float e = std::fabs(act[i] - REF_ACTION[i]);
-        if (e > max_err) { max_err = e; max_idx = i; }
+    // 1) MLP 前向 vs 参考输出（三套变体都验：0=9754 / 1=10000 站立转向 / 2=5350 演示稳定）
+    bool all_ok = true;
+    for (int vid = rl::POLICY_SMALLLIFT_9754; vid <= rl::POLICY_H52S45_V4_5350; vid++) {
+        const rl::PolicyWeights& w = rl::PolicyOf(vid);
+        rl::SetPolicyVariant(vid);
+
+        float act[16];
+        rl::mlp_forward(w.ref_obs, act);
+
+        float max_err = 0.0f;
+        int   max_idx = -1;
+        for (int i = 0; i < rl::ACTION_DIM; i++) {
+            float e = std::fabs(act[i] - w.ref_action[i]);
+            if (e > max_err) { max_err = e; max_idx = i; }
+        }
+        const bool ok = max_err < 1e-3f;
+        all_ok = all_ok && ok;
+
+        printf("\n  [变体 %d] %s\n", vid, w.name);
+        printf("    mlp_forward(REF_OBS) vs REF_ACTION：最大绝对误差 = %.6e（%s，idx=%d）\n",
+               max_err, ok ? "通过" : "失败", max_idx);
+        if (!ok) {
+            for (int i = 0; i < rl::ACTION_DIM; i++)
+                printf("      a[%2d]  got=%.6f  ref=%.6f\n", i, act[i], w.ref_action[i]);
+        }
     }
-    printf("\n  mlp_forward(REF_OBS) vs REF_ACTION:\n");
-    printf("    最大绝对误差 = %.6e（%s，idx=%d）\n", max_err,
-           max_err < 1e-3f ? "通过" : "失败", max_idx);
-    printf("    %s\n", max_err < 1e-3f
-        ? "  [OK] MLP 权重与网络结构正确"
+    printf("\n    %s\n", all_ok
+        ? "  [OK] 三套 MLP 权重与网络结构均正确"
         : "  [FAIL] 权重/结构有问题，需用 tool/export_policy.py 重新导出");
-    for (int i = 0; i < rl::ACTION_DIM; i++) {
-        printf("      a[%2d]  got=%.6f  ref=%.6f\n", i, act[i], REF_ACTION[i]);
-    }
+
+    // 恢复编译期默认变体，避免影响本示例后续（观测样本）与同进程其它逻辑
+    rl::SetPolicyVariant(POLICY_VARIANT);
 
     // 2) 观测构建样本（固定输入），供与 Python sim2sim._build_observation 比对。
     //    这里 gyro 用机体系，quat 用单位四元数（机身水平），pos/vel 全 0（=default 附近）。
@@ -1146,6 +1161,8 @@ void Example36_RLStandLoop() {
 }
 
 // ================= 示例 37：RL 遥操作（手柄前进/后退） =================
+// 策略：运行时强制 h52_s45_v4 / iteration_5350（可前进，宽摩擦DR/地形适应）
+//       —— 当前**演示/稳定**策略；与全局默认 POLICY_VARIANT 无关。
 // 与 Example36 相同（起立 DEFAULT_POSE + q 优雅退出 + 诊断 + 软限位），
 // 差别：加入 Xbox 手柄实时给速度命令。
 //   左摇杆 Y 上推 = +vx 前进 / 下推 = -vx 后退（量程 ±1.0 m/s）
@@ -1154,6 +1171,12 @@ void Example36_RLStandLoop() {
 //   向前溜车抵消 CMD_BIAS_VX 仍叠加在 cmd[0]，手柄中位时站住不溜。
 void Example37_RLTeleopControl() {
     printf("\n========== Example 37: RL 遥操作（手柄，走 MotionController） ==========\n");
+
+    // 本示例运行时强制 h52_s45_v4 / iteration_5350 —— **演示/稳定**策略
+    // （宽摩擦 DR + 地形适应，可前进）；与全局默认 POLICY_VARIANT 无关。
+    rl::SetPolicyVariant(rl::POLICY_H52S45_V4_5350);
+    printf("[策略] %s（%s）\n", rl::CurrentPolicy().name,
+           rl::CurrentPolicy().has_forward_vx ? "可前进" : "⚠ 不支持前进");
     printf("[INFO] 50 Hz RL 循环。左摇杆=前进/后退，右摇杆=转向，B/START=趴下，q=优雅退出。\n\n");
 
     const int HZ = 50;
@@ -1246,11 +1269,12 @@ void Example37_RLTeleopControl() {
         printf("[DATA] 统一数据集已开启 → %s（约 420 KB/s）\n", S2RDataset::inst().path());
     }
 
-    printf("[INFO] RL 循环启动：左摇杆前进/后退，B 急停，q 优雅退出\n");
+    printf("[INFO] RL 循环启动：左摇杆前进/后退，B/START=优雅趴下，q 优雅退出\n");
 
     RawTerminal term;         // q 键优雅退出
     bool graceful = false;
     bool do_lie_down = false; // START 键触发优雅趴下（身体缓降着地）
+    LoopPacer pacer(HZ);      // 50Hz 绝对节拍（旧 usleep 会把推理/IO 耗时叠加到周期上）
     while (!g_rl_stop) {
         // 0) 键盘检测：按 q 优雅退出（失能轮 + 腿回位）
         if (term.ok) {
@@ -1309,7 +1333,7 @@ void Example37_RLTeleopControl() {
         MotorLogger::GetInstance().LogRL(step, cmd, motion.lastObs(),
                                          motion.lastAction(), motion.lastTauWheel());
 
-        usleep(1000000 / HZ);
+        pacer.wait();   // 绝对节拍：50Hz 不随推理/IO 耗时漂移
     }
 
     // ---- 优雅退出：START=趴下 / q=腿回初始 ----
@@ -2472,7 +2496,7 @@ void Example53_MeasureGravityFF() {
 // =====================================================================
 //  示例 61：站立 / 原地转向 专精策略的手柄遥操作（sim2real 对比用）
 //
-//  策略：POLICY_VARIANT == 1（standstep_s4 / iteration_10000，2026-10-02 最新）
+//  策略：运行时强制 standstep_s4 / iteration_10000（2026-10-02）——与全局默认 POLICY_VARIANT 无关
 //        训练命令分布**只有两类**：静止站立 [0,0,0] 与原地迈步转向 [0,0,wz]
 //        （notes 原文："stop [0,0,0] and turn [0,0,wz] commands only"，
 //          对角轻抬腿 + 轮差速偏航，平地）。**不支持 vx 前进**。
@@ -2483,22 +2507,24 @@ void Example53_MeasureGravityFF() {
 //  手柄映射（与我方 sim2sim 的 gamepad 约定一致）：
 //    右摇杆水平 (right_stick_x) → cmd_wz（左推 = +wz），死区内 → 严格 [0,0,0]
 //    A 键按住                    → 强制站立（屏蔽转向，等于命令 [0,0,0]）
-//    B 键                        → 硬急停（置 g_rl_stop，立即退出循环）
-//    START                        → 优雅趴下（12s 缓降）
+//    B / START 键                 → 优雅趴下（12s 缓降；Ctrl+C 仍为硬急停）
 //    q 键                         → 优雅退出（失能轮 + 腿回位）
 //    左摇杆**不参与**（该策略未见过 vx≠0，喂了属分布外）
 // =====================================================================
 void Example61_RLStandTurnTeleop() {
     printf("\n========== 示例 61：站立 / 原地转向 手柄遥操作（sim2real 对比）==========\n");
-    printf("[策略] %s\n", POLICY_VARIANT_NAME);
 
-#if POLICY_HAS_FORWARD_VX
-    printf("[ERROR] 当前编译的是 %s（支持 vx 前进），本示例专为 standstep_s4 而写。\n",
-           POLICY_VARIANT_NAME);
-    printf("        请把 include/strategy/policy_variant.h 的 POLICY_VARIANT 改成 1 后重新编译；\n");
-    printf("        若要用旧策略走遥操作，请用 Example37_RLTeleopControl。\n");
-    return;
-#endif
+    // 本示例专为 standstep_s4（站立/原地转向，vx 恒 0）而写 → 运行时强制该变体，
+    // 与全局默认 POLICY_VARIANT 无关（Example37 走 9754，二者可同进程共存）。
+    rl::SetPolicyVariant(rl::POLICY_STANDTURN_10000);
+    const rl::PolicyWeights& policy = rl::CurrentPolicy();
+    printf("[策略] %s\n", policy.name);
+
+    if (policy.has_forward_vx) {
+        printf("[ERROR] 当前策略 %s 支持 vx 前进，本示例专为 standstep_s4 而写。\n", policy.name);
+        printf("        若要用旧策略走遥操作，请用 Example37_RLTeleopControl。\n");
+        return;
+    }
 
     // ---- 参数（都在训练分布内；要更激进/更保守只改这里）----
     constexpr float TURN_MAX_WZ  = 0.7f;   // 满推转向命令 rad/s（训练范围 ±1.0，这里保守取 0.7）
@@ -2588,8 +2614,8 @@ void Example61_RLStandTurnTeleop() {
     S2RRecorder::inst().begin("Example61 站立/原地转向（手柄）");
     if (RECORD_DATASET) {
         S2RDataset::inst().Begin("Example61 standturn teleop");
-        S2RDataset::inst().Meta("weight", POLICY_VARIANT_NAME);
-        S2RDataset::inst().Meta("ckpt", POLICY_VARIANT_CKPT);
+        S2RDataset::inst().Meta("weight", policy.name);
+        S2RDataset::inst().Meta("ckpt", policy.ckpt);
         S2RDataset::inst().Meta("example", "Example61_RLStandTurnTeleop");
         S2RDataset::inst().Meta("cmd_kind", "stand [0,0,0] / turn-in-place [0,0,wz]");
         printf("[DATA] 统一数据集已开启 → %s（约 420 KB/s；记得填 ground/负载 meta）\n",
@@ -2597,7 +2623,7 @@ void Example61_RLStandTurnTeleop() {
     }
 
     printf("[INFO] RL 循环启动：右摇杆水平=原地转向（左=+wz），松手=A/回中=站立\n");
-    printf("[INFO]            B=急停，START=趴下，Y=跑标准对比序列（推摇杆即中止序列）\n");
+    printf("[INFO]            B/START=优雅趴下，Y=跑标准对比序列（推摇杆即中止序列）\n");
     printf("[INFO]            键盘（需终端有焦点）：q=退出，x=中止序列\n");
     printf("[INFO] 死区 %.2f，满推 wz=%.2f rad/s，模式=%s\n",
            STAND_DEAD, TURN_MAX_WZ, TURN_LATCH ? "latch(满幅)" : "proportional(线性)");
@@ -2620,12 +2646,21 @@ void Example61_RLStandTurnTeleop() {
     bool graceful = false, do_lie_down = false;
     bool prev_y = false;          // 手柄 Y 的上升沿检测（防按住连触发序列）
     int  tick = 0;
+    LoopPacer pacer(HZ);          // 50Hz 绝对节拍（旧 usleep 会把推理/IO 耗时叠加到周期上）
     while (!g_rl_stop) {
         // 0) 手柄轮询（每拍一次）：序列的启动/中止与手动映射共用同一份状态
         XboxState st{};
         const bool have_pad = pad_ok;
         if (have_pad) { controller.Poll(); st = controller.GetState(); }
         const float stick_raw = have_pad ? -st.right_stick_x : 0.0f;   // 左推 = +wz
+
+        // 0.5) B / START = 优雅趴下（与 Example37 一致；**每拍都查**，序列进行中也能随时退出；
+        //      Ctrl+C 仍为硬急停）。放在这里而不是手动分支内，避免跑序列时按键失效。
+        if (have_pad && (st.b || st.start)) {
+            printf("\n[INFO] 手柄 %s 键：优雅趴下\n", st.b ? "B" : "START");
+            do_lie_down = true;
+            g_rl_stop = 1;
+        }
 
         // 1) 键盘：q = 优雅退出；x = 中止对比序列（手柄侧用摇杆中止，见第 3 步）
         if (term.ok) {
@@ -2648,7 +2683,7 @@ void Example61_RLStandTurnTeleop() {
             seq_idx = 0; seq_tick = 0;
             printf("\n[SEQ] 手柄 Y：开始标准对比序列 —— 站立 5s → 左转(%+.2f) 8s → 站立 3s → 右转(%+.2f) 8s → 站立 3s（共 27s）\n",
                    (double)TURN_SEQ_WZ, -(double)TURN_SEQ_WZ);
-            printf("[SEQ] 中止方式：推一下摇杆（或手柄 B 硬急停 / 键盘 x）\n");
+            printf("[SEQ] 中止方式：推一下摇杆 / 键盘 x（B 或 START 则直接优雅趴下退出）\n");
         }
 
         // 3) 摇杆推过死区 = 中止序列，立刻交回手动（最直觉的"抢控制权"动作）
@@ -2691,14 +2726,6 @@ void Example61_RLStandTurnTeleop() {
             cmd[0] = 0.0f;
             cmd[1] = 0.0f;
             cmd[2] = wz;
-            if (st.b) {
-                printf("\n[INFO] 手柄 B 键：硬急停\n");
-                g_rl_stop = 1;
-            } else if (st.start) {
-                printf("\n[INFO] 手柄 START 键：优雅趴下\n");
-                do_lie_down = true;
-                g_rl_stop = 1;
-            }
             motion.setCmd(cmd);
         }
 
@@ -2725,7 +2752,7 @@ void Example61_RLStandTurnTeleop() {
                    cmd[0], cmd[1], cmd[2], gz, motion.lastGravZ());
         }
 
-        usleep(1000000 / HZ);
+        pacer.wait();   // 绝对节拍：50Hz 不随推理/IO 耗时漂移
     }
 
     // ---- 收尾 ----

@@ -173,3 +173,32 @@
 
 **文档**
 - `memory/FACT.md`、`UPDATE.md`、`memory/JOURNAL.jsonl` 与 `docs/*`、根目录指南全面同步到当前代码：权重 9754、示例 17~57 共 40 个（55 从未实现）/ 激活 Ex37、量程 120/120/200/52、轮控保护 `WHEEL_ESTOP_*`、`SIM_DT=0.005 / DECIMATION=4`、gait_phase 分组布局等。
+
+---
+
+## 2026-10-06 | 标定稳定分支 + 节拍修正 + 5350 演示策略
+
+### 新建 `stable` 分支
+- 从 `develop` 拉出 **`stable`**，作为**对外演示 / 现场稳定运行**的基线；日常实验仍在 `develop`。
+- 根目录新增 **`STABLE.md`**：记录当前稳定策略 = **h52_s45_v4 / iteration_5350**、为什么选它、以及本分支包含的稳定化改动。
+
+### Ex37 切换到 iteration_5350
+- 恢复被删权重：`weights/iteration_5350.pkl` 于 2026-09-29 仓库清理时删除，
+  由 git 历史 `0d0257c` 恢复，`git hash-object` 校验与原 blob `d19b3d60…` **逐字节一致**。
+- 用 `tool/export_policy.py --ckpt weights/iteration_5350.pkl --out-weights include/strategy/policy_weights_5350.h --out-ref include/strategy/policy_test_ref_5350.h` 导出（形状 64-512-256-128-16，与另两套一致）。
+- 新增第 3 个运行时变体 `rl::POLICY_H52S45_V4_5350 = 2`；`POLICY_VARIANT` 默认改为 **2**；
+  **Example37 改为强制 5350**；Example30 扩展为**同时校验三套权重**（9754/10000/5350 全通过）。
+
+### 控制节拍修正（500 Hz 达标）
+- `src/runtime/thread_manager.cpp`：LOOP 线程由「`func(); sleep_for(interval-elapsed)`」
+  改为**绝对 deadline 网格**（`next += period; sleep_until(next)`）。
+  旧实现每轮多睡 ~50µs（Linux 默认 timer_slack），2ms 周期下累积成 ~486 Hz（−2.8%）；
+  修正后实测 **500.000 Hz**。影响 `motor_receive` / `motor_send`（全示例生效）。
+- `include/app/examples_common.h`：新增 `LoopPacer`（同款绝对节拍），
+  **Example37 / Example61** 策略环改用它 → 实测 **50.000 Hz**（原 20.57 ms/步 ≈ 48.6 Hz）。
+- 真机验证：`dataset_20261004_155443.csv` 实测行率 **499.92 Hz**（修复前 485.95 Hz），
+  策略间隔中位 **20.002 ms**（修复前 20.574 ms）。
+
+### Example61 按键
+- `B` 键由「硬急停」改为**与 Example37 一致的优雅趴下**（`do_lie_down`），并把判断提升到每拍执行，
+  使**标准对比序列进行中也能按 B/START 安全退出**；`Ctrl+C` 仍为硬急停。

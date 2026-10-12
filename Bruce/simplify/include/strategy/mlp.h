@@ -5,15 +5,17 @@
  * 网络结构（与 dogurdf_sim2sim_deploy/src/networks/mlp.py 的 ActorCriticMLP.act 一致）:
  *   64 -> 512 -> 256 -> 128 -> 16，中间层 ELU 激活，输出层无激活。
  *
- * 权重由 tool/export_policy.py 从 flax checkpoint 导出到 policy_weights.h，
+ * 权重由 tool/export_policy.py 从 flax checkpoint 导出到 policy_weights*.h，
  * 布局为 x @ W + b（W 形状 [in_dim][out_dim]，row-major）。
+ * 两套变体（9754 / 10000）同时编译进来，由 rl::SetPolicyVariant() 运行时选择，
+ * 默认值见 strategy/policy_variant.h；本函数用 rl::CurrentPolicy() 取当前权重。
  *
  * 零外部依赖（不用 libtorch / onnxruntime），20 万参数、50 Hz 下 CPU 无压力。
  */
 #pragma once
 
 #include <cmath>
-#include "strategy/policy_variant.h"   // 权重变体开关（内部再 include 具体权重）
+#include "strategy/policy_set.h"       // 运行时策略权重（两套都编译进来）
 
 namespace rl {
 
@@ -53,16 +55,18 @@ inline void dense(const float* in, const float* W, const float* b,
  * @brief 策略前向：obs(64) -> action(16)，确定性输出（无噪声）
  */
 inline void mlp_forward(const float* obs, float* action) {
+    const PolicyWeights& w = CurrentPolicy();   // 当前运行时变体（默认 = POLICY_VARIANT）
+
     float h0[HIDDEN_0];
-    dense(obs, ACTOR_W0, ACTOR_B0, ACTOR_DIM, HIDDEN_0, h0, true);
+    dense(obs, w.w0, w.b0, ACTOR_DIM, HIDDEN_0, h0, true);
 
     float h1[HIDDEN_1];
-    dense(h0, ACTOR_W1, ACTOR_B1, HIDDEN_0, HIDDEN_1, h1, true);
+    dense(h0, w.w1, w.b1, HIDDEN_0, HIDDEN_1, h1, true);
 
     float h2[HIDDEN_2];
-    dense(h1, ACTOR_W2, ACTOR_B2, HIDDEN_1, HIDDEN_2, h2, true);
+    dense(h1, w.w2, w.b2, HIDDEN_1, HIDDEN_2, h2, true);
 
-    dense(h2, ACTOR_WO, ACTOR_BO, HIDDEN_2, ACTION_DIM, action, false);
+    dense(h2, w.wo, w.bo, HIDDEN_2, ACTION_DIM, action, false);
 }
 
 } // namespace rl

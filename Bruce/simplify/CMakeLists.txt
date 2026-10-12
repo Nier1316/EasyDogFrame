@@ -68,6 +68,7 @@ set(SOURCES
     src/strategy/rl_controller.cpp
     src/strategy/sim2real_conv.cpp
     src/strategy/imu_device.cpp
+    src/strategy/policy_set.cpp      # 两套策略权重同时编译 + 运行时选择
 
     # L4 运控
     src/motion/motion_controller.cpp
