@@ -638,6 +638,8 @@ def main() -> int:
             while time.time() < deadline:
                 u, _t, q, _g, _seq, _l, _r, _tl = udp.latest()
                 if u is not None:
+                    if imu.q0 is None and q is not None and a.imu_mode == "yaw0":
+                        imu.q0 = np.asarray(q, dtype=float)   # 实时：首帧即偏航基准
                     urdf, quat = u, imu(q)
                     break
                 time.sleep(0.05)
@@ -702,6 +704,10 @@ def main() -> int:
                 u_urdf, u_tgt, u_quat, u_gyro, seq, lost, rate, t_last = udp.latest()
                 fresh = (t_last > 0) and (time.time() - t_last < 0.5)
                 if fresh and u_urdf is not None:
+                    # ⚠ 实时模式下 q0 只可能来自"收到的第一帧"（CSV 源那个分支拿不到），
+                    #   否则 yaw0 模式等于没生效，狗会朝一个任意偏航站着。这里懒初始化。
+                    if imu.q0 is None and u_quat is not None and a.imu_mode == "yaw0":
+                        imu.q0 = np.asarray(u_quat, dtype=float)
                     urdf = u_urdf
                     quat = imu(u_quat)
                     label = (f"实时 seq={seq}  {rate:5.1f} 包/s  丢 {lost}"

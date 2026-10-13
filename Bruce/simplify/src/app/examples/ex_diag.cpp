@@ -2928,7 +2928,9 @@ void Example63_PassivePoseMonitor() {
     float q16[16] = {0.0f};
     char key = 0;
 
-    int no_rx_sec = 0;                                   // 连续"零帧"秒数（判驱动器是否上电）
+    int frames_total_sec = 1;
+    int no_rx_sec = 0;
+    bool ever_rx = false;                       // 是否**曾经**收到过回帧（决定要不要发姿态流）
     uint64_t rx_last = Usb2CanTransport::RxCount().load();
     // 键盘 q 退出（不启 RawTerminal 的阻塞读，用 poll 非阻塞）
     const int fd_in = fileno(stdin);
@@ -2962,18 +2964,12 @@ void Example63_PassivePoseMonitor() {
             // ⚠ 存活判断（2026-10-13 实测踩到）：驱动器**没上电**时参数请求发得出去但没人回，
             //   GetStatus().position 会一直是 0 ⇒ status_to_urdf(0) = CONV_B，看起来像个"合法姿态"
             //   （hip +1.70° / thigh −55.14° / calf −73.52°），viewer 分不出来。
-            //   这里用 USB2CAN 的回调计数判活：本秒一帧都没收到 ⇒ 不发姿态流并告警。
-            const uint64_t rx = Usb2CanTransport::RxCount().load();
-            const bool alive = (rx > rx_last);
-            rx_last = rx;
-            if (!alive) {
-                no_rx_sec++;
-                if (no_rx_sec == 1 || no_rx_sec % 5 == 0)
-                    printf("[WARN] 本秒收到 0 个 CAN 帧 ⇒ **驱动器可能没上电/没接线**：\n"
-                           "       参数请求已发出但无回复，姿态流暂停发送（已连续 %d s；位置读数恒为 0，不可当姿态用）\n",
-                           no_rx_sec);
-            } else {
-                no_rx_sec = 0;
+            //   这里用 USB2CAN 的回调计数判活。⚠️ 2026-10-13 实测修正：**不能按扫描周期判**——
+            //   回帧是 ~100 ms 突发投递的（见 memory/FACT.md §反馈链路），32 ms 的周期里大部分
+            //   本来就没有帧，按周期判会误报、并把姿态流也一起停掉（实测整帧从 30 掉到 11）。
+            //   改为：只要**曾经**收到过回帧（ever_rx）就持续发；一帧都没收到过则不发
+            //   （避免把全 0 的 CONV_B 当成合法姿态）。判活/告警放到下面的"每秒"块里。
+            if (ever_rx) {
                 // 被动模式没有"目标"，q_target 传 nullptr（报文 flags 会标出来）
                 pose_stream::instance().send(q16, imu_ok ? quat : nullptr,
                                              imu_ok ? gyro : nullptr, nullptr);
@@ -2985,15 +2981,33 @@ void Example63_PassivePoseMonitor() {
                                  std::chrono::steady_clock::now() - t0).count();
             if (t - t_print >= 1.0) {
                 t_print = t;
-                printf("[%6.1fs] 姿态流 %s | 整帧 %d 次/s | IMU %s%s\n", t,
+                // 每秒判活一次（正确的粒度）
+                {
+                    const uint64_t rx_now = Usb2CanTransport::RxCount().load();
+                    const bool alive = (rx_now > rx_last);
+                    rx_last = rx_now;
+                    if (alive) ever_rx = true;
+                    no_rx_sec = alive ? 0 : no_rx_sec + 1;
+                    if (!ever_rx && (no_rx_sec == 1 || no_rx_sec % 5 == 0))
+                        printf("[WARN] 至今**一个 CAN 帧都没收到** ⇒ 驱动器没上电/没接线/波特率不对。\n"
+                               "       参数请求已发出但无回复；位置读数恒 0（= CONV_B）**不是姿态**，已停发。\n");
+                }
+                printf("[%6.1fs] 姿态流 %s | 整帧 %d 次/s | IMU %s%s%s\n", t,
                        pose_stream::instance().enabled() ? "开" : "关",
                        frames_sec, imu_ok ? "有" : "无",
-                       no_rx_sec > 0 ? " | 🔴 无 CAN 回帧（已停发，驱动未上电？）" : "");
+                       !ever_rx ? " | 🔴 零回帧（已停发）" : "",
+                       (ever_rx && no_rx_sec > 0) ? " | ⚠ 本秒无回帧（突发投递间隙）" : "");
                 for (int leg = 0; leg < 4; leg++)
                     printf("   %s  hip %+7.2f°  thigh %+7.2f°  calf %+7.2f°  wheel %+9.2f°\n",
                            leg_name[leg], rad2deg(q16[leg * 3 + 0]),
                            rad2deg(q16[leg * 3 + 1]), rad2deg(q16[leg * 3 + 2]),
                            rad2deg(q16[12 + leg]));
+                // 每 10 s 提示一次：某关节读数恒为 0 时怎么查（2026-10-13 实测 CAN3-M4 就是 0 回帧）
+                if (frames_total_sec % 10 == 0 && no_rx_sec == 0)
+                    printf("       （提示：若某关节读数**恒定不变**，多半是那个电机没回帧——用\n"
+                           "         log/recv_*.csv 按 (can_port, motor_id) 数一下回帧即可确认；\n"
+                           "         2026-10-13 实测 CAN3-M4(RR 轮) 就是 0 回帧，读数 0.00 不是真位置）\n");
+                frames_total_sec++;
                 frames_sec = 0;
             }
         }
