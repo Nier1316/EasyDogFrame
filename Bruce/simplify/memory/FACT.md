@@ -51,7 +51,12 @@
   ⚠ **旧名 `POLICY_TO_MJX`/`MJX_TO_POLICY` 的字面含义与实际语义正好相反**（数组值没错、名字骗人；旧 `POLICY_TO_MJX` 实为 can→policy）。
   已按语义重命名，旧名保留为**引用别名**（`const int (&OLD)[N] = NEW;`）故既有调用点行为不变；新代码一律用新名。
   自检：`/tmp/perm_test`（9 项：腿/轮范围、双向互逆、双射、抽查、别名等价）全部通过。
-- `DEFAULT_POSE`（POLICY 序）：hip 0、thigh +0.20、calf −0.35、wheel 0（四腿相同），与 dogurdf `NOMINAL_*` 一致。
+- `DEFAULT_POSE`（POLICY 序）：hip 0、thigh +0.20、calf **−0.35**、wheel 0（四腿相同）。
+  🔴⚠ **2026-10-12 核对：与 dogurdf `NOMINAL_*` 并**不一致**！** dogurdf.py 是 `NOMINAL_CALF = −0.53`
+  （`NOMINAL_TORSO_HEIGHT = 0.40`），两者差 **0.18 rad = 10.31°**。FK 实测（机身 0.40 m）：
+  calf −0.53 → 轮心 z **113.7 mm**（= 轮半径，刚触地）；calf −0.35 → 轮心 z **63.6 mm**（陷地 50 mm）。
+  ⇒ 若训练侧真用 −0.53，则 `joint_pos_rel = q − DEFAULT_POSE` 的 4 个小腿通道带 **−0.18 rad 恒定偏置**。
+  **数值未改动**，待查 `RL_Train/code` 训练配置 + 现场确认。工具：`tool/pose_view.py --preset default|nominal`。
 - `CONV_A`：每腿 hip/thigh/calf = `+1, −1, +1`，四轮 `+1`；`CONV_B`：每腿 `+0.0297, −0.9624, −1.2832`，四轮 `0`。
 - 关系：`URDF = CONV_A*GetStatus + CONV_B`；`GetStatus = (URDF − CONV_B)/CONV_A`（`src/strategy/sim2real_conv.cpp`）。
 
