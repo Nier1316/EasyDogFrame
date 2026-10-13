@@ -9,6 +9,7 @@
 #include "strategy/rl_controller.h"
 #include "strategy/mlp.h"
 #include "common/s2r_recorder.h"   // RL 遥测自动记录（Ex37 走 rlStep，在此统一采集）
+#include "common/pose_stream.h"    // 姿态流：UDP 发给 tool/pose_view.py（POSE_STREAM=1 才启用）
 #include <cstdio>
 #include <cmath>
 #include <unistd.h>
@@ -199,6 +200,15 @@ bool MotionController::rlStep() {
 
     // 5) last_action
     for (int i = 0; i < 16; i++) last_action_[i] = action[i];
+
+    // 5.5) 姿态流（调试，2026-10-12）：把**实际**姿态 + 指令目标发给 tool/pose_view.py。
+    //      未设环境变量 POSE_STREAM 时 send() 只做一次 bool 判断，零开销、零行为变化。
+    //      发的是 URDF 坐标 + POLICY 序（MuJoCo 模型期望的那一层），本层不做换算。
+    if (pose_stream::instance().enabled()) {
+        float q_tgt12[12];
+        for (int i = 0; i < 12; i++) q_tgt12[i] = qt_p[i];
+        pose_stream::instance().send(pos_policy, quat, gyro, q_tgt12);
+    }
 
     // 6) 跌倒检测：proj_grav_z 正常 ≈ -1（机体水平，重力朝下）；抬升到 > 阈值
     //    （机体严重倾斜/倾倒）判跌倒。正常返回 true 继续，跌倒返回 false。

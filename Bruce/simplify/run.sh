@@ -12,4 +12,9 @@ if [ -f "$SHIM" ]; then
     export LD_PRELOAD="${SHIM}${LD_PRELOAD:+:$LD_PRELOAD}"
 fi
 # ---------------------------------------------------------------------------
+# 姿态流（调试用，默认关）：把 16 个 URDF 关节角 + IMU 姿态用 UDP 发给可视化工具。
+#   开启：POSE_STREAM=1 ./run.sh   → 另开一个窗口跑
+#         /home/bruce/miniforge3/envs/MJX/bin/python tool/pose_view.py --udp
+#   协议见 include/common/pose_stream.h；viewer 没开也不影响机器人（非阻塞 UDP）。
+# ---------------------------------------------------------------------------
 exec ./bin/can_motor_app "$@"

@@ -25,6 +25,14 @@
     $PY tool/pose_view.py --csv log/recv_20261008_211830.csv
     $PY tool/pose_view.py --selftest           # 不开窗口，只验证坐标链路
 
+    # 实时（机身姿态走 IMU）：C++ 侧先开姿态流，再起 viewer
+    POSE_STREAM=1 ./run.sh                     # 机甲进程（UDP 发到 127.0.0.1:45555）
+    $PY tool/pose_view.py --udp                # viewer 监听 45555（端口不同就 --udp <port>）
+    $PY tool/pose_view.py --udp --shot live.png   # 实时抓一帧存档
+
+实时协议：见 include/common/pose_stream.h（164 字节 UDP：seq/flags/t_us/quat[4]/gyro[3]/
+q[16]/q_target[12]，坐标 = URDF + POLICY 序）。**viewer 没开也不影响机器人**（非阻塞、丢帧无妨）。
+环境变量：POSE_STREAM=1 启用；POSE_HOST/POSE_PORT/POSE_HZ 可调。
 窗口内按键（GLFW）：
     空格 暂停/继续   N 单步   R 回起点   1..4 切预设   0 隐藏机身   Q 退出
 """
@@ -37,6 +45,9 @@ import math
 import os
 import re
 import sys
+import socket
+import struct
+import threading
 import time
 
 import numpy as np
@@ -246,6 +257,84 @@ def load_csv(path: str, cal: dict) -> Frames:
     if "meas_LF_HAA" in hdr:
         return load_pace(path, cal)
     raise RuntimeError(f"认不出这个 CSV 的格式：{path}")
+
+
+# =====================================================================
+#  实时源：UDP 姿态流（C++ 侧 POSE_STREAM=1 时发送，格式见 include/common/pose_stream.h）
+# =====================================================================
+POSE_MAGIC = 0x444F4750          # 'DOGP'
+POSE_FMT = "<IIIIQ4f3f16f12f"    # magic,ver,seq,flags,t_us,quat[4],gyro[3],q[16],q_tgt[12]
+POSE_SIZE = struct.calcsize(POSE_FMT)
+
+
+class UdpPoseSource:
+    """后台线程收姿态流，**永远只保留最新一帧**（丢帧无所谓）。
+
+    C++ 侧发的是 **URDF 坐标 + POLICY 序**（12 腿 + 4 轮），可直接写进 MuJoCo 的 qpos。
+    """
+
+    def __init__(self, port: int = 45555, bind: str = "0.0.0.0"):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind((bind, port))
+        self.sock.settimeout(0.2)
+        self.lock = threading.Lock()
+        self.urdf = None          # (16,) URDF/POLICY 序
+        self.q_target = None      # (12,) 或 None
+        self.quat = None          # (4,) 或 None
+        self.gyro = None
+        self.seq = -1
+        self.lost = 0
+        self.n = 0
+        self.t_last = 0.0
+        self.rate = 0.0
+        self._stop = False
+        self._th = threading.Thread(target=self._loop, daemon=True)
+        self._th.start()
+
+    def _loop(self):
+        t_prev, n_prev = time.time(), 0
+        while not self._stop:
+            try:
+                data, _ = self.sock.recvfrom(2048)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            if len(data) != POSE_SIZE:
+                continue
+            f = struct.unpack(POSE_FMT, data)
+            if f[0] != POSE_MAGIC:
+                continue
+            # ⚠ struct.unpack 返回**扁平**元组（40 个值），不能按字段名解包，按切片取
+            seq, flags = f[2], f[3]
+            quat, gyro, q, q_tgt = f[5:9], f[9:12], f[12:28], f[28:40]
+            now = time.time()
+            with self.lock:
+                if self.seq >= 0 and seq > self.seq + 1:
+                    self.lost += seq - self.seq - 1
+                self.seq = seq
+                self.n += 1
+                self.t_last = now
+                self.urdf = np.array(q, dtype=float)
+                self.q_target = np.array(q_tgt, dtype=float) if (flags & 4) else None
+                self.quat = np.array(quat, dtype=float) if (flags & 1) else None
+                self.gyro = np.array(gyro, dtype=float) if (flags & 2) else None
+                if now - t_prev >= 1.0:
+                    self.rate = (self.n - n_prev) / (now - t_prev)
+                    t_prev, n_prev = now, self.n
+
+    def latest(self):
+        with self.lock:
+            return (self.urdf, self.q_target, self.quat, self.gyro,
+                    self.seq, self.lost, self.rate, self.t_last)
+
+    def close(self):
+        self._stop = True
+        try:
+            self.sock.close()
+        except OSError:
+            pass
 
 
 # =====================================================================
@@ -480,6 +569,8 @@ class ImuTransform:
 def main() -> int:
     ap = argparse.ArgumentParser(description="关节姿态可视化（Python + MuJoCo）")
     ap.add_argument("--csv", help="回放日志：dataset_*.csv / recv_*.csv / pace chirp_*.csv")
+    ap.add_argument("--udp", nargs="?", const=45555, type=int, default=None,
+                    help="实时：监听 C++ 侧的姿态流（默认端口 45555；对方要 POSE_STREAM=1 ./run.sh）")
     ap.add_argument("--preset", default="default",
                     choices=["default", "nominal", "zero", "zero-kin"],
                     help="无 --csv 时显示的静态预设姿态")
@@ -493,6 +584,7 @@ def main() -> int:
     ap.add_argument("--shot", help="离屏渲染一张 PNG 后退出（不开窗口；预设或 --shot-t 时刻的那一帧）")
     ap.add_argument("--shot-t", type=float, default=0.0, help="--shot 用 --csv 时取哪个时刻（秒）")
     ap.add_argument("--shot-size", default="800x600", help="--shot 出图尺寸 WxH，默认 800x600")
+    ap.add_argument("--shot-wait", type=float, default=5.0, help="--shot --udp 时等第一帧的最长秒数")
     ap.add_argument("--cam-az", type=float, default=128.0, help="--shot 相机方位角（90/270=正侧视，0/180=正视）")
     ap.add_argument("--cam-el", type=float, default=-14.0, help="--shot 相机俯仰角")
     ap.add_argument("--cam-dist", type=float, default=1.85, help="--shot 相机距离 (m)")
@@ -517,6 +609,11 @@ def main() -> int:
     d = mujoco.MjData(m)
 
     src = load_csv(a.csv, cal) if a.csv else None
+    udp = UdpPoseSource(a.udp) if a.udp else None
+    if udp is not None:
+        print(f"[pose_view] 实时模式：监听 udp://0.0.0.0:{a.udp}（等 C++ 侧的姿态流…）")
+        print("            C++ 侧启动方式：POSE_STREAM=1 ./run.sh")
+        print("            若一直无包：确认对方设了 POSE_STREAM=1、端口一致、防火墙未拦本机 UDP。")
     q0 = None
     if src is not None and src.quat is not None:
         for q in src.quat:                      # 首帧有效四元数作为偏航基准
@@ -534,7 +631,22 @@ def main() -> int:
 
     # ---- 只出图：离屏渲染一张后退出（不开窗口）----
     if a.shot:
-        if src is not None:
+        if udp is not None:                 # 实时出图：等第一帧到了再渲染
+            print(f"[pose_view] 等待 udp://0.0.0.0:{a.udp} 的帧（最多 {a.shot_wait:g}s）…")
+            urdf = quat = None
+            deadline = time.time() + a.shot_wait
+            while time.time() < deadline:
+                u, _t, q, _g, _seq, _l, _r, _tl = udp.latest()
+                if u is not None:
+                    urdf, quat = u, imu(q)
+                    break
+                time.sleep(0.05)
+            if urdf is None:
+                print("🔴 没等到姿态流（确认对方设了 POSE_STREAM=1、端口一致）⇒ 改用预设")
+                urdf, quat = pre[a.preset][0], None
+        elif src is not None:
+            urdf, quat = src.at(a.shot_t * 1000.0)
+            quat = imu(quat)
             urdf, quat = src.at(a.shot_t * 1000.0)
             quat = imu(quat)
         else:
@@ -586,7 +698,19 @@ def main() -> int:
             wall_ms = (now - t_prev) * 1000.0
             t_prev = now
 
-            if src is None:
+            if udp is not None:
+                u_urdf, u_tgt, u_quat, u_gyro, seq, lost, rate, t_last = udp.latest()
+                fresh = (t_last > 0) and (time.time() - t_last < 0.5)
+                if fresh and u_urdf is not None:
+                    urdf = u_urdf
+                    quat = imu(u_quat)
+                    label = (f"实时 seq={seq}  {rate:5.1f} 包/s  丢 {lost}"
+                             + ("" if u_quat is not None else "  (无 IMU)"))
+                else:
+                    urdf, quat = pre[state["preset"]][0], None
+                    label = (f"⏳ 等待姿态流…（已收 {seq + 1} 包）—— 暂显预设 {state['preset']}"
+                             if seq >= 0 else "⏳ 等待姿态流…（一包未收）—— 暂显预设")
+            elif src is None:
                 urdf, quat = pre[state["preset"]][0], None
                 label = f"预设 {state['preset']}"
             else:

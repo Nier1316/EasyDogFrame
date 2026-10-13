@@ -302,3 +302,19 @@
 - **本次只标注、不改数值**（改它会直接改变真机站姿与策略观测）。待查 repo 外的 `RL_Train/code`
   真实训练配置 + 现场确认后再定。
 - 可视化复核：`tool/pose_view.py --preset default|nominal`（侧视对比图见 `tmp_s2r/figs/`）。
+
+### 姿态可视化接上实时（UDP 姿态流）
+- 新增 `include/common/pose_stream.h`（header-only）：把 **16 个 URDF 关节角 + IMU 姿态**
+  用 **非阻塞 UDP** 发给 `tool/pose_view.py`（164 字节/帧，格式对 Python 端有 static_assert 兜底）。
+  · **必须由本进程发**：达妙适配器同一时刻只能被一个进程占用（libusb claim 接口），
+    可视化进程没法自己读 CAN。
+  · **默认关闭**：`POSE_STREAM=1` 才建 socket；不开时 `send()` 只有一次 bool 判断。
+  · viewer 没开也不影响机器人（UDP 无连接、丢帧无妨、永不阻塞控制环）。
+  · 环境变量：`POSE_STREAM` / `POSE_HOST`(127.0.0.1) / `POSE_PORT`(45555) / `POSE_HZ`(100)。
+- 接入点：`MotionController::rlStep()`（Ex25/36/37/51/61 等所有走 MotionController 的 RL 示例自动可用），
+  在 50 Hz 环末尾发一帧"实际姿态 + 指令目标"。发的是 **URDF 坐标 + POLICY 序**（MuJoCo 期望的那层）。
+- `tool/pose_view.py` 新增 `--udp [port]`：后台线程收流、只保留最新帧，
+  界面显示 `seq / 包率 / 丢包数`；无包时回退显示预设。`--shot` 也可配合 `--udp` 实时抓帧存档。
+- `run.sh` 注释里加了开启方式（`POSE_STREAM=1 ./run.sh`）。
+- **端到端验证（无需机器人）**：合成发送端（直接 include pose_stream.h）+ 接收端
+  → 40/40 包、0 丢、q/q_target/quat/gyro 逐位相符；`--udp --shot` 出图正常（机身按 quat 横滚）。
