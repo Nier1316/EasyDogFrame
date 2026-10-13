@@ -35,3 +35,8 @@ void Example50_LieDownAngleRecord();
 void Example54_FrictionSysId();
 // 单腿三关节移到 motor_calib 零位 → 读 RL(URDF) 角对照（验证 sim2real_conv CONV_A/B 是否准）
 void Example57_SingleLegZeroAlign();
+
+// 被动姿态监视（**不使能任何电机**）：只发参数读取帧（0x0F 角度）×16 + IMU，
+// 组姿态后经 UDP 发给 tool/pose_view.py 实时渲染。⚠ 不使能 ⇒ 无保持力矩，狗会软掉，
+// 运行前必须架起/吊起（或本就趴着）。只启 motor_receive 线程。
+void Example63_PassivePoseMonitor();

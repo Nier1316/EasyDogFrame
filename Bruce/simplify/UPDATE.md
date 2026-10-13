@@ -318,3 +318,23 @@
 - `run.sh` 注释里加了开启方式（`POSE_STREAM=1 ./run.sh`）。
 - **端到端验证（无需机器人）**：合成发送端（直接 include pose_stream.h）+ 接收端
   → 40/40 包、0 丢、q/q_target/quat/gyro 逐位相符；`--udp --shot` 出图正常（机身按 quat 横滚）。
+
+### 新增 `Example63_PassivePoseMonitor`：**不使能电机**的被动姿态监视
+
+动机：**电机在未使能状态下也能响应参数读取**，所以可以做一个"绝不产生力矩"的姿态监视器，
+用来安全地看姿态（尤其是零位核对这类准静态场景）。
+
+- 做法：`ReadParam(…, MOTOR_OR_angle=0x0F)` 走"读写参数"帧（**不发任何控制/力矩帧**），
+  回复由 `unpack_frame` 的参数分支解析并同样过 `ApplyMotorCalibrationPos`
+  ⇒ `GetStatus()` 得到标定后的 status 角，再 `rl::status_to_urdf` 转 URDF 喂 MuJoCo。
+- **只启 `motor_receive` 线程**（`ReadParam` 直接发帧，不需要 `motor_send`）。
+- 轮询：500 Hz 每拍发 1 个请求、16 拍扫完全部电机 ⇒ **整帧 ≈ 31 Hz**；
+  再叠加 IMU（`Z_DOWN_X`）组姿态，经 UDP 姿态流发给 `tool/pose_view.py --udp`。
+- ⚠️ **安全前提**：不使能 = 无保持力矩 = **狗会软掉**，必须架起/吊起（或本就趴着）。
+  本示例不会使能任何电机、不会产生运动指令。
+- ⚠️ 实测踩到的坑（已加防护）：**驱动器未上电时参数请求发得出去、没人回**，
+  `position` 恒为 0 ⇒ `status_to_urdf(0) == CONV_B`（hip +1.70°/thigh −55.14°/calf −73.52°），
+  看起来像个"合法姿态"，viewer 分不出来。现用 `Usb2CanTransport::RxCount()` 判活：
+  **本秒零回帧 ⇒ 告警并停发姿态流**。
+- 真机实测（2026-10-13，适配器已插但驱动器未上电）：适配器 2 台/4 路打开成功、整帧 30 次/s、
+  IMU 有；因零回帧而正确进入"停发 + 告警"分支。**待驱动器上电后再验读数是否正确**。

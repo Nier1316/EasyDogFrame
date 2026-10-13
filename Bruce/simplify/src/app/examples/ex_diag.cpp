@@ -10,6 +10,7 @@
 #include "common/motor_logger.h"
 #include "common/log_control.h"
 #include "motion/robot_calibration.h"
+#include "common/pose_stream.h"   // 姿态流：Ex63 被动监视把姿态 UDP 发给 tool/pose_view.py
 #include <cstdio>
 #include <cmath>
 #include <cstring>
@@ -2861,4 +2862,155 @@ void Example57_SingleLegZeroAlign() {
     thread_mgr.stop_thread("motor_send");
     motor_mgr.Stop();
     printf("[INFO] Example57 完成。\n");
+}
+
+// =====================================================================
+//  示例 63：被动姿态监视（**不使能任何电机**）→ 实时姿态流给 tool/pose_view.py
+//
+//  为什么可行：电机**参数读取**（ReadParam → 固件 0x0F 角度）走的是"读写参数"帧，
+//  **不需要使能、也不发控制帧**；回复由 unpack_frame 的参数分支解析，并同样经过
+//  ApplyMotorCalibrationPos ⇒ GetStatus() 拿到的是**标定后的 status 角**，与使能
+//  状态下完全同一坐标系（再经 rl::status_to_urdf 转 URDF 即可喂 MuJoCo）。
+//
+//  ⚠ 安全前提：**不使能 = 没有保持力矩 = 狗会软掉**。必须先把狗【架起/吊起】(腿离地)，
+//     或确认它本来就趴在地上。本示例**不产生任何运动指令**，也不会使能电机。
+//  ⚠ 轮子同样不使能 ⇒ 没有固件速度环，不会自己跑。
+//
+//  分工：Example24 是"读一堆固件参数做诊断"的一次性脚本；本示例是**持续轮询 16 个
+//        关节角 + IMU** 并往外发姿态流，供实时可视化。
+//
+//  用法（两个窗口）：
+//      POSE_STREAM=1 ./run.sh                      # 本示例（默认 udp 45555）
+//      /home/bruce/miniforge3/envs/MJX/bin/python tool/pose_view.py --udp
+//  退出：键盘 q 或 Ctrl+C。
+// =====================================================================
+void Example63_PassivePoseMonitor() {
+    printf("\n========== 示例 63：被动姿态监视（不使能电机）==========\n");
+    printf("[INFO] 全程**不使能任何电机**：只发参数读取帧（0x0F 角度），不发力矩/控制帧。\n");
+    printf("[INFO] 只启 motor_receive 线程（参数请求由 ReadParam 直接发；send 线程本会跳过未使能电机）。\n\n");
+    printf("⚠️ 因为不使能 ⇒ **没有保持力矩，狗会软掉**：\n");
+    printf("   请先把狗【架起/吊起】（腿离地），或确认它本来就趴着。\n");
+    printf("   退出：键盘 q 或 Ctrl+C。\n\n");
+    printf("准备好后按回车开始（Ctrl+C 取消）: ");
+    fflush(stdout);
+    { int c; while ((c = getchar()) != '\n' && c != EOF) {} }
+    if (g_rl_stop) { printf("[INFO] 已取消\n"); return; }
+
+    MotorManager& mm = MotorManager::GetInstance();
+    ThreadManager tm;
+    mm.SetTransport(&Usb2CanTransport::GetInstance());
+    if (!mm.Initialize(tm)) { printf("[ERROR] MotorManager 初始化失败（检查 USB2CAN 是否插好）\n"); return; }
+    tm.start_thread("motor_receive");   // ⚠ 故意不启 motor_send
+    signal(SIGINT, rl_signal_handler);
+    g_rl_stop = 0;
+    sleep(1);
+
+    // IMU：机身姿态（可选；缺失则机身按水平处理）
+    ImuDevice imu;
+    imu.SetMount(ImuMount::Z_DOWN_X);
+    const bool imu_ok = imu.Initialize("/dev/ttyUSB0", 115200);
+    if (!imu_ok) printf("[WARN] IMU 打开失败 ⇒ 机身姿态按水平处理（关节角不受影响）\n");
+
+    if (!pose_stream::instance().enabled())
+        printf("[WARN] 姿态流未启用（未设 POSE_STREAM=1）⇒ 只在终端打印；\n"
+               "       要看实时三维姿态：POSE_STREAM=1 ./run.sh  +  pose_view.py --udp\n");
+
+    constexpr int HZ    = 500;   // 轮询节拍：每拍发 1 个读取请求
+    constexpr int SWEEP = 16;    // 16 个电机轮询一遍 → 整帧 ≈ 500/16 ≈ 31 Hz
+    const char* leg_name[4] = {"FL", "FR", "RL", "RR"};
+
+    printf("[INFO] 开始轮询：%d Hz，每 %d 拍扫完全部 16 个电机（≈ %.1f Hz 整帧）\n",
+           HZ, SWEEP, (double)HZ / SWEEP);
+
+    const auto t0 = std::chrono::steady_clock::now();
+    double t_print = 0.0;
+    int frames = 0, frames_sec = 0;
+    float q16[16] = {0.0f};
+    char key = 0;
+
+    int no_rx_sec = 0;                                   // 连续"零帧"秒数（判驱动器是否上电）
+    uint64_t rx_last = Usb2CanTransport::RxCount().load();
+    // 键盘 q 退出（不启 RawTerminal 的阻塞读，用 poll 非阻塞）
+    const int fd_in = fileno(stdin);
+    struct termios old_tio{}, new_tio{};
+    const bool tty_ok = isatty(fd_in) != 0;
+    if (tty_ok) {
+        tcgetattr(fd_in, &old_tio);
+        new_tio = old_tio;
+        new_tio.c_lflag &= ~(ICANON | ECHO);
+        tcsetattr(fd_in, TCSANOW, &new_tio);
+    }
+
+    for (int k = 0; !g_rl_stop; k++) {
+        // 1) 轮流给一个电机发"读角度"请求
+        const int idx = k % SWEEP;
+        mm.ReadParam(idx / 4, idx % 4 + 1, MOTOR_OR_angle);
+
+        // 2) 扫完一遍：组姿态 → 发姿态流 → 每秒打印
+        if (idx == SWEEP - 1) {
+            for (int c = 0; c < 4; c++)
+                for (int m = 1; m <= 4; m++) {
+                    const int p = rl::CAN_TO_POLICY[c * 4 + (m - 1)];
+                    q16[p] = rl::status_to_urdf(mm.GetStatus(c, m).position, p);
+                }
+            float quat[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+            float gyro[3] = {0.0f, 0.0f, 0.0f};
+            if (imu_ok) {
+                imu.GetGyro(gyro[0], gyro[1], gyro[2]);
+                imu.GetQuat(quat[0], quat[1], quat[2], quat[3]);
+            }
+            // ⚠ 存活判断（2026-10-13 实测踩到）：驱动器**没上电**时参数请求发得出去但没人回，
+            //   GetStatus().position 会一直是 0 ⇒ status_to_urdf(0) = CONV_B，看起来像个"合法姿态"
+            //   （hip +1.70° / thigh −55.14° / calf −73.52°），viewer 分不出来。
+            //   这里用 USB2CAN 的回调计数判活：本秒一帧都没收到 ⇒ 不发姿态流并告警。
+            const uint64_t rx = Usb2CanTransport::RxCount().load();
+            const bool alive = (rx > rx_last);
+            rx_last = rx;
+            if (!alive) {
+                no_rx_sec++;
+                if (no_rx_sec == 1 || no_rx_sec % 5 == 0)
+                    printf("[WARN] 本秒收到 0 个 CAN 帧 ⇒ **驱动器可能没上电/没接线**：\n"
+                           "       参数请求已发出但无回复，姿态流暂停发送（已连续 %d s；位置读数恒为 0，不可当姿态用）\n",
+                           no_rx_sec);
+            } else {
+                no_rx_sec = 0;
+                // 被动模式没有"目标"，q_target 传 nullptr（报文 flags 会标出来）
+                pose_stream::instance().send(q16, imu_ok ? quat : nullptr,
+                                             imu_ok ? gyro : nullptr, nullptr);
+                frames++;
+                frames_sec++;
+            }
+
+            const double t = std::chrono::duration<double>(
+                                 std::chrono::steady_clock::now() - t0).count();
+            if (t - t_print >= 1.0) {
+                t_print = t;
+                printf("[%6.1fs] 姿态流 %s | 整帧 %d 次/s | IMU %s%s\n", t,
+                       pose_stream::instance().enabled() ? "开" : "关",
+                       frames_sec, imu_ok ? "有" : "无",
+                       no_rx_sec > 0 ? " | 🔴 无 CAN 回帧（已停发，驱动未上电？）" : "");
+                for (int leg = 0; leg < 4; leg++)
+                    printf("   %s  hip %+7.2f°  thigh %+7.2f°  calf %+7.2f°  wheel %+9.2f°\n",
+                           leg_name[leg], rad2deg(q16[leg * 3 + 0]),
+                           rad2deg(q16[leg * 3 + 1]), rad2deg(q16[leg * 3 + 2]),
+                           rad2deg(q16[12 + leg]));
+                frames_sec = 0;
+            }
+        }
+
+        // 3) 键盘 q 退出（非阻塞）
+        if (tty_ok) {
+            struct pollfd pfd{fd_in, POLLIN, 0};
+            if (poll(&pfd, 1, 0) > 0 && read(fd_in, &key, 1) == 1 && (key == 'q' || key == 'Q'))
+                break;
+        }
+        usleep(1000000 / HZ);
+    }
+
+    if (tty_ok) tcsetattr(fd_in, TCSANOW, &old_tio);
+    printf("\n[INFO] 退出：共发 %d 帧姿态流（本示例未使能任何电机，无需失能）\n", frames);
+    signal(SIGINT, SIG_DFL);
+    tm.stop_thread("motor_receive");
+    mm.Stop();
+    printf("[INFO] 示例63 完成\n");
 }
