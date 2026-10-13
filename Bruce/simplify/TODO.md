@@ -19,6 +19,31 @@
 
 ---
 
+## 🔴 2026-10-12 新增待办
+
+### T-A. CAN 回帧被攒成 ~100 ms 一批 ⇒ 关节反馈实际只有 ~10 Hz（**未解决**）
+
+- **现象**：`MotorManager::GetStatus()` 的位置/速度在两次刷新之间**冻住**。实测 2026-10-08 的 PACE 采集：
+  8000 拍里只有 **387 拍**有变化，更新间隔中位数 **96.8 ms**，且 12 个关节**同时**跳变。
+- **根因（已定位到厂商栈）**：`lib/dmiao_sdk/.../libdm_device.so` 的
+  `can_bus_box::usb_handle_thread_func()` 把 `libusb_handle_events_timeout_completed()` 的等待超时
+  **写死成 100 ms**（`.rodata@0x151d8 = timeval{0,100000}`，**全库仅此一处**）。SDK 无任何轮询/超时可调项。
+- **影响面**：
+  - **PACE**：`I_a`（电枢惯量）/`T_d`（延迟）**辨不出来**，只剩 `d`/`τ_f`/`q̃_b` 等低频项可信
+  - `docs/ACTION_DELAY_MEASURE.md` 的"≈24 ms"需重测（6 Hz 已贴 Nyquist 5 Hz）
+  - Ex47 的 `J/B`、Ex54 摩擦、Ex58/59 力矩与重力辨识的置信度
+  - RL 观测里的关节状态是 **~10 Hz 陈旧的**（内环在固件里 1 kHz，所以狗还能走）
+  - ✅ **不受影响**：准静态场景（站立、零位核对、重力矩测量）——腿不动时陈旧值依然正确
+- **已做**：`tool/libusb_fastpoll.c` LD_PRELOAD 垫片（`run.sh` 自动加载，`main.cpp` 启动自检）；
+  ⚠️ **真机实测未生效**（突发间隔仍 99~100 ms）⇒ 攒批在 libusb **之下**（SDK 内部派发线程或设备侧）。
+- **下一步（按顺序）**：
+  1. **先诊断**：`DMCAN_RXDIAG=1 ./run.sh` 跑一次，看退出时打印的 `onRecv` 到达间隔直方图 ——
+     峰值 **≈2 ms** ⇒ 厂商栈投递正常、瓶颈在我们自己的消费路径；峰值 **≈100 ms** ⇒ 只能换传输层。
+  2. **换传输层**（若第 1 步指向厂商栈）：新写 `SocketCanTransport`（内核 socketcan，逐帧投递 +
+     内核时间戳），`CanTransport` 接口现成，参照 `src/transport/usb2can_transport.cpp` 约 150 行。
+- 详见 `memory/FACT.md` §反馈链路。
+---
+
 ## 🔴 Bug 1：BspCan 与 CanDevice 接口不统一（最优先）
 
 **文件：** `src/motor_manager.cpp:30-54` / `src/motor_drive/ele_motor.cpp:43-48`
