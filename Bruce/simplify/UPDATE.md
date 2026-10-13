@@ -270,3 +270,35 @@
 - 激活示例切到 **Example37**（`37ad2d2`），运行时会自报 `[策略] h52_s45_v4/iteration_5350（可前进）`。
 - ⚠️ 遗留：`run_sim2sim.sh` 默认 checkpoint 仍是 `iteration_9754`，与真机（5350）不一致 ⇒
   对比须 `SIM2SIM_CKPT=../weights/iteration_5350.pkl`。
+
+---
+
+## 2026-10-12（续）| 新增姿态可视化工具 + 发现名义站姿不一致
+
+### 新增 `tool/pose_view.py`（Python + MuJoCo，调试用）
+- 用真实 MJCF 做**正运动学**（只 `mj_forward`、**不跑物理**），把 12 个腿关节画成**连杆骨架**：
+  关掉 mesh（group 1）、显示碰撞体（group 3）。
+  ⚠️ 踩到一处：MJCF 里**所有碰撞体的 `rgba` alpha 都是 0**（仿真里本来不可见），
+  只切 geomgroup 会得到一副**隐形的骨架** ⇒ 工具里强制把 group3 置为不透明。
+- 数据源三种，自动识别：`log/dataset_*.csv`（status/CAN 序 + IMU quat）、
+  `log/recv_*.csv`（同，无 IMU）、`log/pace/chirp_*.csv`（已是 URDF/PACE 序）。
+  **换算常数从 `sim2real_conv.cpp` / `dogurdf.py` 解析，不手抄**（项目规范）。
+- 机身位姿用 IMU quat；⚠️ IMU **无磁力计 ⇒ 偏航基准任意**（2026-10-06 数据集首帧就是 51° 偏航），
+  默认 `--imu-mode yaw0`：以首帧为基准去掉初始偏航（保留真实转向），另有 `full/tilt/none`。
+- 窗口内按键：空格暂停、`N` 单步、`R` 回起点、`1..4` 切预设、`0` 隐藏机身、`Q` 退出。
+- 另带 `--selftest`（不开窗口验证坐标链路，含 FK 检查）与 `--shot x.png`（离屏出图给文档用）。
+- ⚠️ `log/recv_*.csv` 的 `elapsed_ms` 是**按突发打戳**的（100 ms 攒批，见 `memory/FACT.md` §反馈链路），
+  37.88 s 只组出约 820 帧 ⇒ recv 回放"一跳一跳"是**数据本身如此**，不是工具的问题。
+
+### 🔴 发现：部署侧 `DEFAULT_POSE` 与训练/sim2sim 的名义站姿不一致
+- `src/strategy/sim2real_conv.cpp` 的 `DEFAULT_POSE` calf = **−0.35**；
+  `dogurdf_sim2sim_deploy/src/dogurdf.py` 的 `NOMINAL_CALF` = **−0.53**（`NOMINAL_TORSO_HEIGHT` = 0.40）。
+  差 **0.18 rad = 10.31°**，而 `sim2real_conv.h` 的注释写着"与 dogurdf.py 的 NOMINAL_* 一致"——**这句是错的**。
+- 用新工具做 FK 实测（机身 z = 0.40 m，四腿相同）：
+  calf **−0.53** → 轮心 z **113.7 mm**（= 轮半径，**刚触地**）、轮心比髋后 24.5 mm；
+  calf **−0.35** → 轮心 z **63.6 mm**（**陷地 50 mm**）、轮心比髋后 59.5 mm。
+- 影响：若训练侧确实用 −0.53，则 `joint_pos_rel = q − DEFAULT_POSE` 的 4 个小腿通道带
+  **−0.18 rad 的恒定偏置**，`leg_pos_target` 的基点也差同样多。
+- **本次只标注、不改数值**（改它会直接改变真机站姿与策略观测）。待查 repo 外的 `RL_Train/code`
+  真实训练配置 + 现场确认后再定。
+- 可视化复核：`tool/pose_view.py --preset default|nominal`（侧视对比图见 `tmp_s2r/figs/`）。
