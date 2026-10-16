@@ -404,3 +404,39 @@ IMU 正常（roll +2.0°/pitch +6.3°），16 个关节读数稳定且**四条�
 **顺带纠正**：上一提交 `56a6ade` 的 `git add -A` 把当时工作区里 `main.cpp` 的
 "Ex63 激活"状态一并提交了（而 `FACT.md` 记的当前激活是 Ex37）⇒ 本次把 `main.cpp`
 恢复为 **Ex37 激活**（Ex63 回到注释态），与文档一致。
+
+### 🔴 查清 IMU 打开失败：物理层故障（不是软件）+ 新增 `tool/check_imu.py`
+
+现象：真机上 IMU 打不开（程序打印 `[WARN] IMU 打开失败` / Ex63 提示"机身姿态按水平处理"）。
+
+**证据链（时间线）**：
+| 时间 | 事件 |
+|---|---|
+| 10-13 19:06:55 | `ch341 1-4:1.0: ch341-uart converter detected` → `usb 1-4: attached to ttyUSB0` |
+| 10-13 19:18:10 | **`ttyUSB0: ch341-uart converter now disconnected`** / `device disconnected` |
+| 10-16 20:14:49（本次开机） | 整个开机周期**无任何 ttyUSB/ch341 记录**（IMU 再没枚举成功） |
+| 10-16 22:07:23–25 | 同一端口 **1-4**：`device descriptor read/64, error -71`(EPROTO) ×4 → `not accepting address` → 内核放弃 |
+
+⇒ IMU = **CH340 USB 转串口，挂 USB 端口 1-4 → `/dev/ttyUSB0`**；**描述符阶段就失败 ⇒ udev/用户态根本没参与**。
+结论：线材/接头/供电/USB 口/CH340 模块的**物理层问题**。
+
+**排除项（都查过了）**：
+- **brltty**：`brltty`/`brltty-udev` 均 `masked`+`inactive`；`/usr/lib/udev/rules.d/85-brltty.rules:293`
+  确实匹配 CH340（`1a86/7523`）但 `brltty_usb_run` 标签唯一动作是
+  `ENV{SYSTEMD_WANTS}+="brltty-udev.service"` ⇒ 服务已 mask = 空操作 ⇒ **排除**。
+- **权限**：`bruce` 在 `dialout` 组 ✓（另：FACT.md 早前记的"CH340 udev MODE=0666 规则"其实不存在，
+  但不影响）；**ModemManager**：snapd 规则对 `1a86:7523` 设了 `ID_MM_DEVICE_MANUAL_SCAN_ONLY=1` ✓。
+- **软件/配置**：串口路径与波特率（`/dev/ttyUSB0` @115200）与 10-13 成功那次完全一致，代码没动。
+- **CAN 适配器**：是 `ttyACM*`（cdc_acm），与 IMU 无关；内核 `cdc_acm: probe of 1-x:1.3 failed with
+  error -16` 是 SDK libusb 抢占接口的 EBUSY，**每次跑程序都会打，属正常**。
+
+**新增 `tool/check_imu.py`**（纯标准库，不依赖机器人）——为什么需要它：
+- `ImuDevice::Initialize()` **只判 `open()` 成功，不验证有没有有效帧** ⇒ "IMU 有"不代表数据在流；
+- IMU 缺失时 RL 示例**只打印 WARN 就继续跑**，姿态退化成单位四元数（假设机身水平）⇒ 策略平衡信号是假的。
+
+功能：解析维特 WT 帧（`0x55` + type + 8 数据 + SUM，定长 11），统计各类帧率/校验失败/帧头外字节，
+打印 quat（含 `Z_DOWN_X` 安装补偿，可 `--raw` 关闭）与 roll/pitch/yaw、gyro；设备不存在时给出
+`lsusb`/`journalctl -k -f` 排查步骤；退出码可脚本化（0 正常 / 1 打不开 / 2 无有效帧 / 3 自检失败）。
+带 `--selftest`：用**伪终端**灌合成帧验证解析器（自检当场抓出我两个 bug：① pty slave 默认 canonical
+模式会按换行缓冲、吃掉无换行的帧；② 维特帧是**定长 11 字节**，陀螺帧 8 个数据字节（6 角速度 + 2 温度），
+只填 6 个会让帧变 9 字节、后续全部错位）。

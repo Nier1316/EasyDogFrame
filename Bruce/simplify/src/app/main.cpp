@@ -120,9 +120,9 @@ int main() {
     // printf("[INFO] Example32 completed.\n");
 
     // 运行示例33 - IMU 链路验证（只读，不碰电机）
-    // printf("[INFO] Running Example33_IMUCheck...\n");
-    // Example33_IMUCheck();
-    // printf("[INFO] Example33 completed.\n");
+    printf("[INFO] Running Example33_IMUCheck...\n");
+    Example33_IMUCheck();
+    printf("[INFO] Example33 completed.\n");
 
     // 运行示例34 - 轮子方向诊断（扭矩测向，起立悬空 ±1.0 Nm）
     // printf("[INFO] Running Example34_WheelDirectionCheck...\n");
@@ -265,9 +265,9 @@ int main() {
     // printf("[INFO] Example49 completed.\n");
 
     // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，USB2CAN 4 路）
-    printf("[INFO] Running Example37_RLTeleopControl...\n");
-    Example37_RLTeleopControl();
-    printf("[INFO] Example37 completed.\n");
+    // printf("[INFO] Running Example37_RLTeleopControl...\n");
+    // Example37_RLTeleopControl();
+    // printf("[INFO] Example37 completed.\n");
 
     // 运行示例56 - 固定 yaw 转向真机遥测录制（sim2real 原地转向对比，落盘 log/s2r_fixedyaw_*.csv）
     // printf("[INFO] Running Example56_FixedYawRecord...\n");

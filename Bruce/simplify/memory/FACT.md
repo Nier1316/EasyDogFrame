@@ -259,7 +259,16 @@
 - 手柄：左摇杆上推=+vx 前进、右摇杆左推=+wz 左转(CCW)，vy 恒 0，量程 vx±1.0 m/s、wz±1.0 rad/s；B 键急停；Ctrl+C 急停。
 - 站立前冲补偿 `CMD_BIAS_VX = −0.05`（Ex36/Ex37/Ex51/Ex53 + `MotionController::cmd_bias_vx`）：抵消策略 wheel action 正向偏置。⚠️ 其绝对值必须 < 训练 `turn_lin_threshold`(0.1)，否则退出纯 yaw gate 变扭腿。
 - IMU（维特 HWT606，`/dev/ttyUSB0`，安装 `Z_DOWN_X`，115200）：`base_ang_vel`=gyro（机体系 rad/s）；`projected_gravity`=world2self(quat,[0,0,−1])。放平判读 pgr≈(0,0,−1)；右倾→pgr.y 变负；开机需机身水平（水平校准基准）。
-- ⚠️ IMU 串口：`/dev/ttyUSB0` 曾被 Ubuntu **brltty 盲文服务抢占**（`PRODUCT==1a86/7523`）。已 `systemctl stop/disable/mask brltty` 与 `brltty-udev` 修复，勿再启用；另加 CH340 udev 规则（MODE=0666）。
+- ⚠️ IMU 串口：`/dev/ttyUSB0` 曾被 Ubuntu **brltty 盲文服务抢占**（`PRODUCT==1a86/7523`）。已 `systemctl stop/disable/mask brltty` 与 `brltty-udev` 修复，勿再启用。
+  **2026-10-16 复核**：两者 `masked`+`inactive` ✓；`/usr/lib/udev/rules.d/85-brltty.rules:293` 仍匹配 CH340、但 `brltty_usb_run` 标签唯一动作是 `ENV{SYSTEMD_WANTS}+="brltty-udev.service"` ⇒ 服务已 mask，**空操作**，brltty 彻底排除。
+  （另：FACT.md 早前记的"CH340 udev MODE=0666 规则"在 `/etc/udev/rules.d` 里**并不存在**；不影响使用 —— 用户 `bruce` 在 `dialout` 组，且 snapd 规则对 `1a86:7523` 设了 `ID_MM_DEVICE_MANUAL_SCAN_ONLY=1` 挡住 ModemManager 探测。）
+- 🔴 **2026-10-16 IMU 掉了（真机故障，不是软件）**：IMU 是 **CH340 USB 转串口，挂 USB 端口 1-4 → `/dev/ttyUSB0`**。
+  时间线：`10-13 19:06:55` 枚举成功（`ch341 1-4:1.0 … attached to ttyUSB0`）→ **`10-13 19:18:10` `device disconnected`** → 本次开机（`10-16 20:14:49`）**整个周期无任何 ttyUSB/ch341 记录** → `10-16 22:07` 同一端口 1-4 插上后 `device descriptor read/64, error -71`(EPROTO) ×4 → `not accepting address` → 内核放弃。
+  ⇒ **描述符阶段就失败 ⇒ udev/用户态根本没参与**，属线材/接头/供电/USB 口/CH340 模块的物理层问题。
+  排查命令：`lsusb | grep -i 1a86`（应见 CH340）、`journalctl -k -f`（拔插时看），自检工具 **`tool/check_imu.py`**。
+  ⚠️ **达妙 CAN 适配器是 `ttyACM*`（cdc_acm），不是 IMU**；内核里 `cdc_acm: probe of 1-x:1.3 failed with error -16` 是 SDK libusb 抢占接口导致的 EBUSY，**每次跑程序都会打，属正常**。
+- ⚠️ **IMU 缺失时 RL 示例只打印 WARN 然后继续跑**（`ex_rl.cpp` 多处 "gyro/quat 用默认值（机器人会失控，务必急停）"）：姿态观测退化成**单位四元数 = 假设机身完全水平** ⇒ 策略的主动平衡信号是假的。**IMU 没修好之前不要跑 RL 示例**（Ex63 被动读不受影响，它会提示"机身姿态按水平处理"）。
+- ⚠️ `ImuDevice::Initialize()` **只判 `open()` 成功，不验证有没有有效数据帧** ⇒ "IMU 有"不等于数据在流（`tool/check_imu.py` 就是补这个）。串口路径在 8 处硬编码 `/dev/ttyUSB0`。
 - ⚠️ 代码教训：`rl::world2self`/`build_observation` 要求 quat 是**连续 float[4]**。写 IMU 读取时统一用数组 + `GetQuat(quat[0],...)`，勿用独立局部变量地址。
 - 控制台日志分类：`include/common/log_control.h` 的 `LogCat`（SYSTEM/MOTOR/RL/IMU/WHEEL/CAN/DIAG）+ `LOG_SWITCH[]`；CSV 落盘开关 `include/common/motor_logger.h` 的 `LogFileSwitch`；S2R 遥测 `include/common/s2r_recorder.h`。
 - Python 工具（`tool/`）：`export_policy.py`（ckpt → `policy_weights.h`/`policy_test_ref.h`）、`compare_sim2real.py`（sim `--record` CSV vs 真机 `log/rl_*.csv` 按 `wall_ms` 对齐）、`friction_id_offline.py`（Ex54 落盘 → fc/fv 回归，含 `--demo` 自测）、`verify_friction_ff.py`、`plot_rlrun.py`、`plot_motor_torque.py`、`plot_joint_torque.py`。
