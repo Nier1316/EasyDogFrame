@@ -15,15 +15,22 @@
   · 骨架 = 只显示 MJCF 里的**碰撞体**（每条连杆都有 group=3 的圆柱/方盒），
     关掉 group=1 的 mesh ⇒ 不用另写模型。
 
-用法（**必须**用装了 mujoco 的环境）：
+用法（**推荐用包装脚本** `tool/pose_view.sh`，它自动找装了 mujoco 的 python）：
+    ./tool/pose_view.sh                       # 内建预设：部署侧 DEFAULT_POSE
+    ./tool/pose_view.sh --preset nominal      # 训练/sim2sim 的 NOMINAL_*（对比用）
+    ./tool/pose_view.sh --preset zero         # 物理零位姿态（status = 0/0/π2）
+    ./tool/pose_view.sh --preset zero-kin     # 运动学理论零位姿态（见下）
+    ./tool/pose_view.sh --csv log/dataset_20261006_130814.csv
+    ./tool/pose_view.sh --udp                 # 实时（配 C++ 侧 POSE_STREAM=1 ./run.sh）
+    ./tool/pose_view.sh --selftest            # 不开窗口，只验证坐标链路
+等价的直接调用（例如要把本文件当模块 import 时）：
     PY=/home/bruce/miniforge3/envs/MJX/bin/python
-    $PY tool/pose_view.py                      # 内建预设：部署侧 DEFAULT_POSE
-    $PY tool/pose_view.py --preset nominal     # 训练/sim2sim 的 NOMINAL_*（对比用）
-    $PY tool/pose_view.py --preset zero        # 物理零位姿态（status = 0/0/π2）
-    $PY tool/pose_view.py --preset zero-kin    # 运动学理论零位姿态（见下）
-    $PY tool/pose_view.py --csv log/dataset_20261006_130814.csv
-    $PY tool/pose_view.py --csv log/recv_20261008_211830.csv
-    $PY tool/pose_view.py --selftest           # 不开窗口，只验证坐标链路
+    $PY tool/pose_view.py --udp
+
+⚠️ **不要用 sudo 跑本工具**：它只收 UDP + 渲染，不需要任何特权；sudo 还会丢
+   XAUTHORITY ⇒ MuJoCo 窗口大概率打不开（Cannot open display），并可能在本工程目录
+   留下 root 属主的文件。（另：`$PY` 若为空，`sudo $PY tool/pose_view.py` 会被当成
+   `sudo tool/pose_view.py` ⇒ 报 "command not found"。）
 
     # 实时（机身姿态走 IMU）：C++ 侧先开姿态流，再起 viewer
     POSE_STREAM=1 ./run.sh                     # 机甲进程（UDP 发到 127.0.0.1:45555）
