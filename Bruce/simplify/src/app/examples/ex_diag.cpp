@@ -2932,6 +2932,13 @@ void Example63_PassivePoseMonitor() {
     int no_rx_sec = 0;
     bool ever_rx = false;                       // 是否**曾经**收到过回帧（决定要不要发姿态流）
     uint64_t rx_last = Usb2CanTransport::RxCount().load();
+    // 逐电机回帧判活基线（MotorPosUpdateCount：current_position 被写入的次数）。
+    // 用途：某电机不回帧时它的 URDF 读数会**恒等于 CONV_B**（status=0），肉眼分不出来；
+    // 本秒计数不增长即判"无回帧"，直接点名是哪个电机。idx = can*4 + (motor_id-1)
+    uint64_t cnt_last[16];
+    for (int c = 0; c < 4; c++)
+        for (int m = 1; m <= 4; m++)
+            cnt_last[c * 4 + (m - 1)] = MotorPosUpdateCount((uint8_t)c, (uint8_t)m);
     // 键盘 q 退出（不启 RawTerminal 的阻塞读，用 poll 非阻塞）
     const int fd_in = fileno(stdin);
     struct termios old_tio{}, new_tio{};
@@ -2997,6 +3004,28 @@ void Example63_PassivePoseMonitor() {
                        frames_sec, imu_ok ? "有" : "无",
                        !ever_rx ? " | 🔴 零回帧（已停发）" : "",
                        (ever_rx && no_rx_sec > 0) ? " | ⚠ 本秒无回帧（突发投递间隙）" : "");
+                // 逐电机静默检测：本秒计数没增长 ⇒ 该电机没回帧
+                {
+                    int silent = 0;
+                    char list[128] = {0};
+                    for (int c = 0; c < 4; c++)
+                        for (int m = 1; m <= 4; m++) {
+                            const int i = c * 4 + (m - 1);
+                            const uint64_t now = MotorPosUpdateCount((uint8_t)c, (uint8_t)m);
+                            if (now == cnt_last[i]) {
+                                silent++;
+                                char one[24];
+                                snprintf(one, sizeof(one), "%sCAN%d-M%d",
+                                         silent > 1 ? " " : "", c, m);
+                                strncat(list, one, sizeof(list) - strlen(list) - 1);
+                            }
+                            cnt_last[i] = now;
+                        }
+                    if (silent)
+                        printf("   🔴 本秒无回帧的电机 %d 个：%s"
+                               " ⇒ 这些通道的读数恒等于 CONV_B，**不是真实姿态**\n",
+                               silent, list);
+                }
                 for (int leg = 0; leg < 4; leg++)
                     printf("   %s  hip %+7.2f°  thigh %+7.2f°  calf %+7.2f°  wheel %+9.2f°\n",
                            leg_name[leg], rad2deg(q16[leg * 3 + 0]),
