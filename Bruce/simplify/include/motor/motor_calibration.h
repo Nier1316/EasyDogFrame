@@ -49,6 +49,9 @@ constexpr MotorCalibrationParam MOTOR_CALIBRATION[CAN_PORTS][MOTORS_PER_CAN] = {
     {
         // Motor 1 (Hip) pos_offset 当前 0.611。曾评估提至 0.78（FR hip 下发位置偏 RL +0.18，
         //   反推 offset≈0.78~0.80）但未落地/已回退；若 FR hip 仍位置偏，现场核实后再调。
+        // ⚠ 2026-10-13：那次"偏 +0.18"的评估发生在**FR hip 符号被确认反了之前**，很可能是
+        //   符号错误的表象（映射取反见 strategy/sim2real_conv.cpp 的 CONV_A/B[3]）。
+        //   **重新现场核实之前不要再动这个 offset**，否则等于在错误基础上再叠一层补偿。
         {1.0f, 1.0f, 0.611f},  // Motor 1 (Hip)
         {-1.0f, -1.0f, 0.441f}, // Motor 2 (Thigh)
         {1.0f, 1.0f, 0.211f},  // Motor 3 (Calf)

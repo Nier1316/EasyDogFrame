@@ -363,3 +363,44 @@ IMU 正常（roll +2.0°/pitch +6.3°），16 个关节读数稳定且**四条�
 - 顺带在文档里明确 **不要用 sudo**：本工具不需要特权，而 sudo 会丢 XAUTHORITY ⇒ 窗口打不开；
   且 `$PY` 为空时 `sudo $PY tool/pose_view.py` 会退化成 `sudo tool/pose_view.py` ⇒
   "command not found"（用户实际踩到）。
+
+### 🔴 修复 FR hip 方向反了（现场确认）+ 顺带纠一个提交混入
+
+现场用 Ex63 被动监视 + viewer 逐腿核对，用户确认：**右前(FR) hip 的观测方向是反的**
+（把 FR 腿远端往机器人左侧推，URDF 读数反而变小；其余腿正常）。
+
+**这不是显示问题**：`CONV_A/CONV_B` 同时被观测（`status_to_urdf`）与动作（`urdf_to_status`）
+路径使用且精确互逆 ⇒ 策略下发的 FR hip **动作在物理上同样是反的**，而反馈自洽所以站着
+（hip 名义值≈0）看不出来。
+
+**怎么定位到的**：
+- 链路 `URDF = CONV_A·(pos_scale·raw + pos_offset) + CONV_B`；hip 的 `CONV_A=+1`（四条腿同）、
+  而电机层 `pos_scale` 是**对角同号**：FL −1 / FR +1 / RL +1 / RR −1。
+- 该对角模式自 `57cd63b`(2026-06-13 "补充物理0位") 引入后**从未复核**（中间只有 `f10a2f5`
+  把 vel_scale 同步成 pos_scale）。
+- 模型侧真值（实测）：MJCF 四条 hip 的世界轴**全是 (+1,0,0)**，FK 验证「hip 正 ⇒ 该腿远端向
+  机器人左侧(+y)移动」**四条腿一致**；模型本身左右严格镜像；`dogurdf.py` 四条腿共用
+  `NOMINAL_HIP`。⇒ hip 的 URDF 语义必须统一，对角模式里必有错。
+
+**改法**（`src/strategy/sim2real_conv.cpp`）：把该关节的**整个映射取反**——
+`CONV_A[3]: +1→−1` 且 `CONV_B[3]: +0.0297→−0.0297`，于是 `urdf_new ≡ −urdf_old`
+⇒ **零位一点不动、方向翻转**，且 `urdf_to_status` 仍精确互逆（观测与动作同步翻转）。
+- ⚠ 只翻 `CONV_A` 会让零位偏 `2×CONV_B = 0.0594 rad (3.4°)`。
+- ⚠ 不动电机层 `pos_scale`（那是"物理编码器正方向"的实测声明，且只改它同样挪零位）。
+
+**验证（无需机器人）**：用**实际编译出的常量**跑 `status_to_urdf/urdf_to_status` ⇒ 仅 FR hip
+从 `+0.3297` 变 `−0.3297`，其余 15 个关节逐位不变；raw 域零点四条腿全部不动；互逆误差 1.2e-7
+（float 精度极限）。
+
+**同步**：`sim2real_conv.h` 注释、`docs/SIM2REAL_DEPLOY.md`、`memory/FACT.md`；
+`tool/plot_rlrun.py` 原来**硬编码** `CONV_B_HIP=0.0297, A=+1`（第二真值来源，改完必错）
+⇒ 改为从 `sim2real_conv.cpp` **解析** CONV_A/CONV_B 并逐腿换算；
+`motor_calibration.h` 里那条"FR hip 偏 +0.18 ⇒ 把 offset 提到 0.78"的旧评估**加了警示**：
+它发生在符号被确认反了之前，很可能是符号错误的表象，**重新现场核实前不要再动 offset**。
+
+**待办**：RL(左后) hip 未确认（电机层与 FR 同号，首要嫌疑），thigh/calf 也建议一并复核；
+判据：腿远端向**左**推 ⇒ hip 读数**变大**，向**后**推 ⇒ thigh/calf 读数**变大**。
+
+**顺带纠正**：上一提交 `56a6ade` 的 `git add -A` 把当时工作区里 `main.cpp` 的
+"Ex63 激活"状态一并提交了（而 `FACT.md` 记的当前激活是 Ex37）⇒ 本次把 `main.cpp`
+恢复为 **Ex37 激活**（Ex63 回到注释态），与文档一致。

@@ -17,15 +17,37 @@
 列约定（与 trace.csv header 一致，全 POLICY 序）:
     t_s,step,phase,cmd_vx,cmd_vyaw, qt0..15, qtv0..15, q0..15, qd0..15,
     trq0..15, wvel0..3, qw,qx,qy,qz,gx,gy,gz,yaw,roll,pitch,yaw_rate
-    qt/q/qd/trq 均 URDF；hip status = (urdf - CONV_B)/CONV_A（CONV_B_hip=0.0297,A=+1）
+    qt/q/qd/trq 均 URDF；status = (urdf - CONV_B)/CONV_A（A/B 从 src/strategy/sim2real_conv.cpp 现读，
+    勿在本文件硬编码——2026-10-13 起 FR hip 的 A/B 与其余腿不同号）
 """
-import sys, os, csv
+import sys, os, csv, re
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-CONV_B_HIP = 0.0297     # hip: urdf = A*status + B (A=+1)
+def _load_conv():
+    """从 sim2real_conv.cpp 解析 CONV_A/CONV_B —— 唯一真值来源，别在本文件硬编码。
+    （2026-10-13 起 FR hip 为 A=-1/B=-0.0297，与其余腿不同号，硬编码必错。）"""
+    src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "src", "strategy", "sim2real_conv.cpp")
+    with open(src_path, encoding="utf-8") as f:
+        src = f.read()
+
+    def arr(name):
+        mt = re.search(name + r"\[16\]\s*=\s*\{(.*?)\};", src, re.S)
+        if not mt:
+            raise RuntimeError(f"sim2real_conv.cpp 里找不到 {name}")
+        body = re.sub(r"//[^\n]*", "", mt.group(1))          # 去注释（里面有日期数字）
+        vals = [float(x.rstrip("fF")) for x in
+                re.findall(r"[-+]?\d+\.?\d*(?:[eE][-+]?\d+)?[fF]?", body) if x.strip("fF+-")]
+        if len(vals) != 16:
+            raise RuntimeError(f"{name} 解析出 {len(vals)} 个值（应为 16）")
+        return np.array(vals)
+    return arr("CONV_A"), arr("CONV_B")
+
+
+CONV_A, CONV_B = _load_conv()
 LEG = ["FL", "FR", "RL", "RR"]
 JN = ["hip", "thigh", "calf"]
 
@@ -107,14 +129,18 @@ def plot1(d, outdir):
     t = d["t_s"]
     sim = d.get("sim", False)
     suf = "_sim" if sim else ""
-    off = 0.0 if sim else CONV_B_HIP      # real 转 status 坐标显示（竖直≈0）；sim 无 status 层用 urdf
     ylab = "hip (urdf)" if sim else "hip (status)"
     lcmd, lfb = ("policy target", "sim q") if sim else ("RL cmd (status)", "motor fb (status)")
     fig, axs = plt.subplots(2, 2, figsize=(12, 7), sharex=True)
     for k, ax in enumerate(axs.flat):
         i = 3 * k  # hip policy idx
-        ax.plot(t, d["qt"][:, i] - off, color="C0", lw=1.6, label=lcmd)
-        ax.plot(t, d["q"][:, i] - off, color="C1", lw=1.1, label=lfb)
+        if sim:                                # sim 无 status 层，直接用 urdf
+            cmd, fb = d["qt"][:, i], d["q"][:, i]
+        else:                                  # real：逐腿转 status（A/B 可能不同号）
+            cmd = (d["qt"][:, i] - CONV_B[i]) / CONV_A[i]
+            fb  = (d["q"][:, i] - CONV_B[i]) / CONV_A[i]
+        ax.plot(t, cmd, color="C0", lw=1.6, label=lcmd)
+        ax.plot(t, fb, color="C1", lw=1.1, label=lfb)
         ax.axhline(0, color="gray", lw=0.6, ls="--")
         ax.set_ylim(-0.35, 0.5)
         ax.set_ylabel(f"{LEG[k]} {ylab}")

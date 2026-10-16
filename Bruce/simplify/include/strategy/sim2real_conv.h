@@ -25,8 +25,12 @@ extern const float DEFAULT_POSE[16];
 
 // 真机 GetStatus 角 ↔ URDF 角每关节映射（2026-08-20 真机 L 形测量）：
 //   URDF = CONV_A[joint]*GetStatus + CONV_B[joint]（rad）
-//   hip   A=+1 B=+0.0297   thigh A=-1 B=-0.9624   calf A=+1 B=-1.2832   wheel A=+1 B=0
-// ⚠ 基于一次 L 形目测，数值待真机低增益验证后再微调。
+//   hip   默认 A=+1 B=+0.0297（**例外：FR hip 为 A=-1 B=-0.0297**，2026-10-13 现场确认
+//         观测方向反了，修法=整个映射取反以保零位，见 sim2real_conv.cpp 注释）
+//   thigh A=-1 B=-0.9624   calf A=+1 B=-1.2832   wheel A=+1 B=0
+// ⚠ 基于一次 L 形目测（08-20）；**hip 的符号还叠加了电机层 pos_scale 的对角模式**
+//   （FL −1 / FR +1 / RL +1 / RR −1，自 57cd63b 起未复核），FR 已于 10-13 现场纠正，
+//   RL 待现场确认。判据：腿远端向机器人左侧推 ⇒ URDF 读数应变大。
 extern const float CONV_A[16];   // ±1 符号
 extern const float CONV_B[16];   // 偏移 (rad)
 

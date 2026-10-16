@@ -126,8 +126,13 @@ POLICY_TO_CAN = (0,1,2,4, 5,6,8, 9,10,12, 13,14,3, 7,11,15)   // policy 索引 �
 
 ```
 URDF = CONV_A[joint]·GetStatus + CONV_B[joint]
-CONV_A: hip+1 / thigh−1 / calf+1 / wheel+1
-CONV_B: hip+0.0297 / thigh−0.9624 / calf−1.2832 / wheel 0   (rad)
+CONV_A: hip±1（**FR hip = −1，例外**）/ thigh−1 / calf+1 / wheel+1
+CONV_B: hip±0.0297（**FR hip = −0.0297**）/ thigh−0.9624 / calf−1.2832 / wheel 0   (rad)
+
+> ⚠ 2026-10-13 现场确认 **FR hip 的观测方向原本是反的**（腿远端往机器人左侧推、URDF 读数
+> 反而变小），故把该关节的整个映射取反（A 与 B 同时翻号 ⇒ 零位不动、方向翻转）。
+> **RL hip 尚未现场确认**（电机层与 FR 同号，是首要嫌疑），thigh/calf 也建议一并复核。
+> 判据：腿远端向机器人**左侧**推 ⇒ hip 读数应**变大**；向**后**推 ⇒ thigh/calf 读数应**变大**。
 ```
 
 - `status_to_urdf(angle, j)`：读反馈转 URDF（位置观测）

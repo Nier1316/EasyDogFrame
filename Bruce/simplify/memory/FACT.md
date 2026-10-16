@@ -58,6 +58,15 @@
   ⇒ 若训练侧真用 −0.53，则 `joint_pos_rel = q − DEFAULT_POSE` 的 4 个小腿通道带 **−0.18 rad 恒定偏置**。
   **数值未改动**，待查 `RL_Train/code` 训练配置 + 现场确认。工具：`tool/pose_view.py --preset default|nominal`。
 - `CONV_A`：每腿 hip/thigh/calf = `+1, −1, +1`，四轮 `+1`；`CONV_B`：每腿 `+0.0297, −0.9624, −1.2832`，四轮 `0`。
+  ⚠ **例外：FR hip = (−1, −0.0297)** —— 2026-10-13 现场确认其观测方向原本反了（腿远端往
+  机器人左侧推、URDF 读数反而变小），修法是把该关节**整个映射取反**（A 与 B 同时翻号），
+  于是 `urdf_new ≡ −urdf_old` ⇒ 零位不动、方向翻转，且 `urdf_to_status` 仍精确互逆
+  （观测与动作同步翻转）。只翻 A 会让零位偏 2×CONV_B = 3.4°。**RL hip 未确认**（电机层
+  与 FR 同号，首要嫌疑）；判据：腿远端向**左**推 ⇒ hip 读数**变大**、向**后**推 ⇒ thigh/calf **变大**。
+- hip 符号的**电机层**（`MOTOR_CALIBRATION[..][0].pos_scale`）是**对角同号**：FL −1 / FR +1 /
+  RL +1 / RR −1，自 `57cd63b`(06-13) 引入后从未复核 ⇒ 与 MJCF 的"四条 hip 世界轴全 (+1,0,0)、
+  四条腿共用 NOMINAL_HIP"相矛盾，`CONV_A/B` 正是纠正它的地方（不要动 pos_scale：那是
+  "物理编码器正方向"的实测声明，且只改它同样会挪零位）。
 - 关系：`URDF = CONV_A*GetStatus + CONV_B`；`GetStatus = (URDF − CONV_B)/CONV_A`（`src/strategy/sim2real_conv.cpp`）。
 
 ### 标定表（`include/motor/motor_calibration.h`）
