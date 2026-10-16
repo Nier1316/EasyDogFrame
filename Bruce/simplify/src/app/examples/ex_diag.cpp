@@ -3028,3 +3028,115 @@ void Example63_PassivePoseMonitor() {
     mm.Stop();
     printf("[INFO] 示例63 完成\n");
 }
+
+// =====================================================================
+//  示例 64：反馈链路诊断（**不使能电机**）—— 测"策略真正看到的"关节反馈率
+//
+//  为什么需要它：`log/recv_*.csv` 只能证明"帧收到了"，证明不了"上位机什么时候看到"。
+//  本示例直接测**应用可见更新率**：反复读 `GetStatus().position`，统计每个电机的位置
+//  真正发生变化的次数 ⇒ 这就是策略观测里 `joint_pos_rel` 的实际刷新率。
+//
+//  流量来源：连续发**参数读取**帧（`ReadParam(MOTOR_OR_angle)`，固件逐条回帧）。
+//  这样能在**不使能任何电机**的前提下打到与 RL 相当的入站流量（RL 是 8 电机/设备 × 500 Hz）。
+//
+//  环境变量：
+//    FB_POLL_US=<n>   每轮 16 个请求之后的休眠（µs，默认 0 = 全速）
+//    FB_SECS=<n>      运行时长（秒，默认 12）
+//
+//  配套使用 `tool/libusb_xferprobe.c` 垫片看传输层；用 `DMCAN_XFER_BYTES=<n>` 夹小
+//  SDK 的 4096 字节 bulk IN 请求长度，可做 A/B（本示例打印的就是 A/B 要比的数字）。
+// =====================================================================
+void Example64_FeedbackRateDiag() {
+    printf("\n========== 示例 64：反馈链路诊断（不使能电机）==========\n");
+    printf("[INFO] 只发参数读取帧（0x0F 角度），**不使能、不发控制帧**，不产生力矩。\n");
+    printf("[INFO] 测的是\"应用可见更新率\"＝`GetStatus().position` 真正变化的次数。\n\n");
+
+    const auto us_now = []() -> int64_t {
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch()).count();
+    };
+    int req_hz = 8000; {                       /* 总请求率（≈RL：16 电机 × 500 Hz） */
+        const char* s = getenv("FB_REQ_HZ");
+        if (s && *s) req_hz = atoi(s);
+    }
+    double secs = 12.0; {
+        const char* s = getenv("FB_SECS");
+        if (s && *s) secs = atof(s);
+    }
+
+    MotorManager& mm = MotorManager::GetInstance();
+    ThreadManager tm;
+    mm.SetTransport(&Usb2CanTransport::GetInstance());
+    if (!mm.Initialize(tm)) { printf("[ERROR] MotorManager 初始化失败\n"); return; }
+    tm.start_thread("motor_receive");     // 只启接收（参数请求由 ReadParam 直接发）
+    signal(SIGINT, rl_signal_handler);
+    g_rl_stop = 0;
+    sleep(1);
+
+    printf("[INFO] 请求节拍 %d 次/s（≈每电机 %d Hz），时长 %.1fs；Ctrl+C 提前结束。\n",
+           req_hz, req_hz / 16, secs);
+
+    /* 请求节拍：默认把总请求率打到 ~8000 次/s（≈ RL 的 16 电机 × 500 Hz） */
+    const int64_t req_period_us = req_hz > 0 ? (int64_t)(1e6 / (double)req_hz) : 0;
+
+    uint64_t c0[16];
+    for (int c = 0; c < 4; c++)
+        for (int m = 1; m <= 4; m++)
+            c0[c * 4 + (m - 1)] = MotorPosUpdateCount((uint8_t)c, (uint8_t)m);
+
+    const uint64_t rx0 = Usb2CanTransport::RxCount().load();
+    const int64_t t0 = us_now();
+    uint64_t req = 0;
+    int k = 0;
+    int64_t next_req = t0;
+
+    while (!g_rl_stop) {
+        const int64_t now = us_now();
+        if (now - t0 >= (int64_t)(secs * 1e6)) break;
+        if (now >= next_req) {
+            const int idx = k++ % 16;                       // 轮询 16 个电机
+            mm.ReadParam((uint8_t)(idx / 4), (uint8_t)(idx % 4 + 1), MOTOR_OR_angle);
+            req++;
+            next_req += req_period_us;
+            if (next_req < now) next_req = now;              // 跟不上就重置节拍
+        } else {
+            usleep(20);                                     // 不要忙等抢 CPU
+        }
+    }
+
+    const double dur = (us_now() - t0) / 1e6;
+    const uint64_t rx = Usb2CanTransport::RxCount().load();
+    uint64_t changes[16];
+    for (int c = 0; c < 4; c++)
+        for (int m = 1; m <= 4; m++)
+            changes[c * 4 + (m - 1)] =
+                MotorPosUpdateCount((uint8_t)c, (uint8_t)m) - c0[c * 4 + (m - 1)];
+
+    printf("\n---------- 结果（%.2fs）----------\n", dur);
+    printf("  发出参数请求 %.0f 次/s；收到 CAN 帧 %.0f 帧/s（共 %llu）\n",
+           req / dur, (rx - rx0) / dur, (unsigned long long)(rx - rx0));
+    printf("  下面\"更新率\"= current_position **被写入的次数**/时长（＝策略能看到新位置的频率）\n");
+    printf("\n  %-16s %14s\n", "电机", "可见更新率");
+    uint64_t tot = 0;
+    for (int c = 0; c < 4; c++)
+        for (int m = 1; m <= 4; m++) {
+            const int i = c * 4 + (m - 1);
+            tot += changes[i];
+            const char* tag = (m == 4) ? "wheel" : (m == 1 ? "hip" : (m == 2 ? "thigh" : "calf"));
+            printf("  CAN%d-M%d(%-5s) %10.1f Hz%s\n", c, m, tag, changes[i] / dur,
+                   changes[i] ? "" : "   ← 全程 0 次（该电机不回帧）");
+        }
+    printf("\n  合计可见更新 %.0f 次/s ⇒ 平均每电机 %.1f Hz\n",
+           tot / dur, (tot / dur) / 16.0);
+    printf("  判读：≥200 Hz ⇒ 反馈新鲜（策略看到的是实时值）；\n"
+           "        ~10 Hz  ⇒ 上位机每 ~100 ms 才看到一次新位置（就是本次要查的问题）。\n");
+
+    { const char* s = getenv("DMCAN_RXDIAG");
+      if (s && *s && *s != '0')
+          printf("\n[提示] DMCAN_RXDIAG=1 已开：退出时 Usb2CanTransport 会打印 onRecv 到达间隔直方图。\n"); }
+
+    signal(SIGINT, SIG_DFL);
+    tm.stop_thread("motor_receive");
+    mm.Stop();
+    printf("[INFO] 示例64 完成\n");
+}

@@ -175,6 +175,24 @@ if(UNIX)
 endif()
 message(STATUS "libusb 垫片: ${PROJECT_SOURCE_DIR}/bin/libusb_fastpoll.so")
 
+# ---------------------------------------------------------------------------
+# libusb 传输探针垫片：打印 SDK 请求的 bulk IN transfer 长度 + 完成间隔直方图，
+# 用于定位 "CAN 回帧被攒成 ~100 ms 一批" 到底在传输层还是设备固件。
+# 详见 tool/libusb_xferprobe.c 的文件头。可选 DMCAN_XFER_BYTES=<n> 夹小请求长度（验证性修复）。
+# ---------------------------------------------------------------------------
+add_library(usb_xferprobe SHARED tool/libusb_xferprobe.c)
+set_target_properties(usb_xferprobe PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin
+)
+# libusb 头从 conda 前缀推（与链接同一个 libusb，避免拿到系统 1.0.25 的头）
+get_filename_component(CONDA_PREFIX_DIR ${CONDA_LIB_DIR} DIRECTORY)
+target_include_directories(usb_xferprobe PRIVATE ${CONDA_PREFIX_DIR}/include/libusb-1.0)
+target_link_libraries(usb_xferprobe PRIVATE ${CMAKE_DL_LIBS})
+if(UNIX)
+    target_compile_options(usb_xferprobe PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+message(STATUS "libusb 传输探针: ${PROJECT_SOURCE_DIR}/bin/libusb_xferprobe.so")
+
 # ============ 编译信息 ============
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")

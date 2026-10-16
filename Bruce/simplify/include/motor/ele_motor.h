@@ -85,6 +85,10 @@ void set_motor_para_bt(const EleMotor& motor, float p1, float p2, float p3, floa
 // 直接解包 CAN 帧数据（不再接收，只解析）
 void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc);
 
+// 诊断：can_port*4+(motor_id-1) 这个电机的 current_position 被写入的总次数
+//（＝上位机/策略能看到的位置更新次数）。见 ele_motor.cpp 的说明与 Example64。
+uint64_t MotorPosUpdateCount(uint8_t can_port, uint8_t motor_id);
+
 // 参数回帧详细打印开关。置 true 时连角度/速度/扭矩回帧也打印，
 // 用于查看使能前的原始读数；常态运行务必保持 false（1kHz 会淹没终端）。
 extern bool g_param_verbose;

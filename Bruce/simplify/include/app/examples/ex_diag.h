@@ -40,3 +40,8 @@ void Example57_SingleLegZeroAlign();
 // 组姿态后经 UDP 发给 tool/pose_view.py 实时渲染。⚠ 不使能 ⇒ 无保持力矩，狗会软掉，
 // 运行前必须架起/吊起（或本就趴着）。只启 motor_receive 线程。
 void Example63_PassivePoseMonitor();
+
+// 反馈链路诊断（**不使能电机**）：全速发参数读取帧制造与 RL 相当的入站流量，
+// 统计 `GetStatus().position` 的**应用可见更新率**（＝策略观测的实际刷新率）。
+// env: FB_POLL_US / FB_SECS。配 tool/libusb_xferprobe.so 与 DMCAN_XFER_BYTES 做 A/B。
+void Example64_FeedbackRateDiag();
