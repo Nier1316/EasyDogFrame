@@ -327,6 +327,15 @@
   `onRecv` 每帧取锁两次 —— 属可优化项。
 - 手柄：左摇杆上推=+vx 前进、右摇杆左推=+wz 左转(CCW)，vy 恒 0，量程 vx±1.0 m/s、wz±1.0 rad/s；B 键急停；Ctrl+C 急停。
 - 站立前冲补偿 `CMD_BIAS_VX = −0.05`（Ex36/Ex37/Ex51/Ex53 + `MotionController::cmd_bias_vx`）：抵消策略 wheel action 正向偏置。⚠️ 其绝对值必须 < 训练 `turn_lin_threshold`(0.1)，否则退出纯 yaw gate 变扭腿。
+- 🔴 **2026-10-17 IMU 安装补偿的四元数乘法顺序修好了**（现场："yaw 和 pitch 是反的、roll 正常"）。
+  实际安装 = **X 前、Y 右、Z 下** ⇒ 传感器系相对机体系是 `M = diag(1,−1,−1)`（绕 X 180°），
+  `q_M = (0,1,0,0)`。**向量与旋转的变换方式不同**：
+  · 向量（gyro）：`v_body = M·v_sensor` ⇒ `(gx, −gy, −gz)` ✓ 一直是对的
+  · 旋转（quat）：`q_body = q_raw ⊗ q_M` ⇒ **右乘** `(w,x,y,z)→(−x, w, z, −y)`
+  · 旧实现写的是左乘 `q_M ⊗ q_raw`（= 对旋转做共轭），效果恰好是 **roll 不变、pitch/yaw 取反**
+    —— 与现场症状逐项吻合。数值验证：pitch+10 → 旧 −10/新 +10；yaw+30 → 旧 −30/新 +30；roll 两者一致。
+  ⚠ 影响很大：`projected_gravity` 用这个 quat ⇒ **pitch 反了会直接污染策略的姿态观测**。
+  `IMU_MOUNT=up|down_x` 环境变量仅作调试用；安装方向本来就该是 `Z_DOWN_X`。
 - IMU（维特 HWT606，`/dev/ttyUSB0`，安装 `Z_DOWN_X`，115200）：`base_ang_vel`=gyro（机体系 rad/s）；`projected_gravity`=world2self(quat,[0,0,−1])。放平判读 pgr≈(0,0,−1)；右倾→pgr.y 变负；开机需机身水平（水平校准基准）。
 - ⚠️ IMU 串口：`/dev/ttyUSB0` 曾被 Ubuntu **brltty 盲文服务抢占**（`PRODUCT==1a86/7523`）。已 `systemctl stop/disable/mask brltty` 与 `brltty-udev` 修复，勿再启用。
   **2026-10-16 复核**：两者 `masked`+`inactive` ✓；`/usr/lib/udev/rules.d/85-brltty.rules:293` 仍匹配 CH340、但 `brltty_usb_run` 标签唯一动作是 `ENV{SYSTEMD_WANTS}+="brltty-udev.service"` ⇒ 服务已 mask，**空操作**，brltty 彻底排除。

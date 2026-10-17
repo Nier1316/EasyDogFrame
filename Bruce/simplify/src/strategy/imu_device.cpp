@@ -206,11 +206,20 @@ void ImuDevice::ParseQuatFrame(const uint8_t* d) {
     float y = to_q(d[4], d[5]);
     float z = to_q(d[6], d[7]);
     if (m_mount == ImuMount::Z_DOWN_X) {
-        // 绕 X 轴翻 180°：q_body = (-x, w, -z, y)
+        // 实际安装：IMU 的 X=前后一致、Y=反（向右 vs 向左）、Z=反（向下 vs 向上）
+        //   ⇒ 传感器系相对机体系的变换 M = diag(1,-1,-1) = 绕 X 轴 180°，q_M = (0,1,0,0)。
+        //
+        // ⚠ 向量与旋转的变换方式**不同**：
+        //   · 向量（gyro）：v_body = M·v_sensor  ⇒ (gx, -gy, -gz)   ← 见 ParseGyroFrame，本来就对
+        //   · 旋转（quat）：q_body = q_raw ⊗ q_M  ⇒ **右乘**
+        //   · 2026-10-17 修：原实现写的是左乘 q_M ⊗ q_raw（= 对旋转做共轭 q_M·q·q_M），
+        //     其效果恰好是"绕 X 的 roll 不变、绕 Y/Z 的 pitch/yaw 取反" —— 与现场
+        //     "yaw 和 pitch 是反的、roll 正常" 的症状逐项吻合。
+        // 右乘 q_M=(0,1,0,0) 展开：w'=-x, x'=w, y'=z, z'=-y
         float nw = -x;
         float nx = w;
-        float ny = -z;
-        float nz = y;
+        float ny = z;
+        float nz = -y;
         w = nw; x = nx; y = ny; z = nz;
     }
     std::lock_guard<std::mutex> lock(m_mutex);

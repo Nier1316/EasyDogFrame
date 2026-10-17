@@ -92,7 +92,9 @@ def apply_mount(gyro, quat, mount):
     q2 = quat
     if quat is not None and len(quat) == 4:
         w, x, y, z = quat
-        q2 = [-x, w, -z, y]          # 绕 X 轴 180°：w'=−x, x'=w, y'=−z, z'=y
+        # 右乘 q_M=(0,1,0,0)：w'=−x, x'=w, y'=z, z'=−y
+        # （原先写的左乘 (−x,w,−z,y) 是共轭，会把 pitch/yaw 取反 —— 2026-10-17 修）
+        q2 = [-x, w, z, -y]
     return g2, q2
 
 
