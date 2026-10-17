@@ -11,10 +11,16 @@
 #   见 memory/FACT.md §反馈链路 与 tool/libusb_xferprobe.c）。故**不再自动加载**，
 #   避免"以为是它在起作用"的误导。要复现历史实验可手动：
 #       LD_PRELOAD=./bin/libusb_fastpoll.so ./bin/can_motor_app
-# SHIM="./bin/libusb_fastpoll.so"
-# if [ -f "$SHIM" ]; then
-#     export LD_PRELOAD="${SHIM}${LD_PRELOAD:+:$LD_PRELOAD}"
-# fi
+# ---------------------------------------------------------------------------
+# 有效方案（2026-10-17 真机 A/B 验证）：把 SDK 派发线程的 100 ms 节拍夹到 1 ms
+#   实测：投递时刻 12.5~14.9/s → 456~472/s，间隔中位 2~4 µs → 1024 µs
+#   原理见 tool/dmcan_fastdispatch.c；关闭：DMCAN_TICK_US=0 或
+#   DMCAN_TICK_THRESHOLD_US=999999999
+# ---------------------------------------------------------------------------
+SHIM="./bin/dmcan_fastdispatch.so"
+if [ -f "$SHIM" ]; then
+    export LD_PRELOAD="${SHIM}${LD_PRELOAD:+:$LD_PRELOAD}"
+fi
 # ---------------------------------------------------------------------------
 # 姿态流（调试用，默认关）：把 16 个 URDF 关节角 + IMU 姿态用 UDP 发给可视化工具。
 #   开启：POSE_STREAM=1 ./run.sh   → 另开一个窗口跑

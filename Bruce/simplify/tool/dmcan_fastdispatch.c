@@ -114,11 +114,12 @@ static void at_exit_report(void) {
 __attribute__((constructor)) static void init(void) {
     atexit(at_exit_report);
     dl_iterate_phdr(find_sdk, NULL);
+    /* 注意：构造时 libdm_device.so 可能还没被动态链接器加载（依赖顺序），所以这里
+       **不判断是否找到**，也不打印"将不生效"（会误导）。真正的定位在首次调用时懒做。 */
     if (!quiet())
-        fprintf(stderr, "[FASTDISPATCH] 已加载：把 %s 内 >%ldµs 的 nanosleep 夹到 %ldµs"
-                        "（目标 = 派发线程的 100 ms 节拍）%s\n",
-                "libdm_device.so", thresh_us(), tick_us(),
-                g_sdk_lo ? "" : "  ⚠ 未找到 libdm_device.so，将不生效");
+        fprintf(stderr, "[FASTDISPATCH] 已加载：把 libdm_device.so 内 >%ldµs 的 nanosleep "
+                        "夹到 %ldµs（目标 = 派发线程的 100 ms 节拍）\n",
+                thresh_us(), tick_us());
 }
 
 int nanosleep(const struct timespec* req, struct timespec* rem) {
@@ -136,7 +137,14 @@ int nanosleep(const struct timespec* req, struct timespec* rem) {
         struct timespec t;
         t.tv_sec  = tick_us() / 1000000L;
         t.tv_nsec = (tick_us() % 1000000L) * 1000L;
+        if (g_clamped == 0 && !quiet())
+            fprintf(stderr, "[FASTDISPATCH] ✅ 首次命中：libdm_device.so @0x%lx-0x%lx，"
+                            "把请求 %ld µs 夹到 %ld µs\n",
+                    (unsigned long)g_sdk_lo, (unsigned long)g_sdk_hi, us, tick_us());
         g_clamped++;
+        if (!quiet() && (g_clamped % 200) == 0)
+            fprintf(stderr, "[FASTDISPATCH] 已缩短 %lu 次（原样放过 %lu 次）\n",
+                    g_clamped, g_passed);
         return g_real(&t, NULL);      /* 缩短后正常睡完 ⇒ 不设 rem */
     }
     g_passed++;

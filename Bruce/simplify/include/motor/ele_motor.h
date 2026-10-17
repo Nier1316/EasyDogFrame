@@ -93,6 +93,10 @@ uint64_t MotorPosUpdateCount(uint8_t can_port, uint8_t motor_id);
 // 修好后 ≈2 ms。无样本返回 0。见 ele_motor.cpp 的说明与 Example64。
 uint64_t MotorPosGapPercentile(uint8_t can_port, uint8_t motor_id, int pct);
 
+// "投递时刻"总数：相邻写入间隔 >1 ms 才算新时刻。攒批时 ~10~13/s，均匀时 ~500/s。
+// 这是判断新鲜度**最可靠**的指标（分位数会被批内小间隔淹没）。
+uint64_t MotorPosInstantCount(uint8_t can_port, uint8_t motor_id);
+
 // 参数回帧详细打印开关。置 true 时连角度/速度/扭矩回帧也打印，
 // 用于查看使能前的原始读数；常态运行务必保持 false（1kHz 会淹没终端）。
 extern bool g_param_verbose;

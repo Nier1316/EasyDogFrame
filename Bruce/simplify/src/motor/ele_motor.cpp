@@ -23,6 +23,10 @@ std::atomic<uint64_t> g_motor_pos_updates[16];
 //   · 攒批已修：均匀投递 ⇒ 中位与 90 分位都 ≈ 2 ms（= 500 Hz）
 std::atomic<uint64_t> g_pos_gap_bucket[16][24];
 static int64_t g_pos_last_us[16] = {0};
+// "投递时刻"计数：相邻两次写入间隔 > 1 ms 才算一个新的投递时刻。
+// 判**真实新鲜度**：攒批时 ~10~13 时刻/s（100 ms 一批、每批 ~50 帧）；
+// 均匀投递时 ~500 时刻/s。分位数会被"批内 4 µs 小间隔"淹没，这个不会。
+std::atomic<uint64_t> g_pos_instants[16];
 
 static inline int64_t pos_now_us() {
     return std::chrono::duration_cast<std::chrono::microseconds>(
@@ -50,6 +54,11 @@ uint64_t MotorPosGapPercentile(uint8_t can_port, uint8_t motor_id, int pct) {
     return (uint64_t)1 << 23;
 }
 
+uint64_t MotorPosInstantCount(uint8_t can_port, uint8_t motor_id) {
+    if (can_port >= 4 || motor_id < 1 || motor_id > 4) return 0;
+    return g_pos_instants[can_port * 4 + (motor_id - 1)].load(std::memory_order_relaxed);
+}
+
 // 一次位置写入：计数 + 记间隔。两个写入点（参数回帧 / 周期回帧）都调它。
 static inline void note_pos_update(uint8_t can_port, uint8_t motor_id) {
     if (can_port >= 4 || motor_id < 1 || motor_id > 4) return;
@@ -59,9 +68,12 @@ static inline void note_pos_update(uint8_t can_port, uint8_t motor_id) {
     if (g_pos_last_us[i]) {
         int64_t g = t - g_pos_last_us[i];
         if (g < 0) g = 0;
+        if (g > 1000) g_pos_instants[i].fetch_add(1, std::memory_order_relaxed);  /* 新投递时刻 */
         int b = 0;
         while (g > 1 && b < 23) { g >>= 1; ++b; }
         g_pos_gap_bucket[i][b].fetch_add(1, std::memory_order_relaxed);
+    } else {
+        g_pos_instants[i].fetch_add(1, std::memory_order_relaxed);
     }
     g_pos_last_us[i] = t;
 }

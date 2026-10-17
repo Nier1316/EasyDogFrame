@@ -3112,6 +3112,10 @@ void Example64_FeedbackRateDiag() {
     for (int c = 0; c < 4; c++)
         for (int m = 1; m <= 4; m++)
             c0[c * 4 + (m - 1)] = MotorPosUpdateCount((uint8_t)c, (uint8_t)m);
+    uint64_t i0[16];
+    for (int c = 0; c < 4; c++)
+        for (int m = 1; m <= 4; m++)
+            i0[c * 4 + (m - 1)] = MotorPosInstantCount((uint8_t)c, (uint8_t)m);
 
     const uint64_t rx0 = Usb2CanTransport::RxCount().load();
     const int64_t t0 = us_now();
@@ -3145,23 +3149,25 @@ void Example64_FeedbackRateDiag() {
     printf("  发出参数请求 %.0f 次/s；收到 CAN 帧 %.0f 帧/s（共 %llu）\n",
            req / dur, (rx - rx0) / dur, (unsigned long long)(rx - rx0));
     printf("  下面\"更新率\"= current_position **被写入的次数**/时长（＝策略能看到新位置的频率）\n");
-    printf("\n  %-16s %12s %11s %11s %11s\n", "电机", "更新率", "间隔中位", "间隔p90", "判读");
+    printf("\n  %-16s %11s %12s %11s %11s\n",
+           "电机", "更新率", "投递时刻/s", "间隔中位", "判读");
     uint64_t tot = 0;
     for (int c = 0; c < 4; c++)
         for (int m = 1; m <= 4; m++) {
             const int i = c * 4 + (m - 1);
             tot += changes[i];
             const char* tag = (m == 4) ? "wheel" : (m == 1 ? "hip" : (m == 2 ? "thigh" : "calf"));
-            const uint64_t g50  = MotorPosGapPercentile((uint8_t)c, (uint8_t)m, 50);
-            const uint64_t g90  = MotorPosGapPercentile((uint8_t)c, (uint8_t)m, 90);
-            // 判新鲜度：攒批未修时 g90 ≈ 100 ms（投递成批）；修好后 g90 ≈ 2 ms（均匀投递）
+            const uint64_t g50 = MotorPosGapPercentile((uint8_t)c, (uint8_t)m, 50);
+            const uint64_t inst = MotorPosInstantCount((uint8_t)c, (uint8_t)m)
+                                - i0[c * 4 + (m - 1)];
+            const double irate = inst / dur;
+            // 判新鲜度靠"投递时刻数/s"：攒批 ⇒ ~10~13/s；均匀投递 ⇒ ~500/s。
             const char* verdict = changes[i] == 0 ? "不回帧"
-                                : (g90 >= 50000) ? "🔴 攒批中(~100ms 一批)"
-                                : (g90 >= 10000) ? "⚠ 偏慢"
-                                                 : "✅ 新鲜";
-            printf("  CAN%d-M%d(%-5s) %9.1f Hz %8lu µs %8lu µs   %s%s\n",
-                   c, m, tag, changes[i] / dur,
-                   (unsigned long)g50, (unsigned long)g90, verdict,
+                                : (irate < 30)  ? "🔴 攒批(~10 Hz 交付)"
+                                : (irate < 200) ? "⚠ 偏慢"
+                                                : "✅ 新鲜";
+            printf("  CAN%d-M%d(%-5s) %8.1f Hz %9.1f/s %8lu µs   %s%s\n",
+                   c, m, tag, changes[i] / dur, irate, (unsigned long)g50, verdict,
                    changes[i] ? "" : "  ← 全程 0 次");
         }
     printf("\n  合计可见更新 %.0f 次/s ⇒ 平均每电机 %.1f Hz\n",

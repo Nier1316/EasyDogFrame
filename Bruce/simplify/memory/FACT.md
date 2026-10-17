@@ -274,10 +274,24 @@
 > **派发线程 100 ms 才醒一次**、一次把积压全交给我们 ⇒ 上位机看到 ~10 Hz / ~50 帧一批。
 > 这也解释了为什么夹 libusb 事件超时（`@0x151d0` 的 timeval{0,100000}）**没有效果**。
 >
-> **修复候选（已实现，待真机验证）**：`tool/dmcan_fastdispatch.c` → `bin/dmcan_fastdispatch.so`
+> ### ✅ 已修复并真机 A/B 验证（2026-10-17）
+>
+> `tool/dmcan_fastdispatch.c` → `bin/dmcan_fastdispatch.so`
 > LD_PRELOAD 拦截 `nanosleep`，**仅当"调用方在 libdm_device.so 内 且 请求 >20 ms"**才夹到
 > `DMCAN_TICK_US`（默认 1 ms）⇒ 只命中派发线程，心跳 10 ms 与我们自己的 sleep 都不动。
-> 预期：策略的关节观测从 ~10 Hz 提到 ~500 Hz。安全自测已过（我们自己的 50 ms sleep 原样放过）。
+> **实测（Ex64，8000 请求/s，不使能电机）：**
+>
+> | | 投递时刻/s | 间隔中位 | 判读 |
+> |---|---|---|---|
+> | 不加载垫片 | **12.5 ~ 14.9 /s** | 2~4 µs（批内） | 🔴 每 100 ms 才交付一次 |
+> | 加载垫片（`DMCAN_TICK_US=1000`） | **456 ~ 485 /s** | **1024 µs** | ✅ 均匀投递 |
+>
+> 垫片日志直接确认命中点：`把请求 100000 µs 夹到 1000 µs`（= 100 ms）；心跳的 10 ms 被原样放过。
+> `run.sh` 已自动加载。
+>
+> **影响面复核（此前基于攒批得出的结论需要更新）**：PACE 的 `I_a`/`T_d` 原先"辨不出来"的
+> 理由（400 Hz chirp 被记成 10 Hz 阶梯）**不再成立**——真正的采样率是 400 Hz，只是交付成批；
+> `docs/ACTION_DELAY_MEASURE.md` 的"≈24 ms"也应在此修复后用 Ex38 重测。
 > **剩余问题**：为什么恰好 ~100 ms / ~51 帧一批。
 > **可行路线**：① 试 LD_PRELOAD 拦截 SDK **导出**的 `can_bus_box::transfer_callback`
 > （`_ZN11can_bus_box17transfer_callbackEP15libusb_transfer`）绕过其派发；② 换 SocketCAN 传输层（对策 B）。
