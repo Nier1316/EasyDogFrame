@@ -119,7 +119,7 @@ def open_serial(path, baud):
     return fd
 
 
-def pump(fd, parser, seconds, quiet=False):
+def pump(fd, parser, seconds, quiet=False, mount="Z_DOWN_X"):
     """读 seconds 秒，喂给 parser。返回实际收到的字节数。"""
     n_total = 0
     t0 = time.time()
@@ -139,9 +139,35 @@ def pump(fd, parser, seconds, quiet=False):
             parser.feed(b)
         if not quiet and time.time() - last_report >= 1.0:
             last_report = time.time()
-            print(f"    … {time.time()-t0:4.1f}s  已收 {n_total} 字节  "
-                  f"quat {parser.count[TYPE_QUAT]} 帧  gyro {parser.count[TYPE_GYRO]} 帧")
+            line = (f"  {time.time()-t0:4.1f}s  quat{parser.count[TYPE_QUAT]:4d}帧 "
+                    f"gyro{parser.count[TYPE_GYRO]:4d}帧")
+            if parser.quat is not None and parser.gyro is not None:
+                _g, _q = apply_mount(parser.gyro, parser.quat, mount)
+                r, p_, y_ = euler(_q)
+                pg = projected_gravity(_q)
+                line += (f" | roll{r:+6.1f}° pitch{p_:+6.1f}° yaw{y_:+7.1f}°"
+                         f" | pgr({pg[0]:+.2f},{pg[1]:+.2f},{pg[2]:+.2f})")
+            print(line)
     return n_total
+
+
+def projected_gravity(quat):
+    """world2self(quat, [0,0,-1])，与 C++ rl::world2self 一致。
+    **这是策略真正吃进去的量**：机身水平时必须 ≈ (0, 0, -1)。
+    若某个安装模式在水平时给出 (0,0,+1) ⇒ 该模式**必然错误**（重力不可能朝上）。"""
+    w, x, y, z = [float(v) for v in quat]
+    v = (0.0, 0.0, -1.0)
+    # q^-1 * v * q 的展开（与 C++ 同一公式）
+    qx, qy, qz, qw = x, y, z, w
+    cx = qy * v[2] - qz * v[1]
+    cy = qz * v[0] - qx * v[2]
+    cz = qx * v[1] - qy * v[0]
+    w2 = qw * 2.0
+    d = (qx * v[0] + qy * v[1] + qz * v[2]) * 2.0
+    s_ = 1.0 - 2.0 * (qx * qx + qy * qy + qz * qz)
+    return [v[0] * s_ - cx * w2 + qx * d,
+            v[1] * s_ - cy * w2 + qy * d,
+            v[2] * s_ - cz * w2 + qz * d]
 
 
 def euler(quat):
@@ -173,6 +199,9 @@ def report(parser, nbytes, seconds, mount, raw):
               + ("" if raw else f"（已套用安装方向 {mount}）"))
         r, p, y = euler(quat)
         print(f"            ⇒ roll {r:+.1f}°  pitch {p:+.1f}°  yaw {y:+.1f}°")
+        pg = projected_gravity(quat)
+        print(f"  projected_gravity = ({pg[0]:+.3f}, {pg[1]:+.3f}, {pg[2]:+.3f})"
+              f"   ← 策略用的量；水平时必须 ≈ (0,0,-1)")
         if gyro:
             print(f"  最新 gyro = {[round(v, 3) for v in gyro]} rad/s")
     return rate
@@ -214,7 +243,7 @@ def main():
     try:
         parser = Parser()
         print(f"[check_imu] 采集 {args.secs:g}s …")
-        n = pump(fd, parser, args.secs)
+        n = pump(fd, parser, args.secs, mount=args.mount)
     finally:
         os.close(fd)
 
@@ -263,7 +292,7 @@ def selftest():
     os.write(master, bytes(frames))
 
     parser = Parser()
-    pump(slave, parser, 0.5, quiet=True)
+    pump(slave, parser, 0.5, quiet=True, mount="none")
     os.close(master)
     os.close(slave)
 
