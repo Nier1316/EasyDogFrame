@@ -62,6 +62,8 @@
   ⇒ 若训练侧真用 −0.53，则 `joint_pos_rel = q − DEFAULT_POSE` 的 4 个小腿通道带 **−0.18 rad 恒定偏置**。
   **数值未改动**，待查 `RL_Train/code` 训练配置 + 现场确认。工具：`tool/pose_view.py --preset default|nominal`。
 - `CONV_A`：每腿 hip/thigh/calf = `+1, −1, +1`，四轮 `+1`；`CONV_B`：每腿 `+0.0297, −0.9624, −1.2832`，四轮 `0`。
+  📍 **全部符号改动点的清单/判据/历史坑见 `docs/SIGN_MAP.md`**（2026-10-17 整理：电机层
+  `pos_scale`、策略层 `CONV_A/B`、力矩记录、status 坐标的前馈、IMU 安装补偿、工具侧）。
   ⚠ **例外：FR hip = (−1, −0.0297)** —— 2026-10-13 现场确认其观测方向原本反了（腿远端往
   机器人左侧推、URDF 读数反而变小），修法是把该关节**整个映射取反**（A 与 B 同时翻号），
   于是 `urdf_new ≡ −urdf_old` ⇒ 零位不动、方向翻转，且 `urdf_to_status` 仍精确互逆
