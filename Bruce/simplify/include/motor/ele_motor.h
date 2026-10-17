@@ -89,6 +89,10 @@ void unpack_frame(EleMotor& motor, const uint8_t* data, uint8_t dlc);
 //（＝上位机/策略能看到的位置更新次数）。见 ele_motor.cpp 的说明与 Example64。
 uint64_t MotorPosUpdateCount(uint8_t can_port, uint8_t motor_id);
 
+// 该电机"位置写入间隔"的 pct 分位数（µs 上界）。判**新鲜度**：攒批时 90 分位 ≈100 ms，
+// 修好后 ≈2 ms。无样本返回 0。见 ele_motor.cpp 的说明与 Example64。
+uint64_t MotorPosGapPercentile(uint8_t can_port, uint8_t motor_id, int pct);
+
 // 参数回帧详细打印开关。置 true 时连角度/速度/扭矩回帧也打印，
 // 用于查看使能前的原始读数；常态运行务必保持 false（1kHz 会淹没终端）。
 extern bool g_param_verbose;

@@ -226,9 +226,9 @@ int main() {
     // 运行示例64 - 反馈链路诊断（**不使能电机**，全速参数读制造 RL 级入站流量，
     //   统计 GetStatus() 的应用可见更新率）。配 tool/libusb_xferprobe.so / DMCAN_XFER_BYTES 做 A/B
     //   env: FB_POLL_US（每轮休眠 µs，0=全速）/ FB_SECS（时长，默认 12）
-    printf("[INFO] Running Example64_FeedbackRateDiag...\n");
+    // printf("[INFO] Running Example64_FeedbackRateDiag...\n");
     // Example64_FeedbackRateDiag();
-    printf("[INFO] Example64 completed.\n");
+    // printf("[INFO] Example64 completed.\n");
 
     // 运行示例61 - 站立/原地转向 专精策略手柄遥操作（右摇杆转向、A站立、B/START趴下；默认录 500Hz 数据集）
     // printf("[INFO] Running Example61_RLStandTurnTeleop...\n");

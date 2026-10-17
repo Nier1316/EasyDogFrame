@@ -553,3 +553,19 @@ LD_PRELOAD=./bin/dmcan_fastdispatch.so ./bin/can_motor_app
 
 ⚠ 安全自测已过（从我们自己的代码调 `nanosleep(50ms)` 实测 50.1 ms，未被夹）；
 **真机效果尚未验证** —— 需要你允许启动程序后再测。
+
+### Ex64 增加"间隔分位数"——把速率与新鲜度分开
+
+陷阱：Ex64 原来只统计 `current_position` 被写入的**次数/秒**，而"100 ms 一批的 50 帧"照样是
+500 次/s ⇒ 攒批未修时也会显示 ~500 Hz，**看不出问题**。
+
+新增 `MotorPosGapPercentile(can, motor, pct)`（`ele_motor.cpp`：每次位置写入记一次 log2 µs
+间隔直方图），Ex64 表格变成：
+
+```
+电机              更新率    间隔中位   间隔p90    判读
+CAN0-M1(hip)    498.3 Hz      0 µs    98304 µs  🔴 攒批中(~100ms 一批)
+                                                            ↑ 修好后应为 ~2048 µs / ✅ 新鲜
+```
+
+判据：**中位 + p90 同时 ≈2 ms** 才算新鲜；只看"更新率"会被攒批欺骗。

@@ -3145,15 +3145,24 @@ void Example64_FeedbackRateDiag() {
     printf("  发出参数请求 %.0f 次/s；收到 CAN 帧 %.0f 帧/s（共 %llu）\n",
            req / dur, (rx - rx0) / dur, (unsigned long long)(rx - rx0));
     printf("  下面\"更新率\"= current_position **被写入的次数**/时长（＝策略能看到新位置的频率）\n");
-    printf("\n  %-16s %14s\n", "电机", "可见更新率");
+    printf("\n  %-16s %12s %11s %11s %11s\n", "电机", "更新率", "间隔中位", "间隔p90", "判读");
     uint64_t tot = 0;
     for (int c = 0; c < 4; c++)
         for (int m = 1; m <= 4; m++) {
             const int i = c * 4 + (m - 1);
             tot += changes[i];
             const char* tag = (m == 4) ? "wheel" : (m == 1 ? "hip" : (m == 2 ? "thigh" : "calf"));
-            printf("  CAN%d-M%d(%-5s) %10.1f Hz%s\n", c, m, tag, changes[i] / dur,
-                   changes[i] ? "" : "   ← 全程 0 次（该电机不回帧）");
+            const uint64_t g50  = MotorPosGapPercentile((uint8_t)c, (uint8_t)m, 50);
+            const uint64_t g90  = MotorPosGapPercentile((uint8_t)c, (uint8_t)m, 90);
+            // 判新鲜度：攒批未修时 g90 ≈ 100 ms（投递成批）；修好后 g90 ≈ 2 ms（均匀投递）
+            const char* verdict = changes[i] == 0 ? "不回帧"
+                                : (g90 >= 50000) ? "🔴 攒批中(~100ms 一批)"
+                                : (g90 >= 10000) ? "⚠ 偏慢"
+                                                 : "✅ 新鲜";
+            printf("  CAN%d-M%d(%-5s) %9.1f Hz %8lu µs %8lu µs   %s%s\n",
+                   c, m, tag, changes[i] / dur,
+                   (unsigned long)g50, (unsigned long)g90, verdict,
+                   changes[i] ? "" : "  ← 全程 0 次");
         }
     printf("\n  合计可见更新 %.0f 次/s ⇒ 平均每电机 %.1f Hz\n",
            tot / dur, (tot / dur) / 16.0);
