@@ -361,6 +361,15 @@ def load_model():
     return m, adr
 
 
+def euler_deg(q):
+    """quat(w,x,y,z) → (roll, pitch, yaw) 度（与 C++/报告里同一套约定）"""
+    w, x, y, z = [float(v) for v in q]
+    roll = math.degrees(math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y)))
+    pitch = math.degrees(math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x)))))
+    yaw = math.degrees(math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
+    return roll, pitch, yaw
+
+
 def make_skeleton(m) -> None:
     """把模型变成"连杆骨架"外观。
 
@@ -587,6 +596,9 @@ def main() -> int:
     ap.add_argument("--no-imu", action="store_true", help="已弃用别名，等价于 --imu-mode none")
     ap.add_argument("--speed", type=float, default=1.0, help="回放倍速")
     ap.add_argument("--show-mesh", action="store_true", help="显示 mesh（默认只画连杆骨架）")
+    ap.add_argument("--dump", action="store_true",
+                    help="实时模式下每秒把收到的 16 个角（度）+ quat 欧拉角打印出来，"
+                         "便于和 Ex63 终端表格逐项对照（排查'终端对但渲染不对'）")
     ap.add_argument("--selftest", action="store_true", help="只做坐标链路自检，不开窗口")
     ap.add_argument("--shot", help="离屏渲染一张 PNG 后退出（不开窗口；预设或 --shot-t 时刻的那一帧）")
     ap.add_argument("--shot-t", type=float, default=0.0, help="--shot 用 --csv 时取哪个时刻（秒）")
@@ -710,6 +722,21 @@ def main() -> int:
             if udp is not None:
                 u_urdf, u_tgt, u_quat, u_gyro, seq, lost, rate, t_last = udp.latest()
                 fresh = (t_last > 0) and (time.time() - t_last < 0.5)
+                if fresh and u_urdf is not None and a.dump:
+                    _t = time.time()
+                    if _t - globals().get("_dump_last", 0.0) >= 1.0:
+                        globals()["_dump_last"] = _t
+                        d = np.rad2deg(np.asarray(u_urdf, dtype=float))
+                        print(f"[DUMP] seq={seq} 包率={rate:4.1f}/s 丢={lost}")
+                        for li, leg in enumerate(LEGS):
+                            print(f"        {leg}  hip {d[li*3+0]:+7.2f}°  "
+                                  f"thigh {d[li*3+1]:+7.2f}°  calf {d[li*3+2]:+7.2f}°  "
+                                  f"wheel {d[12+li]:+9.2f}°")
+                        if u_quat is not None:
+                            rr, pp, yy = euler_deg(u_quat)
+                            print(f"        IMU: roll {rr:+.1f}°  pitch {pp:+.1f}°  yaw {yy:+.1f}°  "
+                                  f"quat={np.round(u_quat, 4).tolist()}")
+                        fflush = sys.stdout.flush()
                 if fresh and u_urdf is not None:
                     # ⚠ 实时模式下 q0 只可能来自"收到的第一帧"（CSV 源那个分支拿不到），
                     #   否则 yaw0 模式等于没生效，狗会朝一个任意偏航站着。这里懒初始化。
