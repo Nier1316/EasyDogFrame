@@ -15,6 +15,9 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <thread>
 
@@ -33,7 +36,28 @@ public:
     ImuDevice& operator=(const ImuDevice&) = delete;
 
     /** @brief 设置安装方向（在 Initialize 前后均可调用，影响 GetGyro/GetQuat 输出） */
-    void SetMount(ImuMount mount) { m_mount = mount; }
+    /**
+     * @brief 设置安装方向
+     *
+     * ⚠ 2026-10-17 现场报告"IMU 的 yaw 和 pitch 是反的"——**pitch/yaw 取反而 roll 不变**
+     *   正是"绕 X 轴 180°"的特征，也就是 Z_DOWN_X 补偿做的事 ⇒ 说明实际安装**可能不是**
+     *   Z_DOWN_X（12 处调用点都硬编码了它）。为便于现场 A/B，这里支持环境变量覆盖：
+     *       IMU_MOUNT=up      → Z_UP（无变换，IMU 的 Z 朝上）
+     *       IMU_MOUNT=down_x  → Z_DOWN_X（绕 X 翻 180°）
+     *   不设该变量时用调用点传入的值（保持原有行为）。
+     *   判据：`tool/check_imu.py --mount none|Z_DOWN_X` 分别读一次，倾斜 IMU 看哪套对。
+     */
+    void SetMount(ImuMount mount) {
+        const char* env = std::getenv("IMU_MOUNT");
+        if (env && *env) {
+            const bool up = (std::strcmp(env, "up") == 0 || std::strcmp(env, "z_up") == 0);
+            m_mount = up ? ImuMount::Z_UP : ImuMount::Z_DOWN_X;
+            std::printf("[IMU] 安装方向被 IMU_MOUNT=%s 覆盖 → %s\n", env,
+                        up ? "Z_UP（无变换）" : "Z_DOWN_X（绕 X 翻 180°）");
+        } else {
+            m_mount = mount;
+        }
+    }
     ImuMount GetMount() const { return m_mount; }
 
     /**

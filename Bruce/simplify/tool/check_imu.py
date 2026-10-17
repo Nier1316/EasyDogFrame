@@ -81,10 +81,19 @@ class Parser:
 
 
 def apply_mount(gyro, quat, mount):
-    """与 C++ ImuDevice 的安装方向补偿一致（默认 Z_DOWN_X：绕 X 翻 180° ⇒ gy/gz 反号）"""
-    if mount == "none" or gyro is None:
+    """与 C++ ImuDevice 的补偿**逐位一致**：
+       Z_DOWN_X（绕 X 翻 180°）：gyro 的 gy/gz 取反；quat (w,x,y,z) → (−x, w, −z, y)
+       Z_UP / none（无变换）：原样返回
+    ⚠ 之前这里只补了 gyro、漏了 quat ⇒ 打印的 roll/pitch/yaw 是未补偿的，会误导诊断。
+    """
+    if mount in ("none", "Z_UP", "up") or gyro is None:
         return gyro, quat
-    return [gyro[0], -gyro[1], -gyro[2]], quat
+    g2 = [gyro[0], -gyro[1], -gyro[2]]
+    q2 = quat
+    if quat is not None and len(quat) == 4:
+        w, x, y, z = quat
+        q2 = [-x, w, -z, y]          # 绕 X 轴 180°：w'=−x, x'=w, y'=−z, z'=y
+    return g2, q2
 
 
 def configure_raw(fd, baud):
@@ -174,7 +183,9 @@ def main():
     ap.add_argument("-p", "--port", default="/dev/ttyUSB0", help="串口路径")
     ap.add_argument("-b", "--baud", type=int, default=115200)
     ap.add_argument("--secs", type=float, default=3.0, help="采集时长（秒）")
-    ap.add_argument("--mount", default="Z_DOWN_X", choices=["Z_DOWN_X", "none"])
+    ap.add_argument("--mount", default="Z_DOWN_X",
+                    choices=["Z_DOWN_X", "Z_UP", "none"],
+                    help="安装方向补偿；Z_UP/none = 不补偿（对应 app 里 IMU_MOUNT=up）")
     ap.add_argument("--raw", action="store_true", help="不套用安装方向变换")
     ap.add_argument("--selftest", action="store_true", help="不开设备，用伪终端验证解析器")
     args = ap.parse_args()

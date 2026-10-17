@@ -672,3 +672,31 @@ POLICY_TO_MJX 旧名反义、前馈坐标、只翻 A 会挪零位、工具别硬
 
 **验证判据（下次现场）**：真机保持**对称**姿态时，终端四个 hip 应呈**镜像**（FL 与 FR 反号）；
 MuJoCo 画面应与真机一致。若现在变成"左侧两条不对"，说明该翻的是 FL+RL（把 3、9 换回、翻 0、6）。
+
+### IMU 安装方向：加环境变量覆盖 + 修工具的 quat 补偿
+
+现场报告：**IMU 的 yaw 和 pitch 是反的**（roll 正常）。
+
+**这个症状本身就是判据**：pitch/yaw 取反、roll 不变 = 绕 **X 轴 180°** 旋转的特征 ——
+正是 `ImuMount::Z_DOWN_X` 补偿（gyro 的 gy/gz 取反；quat `(w,x,y,z)→(−x,w,−z,y)`）所做的事。
+⇒ 说明**实际安装方向很可能不是 Z_DOWN_X**，而工程里 12 处调用点都硬编码了它。
+
+改动：
+- `include/strategy/imu_device.h` 的 `SetMount()` 支持环境变量覆盖：
+  `IMU_MOUNT=up`（= `Z_UP`，不补偿）/ `IMU_MOUNT=down_x`（= `Z_DOWN_X`）；
+  不设则用调用点传入值（原行为不变），并打印一行确认信息。
+- `tool/check_imu.py`：`apply_mount()` **补上了 quat 的 180°X 变换**（之前只补 gyro、漏了 quat
+  ⇒ 打印出的 roll/pitch/yaw 是未补偿的，正好会误导这次诊断）；`--mount` 增加 `Z_UP`/`none`。
+
+验证方法（10 秒）：
+```bash
+python3 tool/check_imu.py --mount Z_UP        # 不补偿
+python3 tool/check_imu.py --mount Z_DOWN_X    # 补偿
+# 倾斜 IMU（抬头/低头、左右偏航），看哪一套的 pitch/yaw 与实物一致
+```
+定下来之后，把 12 处 `imu.SetMount(ImuMount::Z_DOWN_X)` 统一改成正确的那个（建议同时加常量，
+避免又散落 12 处）。
+
+⚠️ **对策略的影响**：`projected_gravity = world2self(quat,[0,0,−1])` **对 yaw 不敏感**
+（重力沿世界 z），但**对 pitch/roll 敏感** ⇒ **pitch 反了会直接污染策略的姿态观测**，
+必须修好再跑 RL；yaw 反只影响可视化朝向与落盘，不影响策略。
