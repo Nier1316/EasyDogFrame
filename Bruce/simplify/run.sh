@@ -7,10 +7,14 @@
 #   不加载时：CAN 回帧被攒成 ~100 ms 一批，上位机看到的关节位置只有 ~10 Hz 刷新率。
 #   加载后  ：收割粒度压到 DMCAN_POLL_US（默认 1000 µs），反馈恢复高刷新率。
 #   原理/证据见 tool/libusb_fastpoll.c；临时关闭：DMCAN_POLL_US=0 ./run.sh
-SHIM="./bin/libusb_fastpoll.so"
-if [ -f "$SHIM" ]; then
-    export LD_PRELOAD="${SHIM}${LD_PRELOAD:+:$LD_PRELOAD}"
-fi
+# ⚠ 2026-10-17 实测：该垫片对真机**没有效果**（攒批不在 libusb 超时上，而在 SDK 入站派发层，
+#   见 memory/FACT.md §反馈链路 与 tool/libusb_xferprobe.c）。故**不再自动加载**，
+#   避免"以为是它在起作用"的误导。要复现历史实验可手动：
+#       LD_PRELOAD=./bin/libusb_fastpoll.so ./bin/can_motor_app
+# SHIM="./bin/libusb_fastpoll.so"
+# if [ -f "$SHIM" ]; then
+#     export LD_PRELOAD="${SHIM}${LD_PRELOAD:+:$LD_PRELOAD}"
+# fi
 # ---------------------------------------------------------------------------
 # 姿态流（调试用，默认关）：把 16 个 URDF 关节角 + IMU 姿态用 UDP 发给可视化工具。
 #   开启：POSE_STREAM=1 ./run.sh   → 另开一个窗口跑

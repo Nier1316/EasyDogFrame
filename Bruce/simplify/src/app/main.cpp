@@ -21,22 +21,18 @@
 //  =====================================================================
 int main() {
     // ------------------------------------------------------------------
-    // 反馈链路自检（2026-10-08）
-    // 达妙 SDK 把 libusb 事件收割超时写死成 100 ms（.rodata@0x151d8），导致 CAN 回帧被
-    // 攒成 ~100 ms 一批、关节位置反馈只有 ~10 Hz。修正手段是 LD_PRELOAD 垫片
-    // （tool/libusb_fastpoll.c，run.sh 已自动接线）。这里显式报告它到底在不在——
-    // 否则"以为开了其实没开"（漏写 LD_PRELOAD / 被 setcap 的 AT_SECURE 忽略 / 被
-    // DMCAN_POLL_US=0 关闭）会让人在生产数据里白找半天。
+    // libusb 垫片自检（2026-10-08 加，2026-10-17 更正）
+    // 历史：达妙 SDK 的 usb_handle_thread_func() 把 libusb 事件收割超时写死成 100 ms。
+    // ⚠ 2026-10-17 实测（tool/libusb_xferprobe.c + Example64）：该垫片对真机**无效果**
+    //   —— 攒批不在这个超时上，而在 SDK 入站派发层（帧几十 µs 就到 libusb 回调，
+    //   却每 ~77~100 ms 才交 ~50 帧给 onRecv）。F5 / 直接跑 bin/can_motor_app
+    //   **不加载它是正常的**，故不再打印任何告警（过去的红色"未加载"易被误当成报错）。
     // ------------------------------------------------------------------
     {
         const char* (*marker)() =
             (const char* (*)())dlsym(RTLD_DEFAULT, "dsh_libusb_fastpoll_marker");
         if (marker)
-            printf("[INFO] libusb 回帧垫片: ✅ 已加载（%s）\n", marker());
-        else
-            printf("[INFO] libusb 回帧垫片: 🔴 **未加载** ⇒ CAN 回帧将被攒成 ~100 ms 一批，\n"
-                   "       关节位置反馈只有 ~10 Hz。修复：用 ./run.sh 启动，或\n"
-                   "       LD_PRELOAD=<绝对路径>/bin/libusb_fastpoll.so ./bin/can_motor_app\n");
+            printf("[INFO] libusb 回帧垫片: 已加载（%s；实测对本 SDK 无效，可忽略）\n", marker());
     }
 
     // 运行示例17 - SimSync 仿真集成
