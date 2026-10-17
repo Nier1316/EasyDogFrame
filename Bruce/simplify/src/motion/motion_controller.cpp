@@ -155,7 +155,7 @@ bool MotionController::rlStep() {
     rl::build_observation(gyro, quat, pos_policy, vel_policy,
                           last_action_, cmd_, step_, last_obs_);
     float action[16];
-    rl::mlp_forward(last_obs_, action);
+    rl::mlp_forward_clipped(last_obs_, action);
 
     float qt_p[16] = {0.0f}, qtv_p[16] = {0.0f};   // S2R：策略目标(urdf policy序) + 轮下发速度
     for (int cp = 0; cp < 4; cp++)

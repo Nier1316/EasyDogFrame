@@ -29,9 +29,9 @@ CONV_B_HIP = 0.0297     # hip: urdf = A*status + B (A=+1)
 LEG = ["FL", "FR", "RL", "RR"]
 JN = ["hip", "thigh", "calf"]
 
-# ---- sim2sim --record CSV 重建策略目标常量（对齐 dogurdf_sim2sim_deploy/src/robots/dogurdf.py）----
+# ---- sim2sim --record CSV 重建策略目标常量（对齐 RL_Train/code/src/robots/dogurdf.py）----
 # sim record 只给 act/qpos/vel，策略目标需重建：q_target = clip(nominal + act*scale, limits)。
-SIM_NOMINAL = np.array([0.0, 0.20, -0.35] * 4 + [0.0] * 4)   # POLICY 16（腿 default + 轮0）
+SIM_NOMINAL = np.array([0.0, -0.03, -0.116] * 4 + [0.0] * 4)   # POLICY 16（腿 default + 轮0）
 SIM_LO  = np.array([-0.6, -0.7, -1.0] * 4 + [-1e6] * 4)
 SIM_HI  = np.array([0.6, 1.75, 0.35] * 4 + [1e6] * 4)
 SIM_ACTION_SCALE = 0.25

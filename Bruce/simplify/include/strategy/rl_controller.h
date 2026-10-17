@@ -2,7 +2,7 @@
  * @file    rl_controller.h
  * @brief   dogurdf 轮足策略的观测构建与控制律（真机部署）
  *
- * 与 dogurdf_sim2sim_deploy/src/sim2sim.py 的 _build_observation /
+ * 与 RL_Train/code/src/sim2sim.py 的 _build_observation /
  * _compute_torques_policy 严格一致，是 C++ 侧的等价实现。
  *
  * 关键约定：
@@ -25,9 +25,9 @@ constexpr int NUM_LEG_JOINTS  = 12;
 constexpr int NUM_WHEELS      = 4;
 constexpr int OBS_DIM         = 64;
 
-// ---- 控制参数（与 RL_Train/code 训练侧、dogurdf_sim2sim_deploy/src/sim2sim.py 保持一致）----
-// 当前部署权重 = weights/iteration_9754.pkl（经 tool/export_policy.py 导出到 policy_weights.h）；
-// sim2sim 也指向同一份（dogurdf_sim2sim_deploy/run_sim2sim.sh），保证对比是同策略。
+// ---- 控制参数（与 RL_Train/code/src/sim2sim.py 权威实现保持一致）----
+// 当前默认部署权重 = POLICY_RW9_PLAIN_V11_S4_8001（rw9_plain_v1.1_s4/iteration_8001，
+// 由 tool/export_policy.py 导出到 policy_weights_rw9_plain_v11_s4.h）。
 constexpr float ACTION_SCALE        = 0.25f;
 constexpr float WHEEL_VEL_SCALE     = 12.5f;
 // LEG_KP/LEG_KD = 250/4：对齐 sim2sim.py 默认（训练 stiffness=250, damping=4）。
@@ -42,9 +42,10 @@ constexpr float WHEEL_KD            = 1.0f;
 // ⚠ 扭矩限幅不在本文件设——真机由固件阻抗环 + ele_motor_def.h 的 TORQUE_CMD_LIMIT 决定：
 //   MOTOR_LIMITS 协议量程 = TORQUE_CMD_LIMIT 命令上限 = Hip/Thigh±120、Calf±200、Wheel±52
 //   （2026-08-30 用户改固件限幅，2026-09-04 Hip/Thigh 110→120；编码前 clamp 防越界，反馈按量程解析）。
-//   sim2sim 侧默认 LEG_TORQUE_LIMIT=250 / WHEEL_TORQUE_LIMIT=53；加 --real_actuator 才对齐真机的
-//   120/120/200/52。即真机 Calf 封顶 ±200 < sim 的 250 → calf 大扭矩动作在真机被削顶，
-//   做 sim2real 对比时应带 --real_actuator 以消除该饱和域差异。
+//   sim2sim.py（RL_Train/code/src/sim2sim.py，权威实现）的扭矩限幅按关节分布：
+//   LEG_TORQUE_LIMITS=(110,110,350) x4 腿 + WHEEL_TORQUE_LIMIT=53 x4 轮。
+//   即真机 Hip/Thigh 120 略高于 sim 110，Calf 200 低于 sim 350，Wheel 52 ≈ sim 53。
+//   真机 Calf 大扭矩动作会被固件削顶，做 sim2real 对比时应意识到该饱和域差异。
 constexpr float CONTROL_DT          = 0.02f;   // 50 Hz
 constexpr float GAIT_CYCLE          = 0.6f;
 

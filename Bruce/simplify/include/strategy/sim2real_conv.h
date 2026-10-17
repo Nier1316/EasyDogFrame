@@ -10,8 +10,9 @@
 
 namespace rl {
 
-// 名义站姿（POLICY order：12 腿 + 4 轮）：hip=0, thigh=0.20, calf=-0.35, wheel=0。
-// 与 dogurdf.py 的 NOMINAL_HIP/THIGH/CALF 一致，即策略训练默认姿态。
+// 名义站姿（POLICY order：12 腿 + 4 轮）：hip=0, thigh=-0.03, calf=-0.116, wheel=0。
+// 与 RL_Train/code/src/robots/dogurdf.py 的 NOMINAL_HIP/THIGH/CALF 一致
+// （2026-09-15 站高 0.52 m 标定），即策略训练默认姿态。
 extern const float DEFAULT_POSE[16];
 
 // 真机 GetStatus 角 ↔ URDF 角每关节映射（2026-08-20 真机 L 形测量）：

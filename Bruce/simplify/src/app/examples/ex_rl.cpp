@@ -2,12 +2,14 @@
 // 由原单文件 example.cpp 示例拆包而来（现拆到 src/app/examples/），公共 helper 见 app/examples_common.h
 //
 // ---- RL 示例（25 策略控制 / 30 链路验证 / 36 站立 / 37 遥操作 / 51-53 流程）的权重来源 ----
-// 两套策略权重**同时编译进程序**：include/strategy/policy_weights.h = 9754（可前进）、
-// policy_weights_standturn.h = 10000（站立/原地转向），均由 tool/export_policy.py 从
+// 多套策略权重**同时编译进程序**（见 policy_set.cpp），均由 tool/export_policy.py 从
 // weights/*.pkl 导出。示例在进入 RL 前用 rl::SetPolicyVariant() 选自己那一套：
-//   Example37 → POLICY_SMALLLIFT_9754（可前进）；Example61 → POLICY_STANDTURN_10000。
+//   Example37 → POLICY_RW9_PLAIN_V11_S4_8001（最新平地速度）；
+//   Example61 → POLICY_STANDTURN_10000（站立/原地转向）。
+//   最新平地速度策略 = POLICY_RW9_PLAIN_V11_S4_8001（rw9_plain_v1.1_s4/iteration_8001，
+//   plain 不含 HIM；仅训练过平地，不得用于楼梯/崎岖地面）。
 // 换权重流程：export_policy.py（--ckpt 指定，--out-weights 指定变体头）→ 重新编译 →
-// 跑 Example30 做 MLP 数值回归门（同时核对两套 REF_OBS/REF_ACTION）。
+// 跑 Example30 做 MLP 数值回归门（同时核对全部四套 REF_OBS/REF_ACTION）。
 #include "app/examples/ex_rl.h"
 #include "app/examples_common.h"
 #include "motion/motion_controller.h"
@@ -31,7 +33,7 @@
 using logctl::LogCat;
 #include "strategy/rl_controller.h"
 #include "strategy/mlp.h"
-#include "strategy/policy_set.h"        // 运行时策略权重（两套都编译进来）
+#include "strategy/policy_set.h"        // 运行时策略权重（多套都编译进来）
 #include "strategy/imu_device.h"
 #include "strategy/xbox_controller.h"
 #include <termios.h>
@@ -189,7 +191,7 @@ void Example25_RLPolicyControl() {
         rl::build_observation(gyro, quat, pos_policy, vel_policy,
                               last_action, cmd, step, obs);
         float action[16];
-        rl::mlp_forward(obs, action);
+        rl::mlp_forward_clipped(obs, action);
 
         for (int cp = 0; cp < 4; cp++) {
             for (int mi = 1; mi <= 4; mi++) {
@@ -261,11 +263,11 @@ void Example25_RLPolicyControl() {
 // 纯 CPU，不初始化 CAN、不使能电机。
 void Example30_RLPolicyLinkTest() {
     printf("\n========== 示例 30：RL 策略链路离线验证 ==========\n");
-    printf("[INFO] 不碰 CAN。三套权重各用 REF_OBS(64) 跑 mlp_forward，对比 REF_ACTION(16)。\n");
+    printf("[INFO] 不碰 CAN。全部四套权重各用 REF_OBS(64) 跑 mlp_forward，对比 REF_ACTION(16)。\n");
 
-    // 1) MLP 前向 vs 参考输出（三套变体都验：0=9754 / 1=10000 站立转向 / 2=5350 演示稳定）
+    // 1) MLP 前向 vs 参考输出（四套变体都验：0=9754 / 1=10000 站立转向 / 2=5350 演示稳定 / 3=8001 最新平地）
     bool all_ok = true;
-    for (int vid = rl::POLICY_SMALLLIFT_9754; vid <= rl::POLICY_H52S45_V4_5350; vid++) {
+    for (int vid = rl::POLICY_SMALLLIFT_9754; vid <= rl::POLICY_RW9_PLAIN_V11_S4_8001; vid++) {
         const rl::PolicyWeights& w = rl::PolicyOf(vid);
         rl::SetPolicyVariant(vid);
 
@@ -290,7 +292,7 @@ void Example30_RLPolicyLinkTest() {
         }
     }
     printf("\n    %s\n", all_ok
-        ? "  [OK] 三套 MLP 权重与网络结构均正确"
+        ? "  [OK] 四套 MLP 权重与网络结构均正确"
         : "  [FAIL] 权重/结构有问题，需用 tool/export_policy.py 重新导出");
 
     // 恢复编译期默认变体，避免影响本示例后续（观测样本）与同进程其它逻辑
@@ -1028,7 +1030,7 @@ void Example36_RLStandLoop() {
         rl::build_observation(gyro, quat, pos_policy, vel_policy,
                               last_action, cmd, step, obs);
         float action[16];
-        rl::mlp_forward(obs, action);
+        rl::mlp_forward_clipped(obs, action);
 
         float tau_wheel[4] = {0.0f, 0.0f, 0.0f, 0.0f};   // 诊断：记录各轮下发扭矩
         float qt_p[16] = {0.0f}, qtv_p[16] = {0.0f};    // S2R：策略目标(POLICY序 urdf) + 轮下发速度
@@ -1172,11 +1174,13 @@ void Example36_RLStandLoop() {
 void Example37_RLTeleopControl() {
     printf("\n========== Example 37: RL 遥操作（手柄，走 MotionController） ==========\n");
 
-    // 本示例运行时强制 h52_s45_v4 / iteration_5350 —— **演示/稳定**策略
-    // （宽摩擦 DR + 地形适应，可前进）；与全局默认 POLICY_VARIANT 无关。
-    rl::SetPolicyVariant(rl::POLICY_H52S45_V4_5350);
-    printf("[策略] %s（%s）\n", rl::CurrentPolicy().name,
-           rl::CurrentPolicy().has_forward_vx ? "可前进" : "⚠ 不支持前进");
+    // 本示例运行时强制 rw9_plain_v1.1_s4 / iteration_8001 —— 最新平地速度
+    // 策略（plain，不含 HIM；仅训练过平地，不得用于楼梯/崎岖地面）；
+    // 与全局默认 POLICY_VARIANT 无关。
+    rl::SetPolicyVariant(rl::POLICY_RW9_PLAIN_V11_S4_8001);
+    printf("[策略] %s（%s，%s）\n", rl::CurrentPolicy().name,
+           rl::CurrentPolicy().has_forward_vx ? "可前进" : "⚠ 不支持前进",
+           rl::CurrentPolicy().terrain_trained ? "地形适应" : "仅平地，勿用于楼梯/崎岖地面");
     printf("[INFO] 50 Hz RL 循环。左摇杆=前进/后退，右摇杆=转向，B/START=趴下，q=优雅退出。\n\n");
 
     const int HZ = 50;
@@ -1264,7 +1268,7 @@ void Example37_RLTeleopControl() {
     constexpr bool RECORD_DATASET = false;
     if (RECORD_DATASET) {
         S2RDataset::inst().Begin("Example37 RL 遥操作（手柄）");
-        S2RDataset::inst().Meta("weight", "iteration_9754.pkl");
+        S2RDataset::inst().Meta("weight", "iteration_8001.pkl");
         S2RDataset::inst().Meta("example", "Example37");
         printf("[DATA] 统一数据集已开启 → %s（约 420 KB/s）\n", S2RDataset::inst().path());
     }
@@ -1742,7 +1746,7 @@ void Example51_StandRLThenLieDown() {
         float obs[64];
         rl::build_observation(gyro, quat, pos_policy, vel_policy, last_action, cmd, step, obs);
         float action[16];
-        rl::mlp_forward(obs, action);
+        rl::mlp_forward_clipped(obs, action);
         for (int cp = 0; cp < 4; cp++)
             for (int mi = 1; mi <= 4; mi++) {
                 int mjx = cp * 4 + (mi - 1);
@@ -1937,7 +1941,7 @@ void Example52_FixedCmdYaw() {
         float obs[64];
         rl::build_observation(gyro, quat, pos_policy, vel_policy, last_action, cmd, step, obs);
         float action[16];
-        rl::mlp_forward(obs, action);
+        rl::mlp_forward_clipped(obs, action);
         for (int cp = 0; cp < 4; cp++)
             for (int mi = 1; mi <= 4; mi++) {
                 int mjx = cp * 4 + (mi - 1);
@@ -2150,7 +2154,7 @@ void Example56_FixedYawRecord() {
         float obs[64];
         rl::build_observation(gyro, quat, pos_policy, vel_policy, last_action, cmd, step, obs);
         float action[16];
-        rl::mlp_forward(obs, action);
+        rl::mlp_forward_clipped(obs, action);
 
         // 记录每步目标/下发
         float qt[16] = {0.0f}, qtv[16] = {0.0f};   // q_target/qd_target（轮 q_target=0，qtv 承载轮下发速度）
@@ -2367,7 +2371,7 @@ void Example53_MeasureGravityFF() {
         float obs[64];
         rl::build_observation(gyro, quat, pos_policy, vel_policy, last_action, cmd, step, obs);
         float action[16];
-        rl::mlp_forward(obs, action);
+        rl::mlp_forward_clipped(obs, action);
         for (int cp = 0; cp < 4; cp++)
             for (int mi = 1; mi <= 4; mi++) {
                 int mjx = cp * 4 + (mi - 1);

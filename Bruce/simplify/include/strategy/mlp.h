@@ -7,7 +7,7 @@
  *
  * 权重由 tool/export_policy.py 从 flax checkpoint 导出到 policy_weights*.h，
  * 布局为 x @ W + b（W 形状 [in_dim][out_dim]，row-major）。
- * 两套变体（9754 / 10000）同时编译进来，由 rl::SetPolicyVariant() 运行时选择，
+ * 多套变体（9754 / 10000 / 5350 / 8001）同时编译进来，由 rl::SetPolicyVariant() 运行时选择，
  * 默认值见 strategy/policy_variant.h；本函数用 rl::CurrentPolicy() 取当前权重。
  *
  * 零外部依赖（不用 libtorch / onnxruntime），20 万参数、50 Hz 下 CPU 无压力。
@@ -15,7 +15,7 @@
 #pragma once
 
 #include <cmath>
-#include "strategy/policy_set.h"       // 运行时策略权重（两套都编译进来）
+#include "strategy/policy_set.h"       // 运行时策略权重（多套都编译进来）
 
 namespace rl {
 
@@ -67,6 +67,21 @@ inline void mlp_forward(const float* obs, float* action) {
     dense(h1, w.w2, w.b2, HIDDEN_1, HIDDEN_2, h2, true);
 
     dense(h2, w.wo, w.bo, HIDDEN_2, ACTION_DIM, action, false);
+}
+
+/**
+ * @brief 部署推理：确定性前向 + 训练等价的 action clip 到 [-1, 1]。
+ *
+ * 训练侧 GenericEnv.step(clip_action=True) 使用 config.control.action_clip=1.0，
+ * 即原始策略输出会先被截断到 [-1,1] 再进入 PD 控制律。sim2sim 复现与真机部署
+ * 必须保持一致：a = clip(policy_output, -1, +1)。
+ */
+inline void mlp_forward_clipped(const float* obs, float* action) {
+    mlp_forward(obs, action);
+    for (int i = 0; i < ACTION_DIM; ++i) {
+        if (action[i] < -1.0f) action[i] = -1.0f;
+        else if (action[i] > 1.0f) action[i] = 1.0f;
+    }
 }
 
 } // namespace rl
