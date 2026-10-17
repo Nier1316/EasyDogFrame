@@ -7,8 +7,8 @@
 //  = 只运行一个示例：目标示例的 3 行取消注释、其余保持注释即可。
 //  = Example1-16 已清理（早期实验），现存 17~62（共 45 个；55 从未实现，已删除）。
 //  = 当前启用：Example37（RL 遥操作 前进/后退 + 转向）。Ex37 在进入 RL 前用
-//    rl::SetPolicyVariant() 强制 h52_s45_v4/iteration_5350，**与全局默认 POLICY_VARIANT 无关**
-//    （三套权重 9754 / 10000 / 5350 同时编译进程序，见 include/strategy/policy_set.h）。
+//    rl::SetPolicyVariant() 强制 rw9_plain_v1.1_s4/iteration_8001，**与全局默认 POLICY_VARIANT 无关**
+//    （四套权重 9754 / 10000 / 5350 / 8001 同时编译进程序，见 include/strategy/policy_set.h）。
 //
 //  ⚠ 2026-09-29：原先此处用 `signal(SIGINT, signal_handler)` 装了一个只把
 //    `static volatile bool g_running` 置 false 的处理器，而该变量**从未被读取**：

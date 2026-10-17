@@ -6,16 +6,16 @@
 
 namespace rl {
 
-// 名义站姿（POLICY order，URDF 约定）。与 dogurdf.py 的
-// NOMINAL_HIP/NOMINAL_THIGH/NOMINAL_CALF 一致（hip=0, thigh=0.20, calf=-0.35,
-// wheel=0），即策略训练默认姿态。真机下发指令角由
+// 名义站姿（POLICY order，URDF 约定）。与 RL_Train/code/src/robots/dogurdf.py 的
+// NOMINAL_HIP/NOMINAL_THIGH/NOMINAL_CALF 一致（hip=0, thigh=-0.03, calf=-0.116,
+// wheel=0，站高 0.52 m），即策略训练默认姿态。真机下发指令角由
 // urdf_to_status(DEFAULT_POSE, joint) 转换得到，不要在此手填真机标定角。
 const float DEFAULT_POSE[16] = {
     // FL  FR  RL  RR 各 hip/thigh/calf
-    0.0f, 0.20f, -0.35f,
-    0.0f, 0.20f, -0.35f,
-    0.0f, 0.20f, -0.35f,
-    0.0f, 0.20f, -0.35f,
+    0.0f, -0.03f, -0.116f,
+    0.0f, -0.03f, -0.116f,
+    0.0f, -0.03f, -0.116f,
+    0.0f, -0.03f, -0.116f,
     // 4 轮
     0.0f, 0.0f, 0.0f, 0.0f,
 };

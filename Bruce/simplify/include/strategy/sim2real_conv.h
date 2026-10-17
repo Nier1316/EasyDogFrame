@@ -10,17 +10,12 @@
 
 namespace rl {
 
-// 名义站姿（POLICY order：12 腿 + 4 轮）：hip=0, thigh=0.20, calf=-0.35, wheel=0。
-// 🔴⚠ 2026-10-12 核对（tool/pose_view.py）：**这句"一致"是错的**！
-//   dogurdf.py 实际是 `NOMINAL_CALF = -0.53`（`NOMINAL_TORSO_HEIGHT = 0.40`），
-//   与本表的 `-0.35` 差 **0.18 rad = 10.31°**。
-//   FK 实测（机身 z=0.40 m，四腿相同）：
-//     calf = -0.53 → 轮心 z = **113.7 mm**（= 轮半径，刚触地）
-//     calf = -0.35 → 轮心 z = **63.6 mm**（陷地 50 mm）；轮心比髋后 59.5 mm（-0.53 时 24.5 mm）
-//   ⇒ 本表的 -0.35 与训练/仿真的名义站姿对不上，会让 `joint_pos_rel = q − DEFAULT_POSE`
-//     在 4 个小腿通道上带 **-0.18 rad 的恒定偏置**，`leg_pos_target` 的基点也差同样多。
-//   ⚠ **本次不改数值**（改它会直接改变真机站姿与策略观测），待查 `RL_Train/code` 的真实
-//     训练配置 + 现场确认后再定。可视化对比：`tool/pose_view.py --preset default|nominal`。
+// 名义站姿（POLICY order：12 腿 + 4 轮）：hip=0, thigh=-0.03, calf=-0.116, wheel=0。
+// 与 RL_Train/code/src/robots/dogurdf.py 的 NOMINAL_HIP/THIGH/CALF 一致
+// （2026-09-15 站高 0.52 m 标定），即策略训练默认姿态。
+// ✅ 2026-10-17：本组数值**已由训练侧真值核实**，取代此前的 thigh=0.20 / calf=-0.35。
+//   历史疑问（已闭环）：旧 calf=-0.35 与 dogurdf.py 的 NOMINAL_CALF 差 0.18 rad=10.31°，
+//   FK 下旧值会让轮心陷地约 50 mm ⇒ 旧值确实是错的，现以 RL_Train 的 0.52 m 站高标定为准。
 extern const float DEFAULT_POSE[16];
 
 // 真机 GetStatus 角 ↔ URDF 角每关节映射（2026-08-20 真机 L 形测量）：
