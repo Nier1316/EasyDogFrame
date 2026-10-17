@@ -2,6 +2,12 @@
  * @file    libusb_fastpoll.c
  * @brief   LD_PRELOAD 垫片：修正达妙 USB2CAN SDK 的 libusb 事件收割超时（2026-10-08）
  *
+ * ⚠⚠ 2026-10-17 实测结论：**本垫片对真机攒批无效，run.sh 已不再自动加载。**
+ *    攒批不在这个 libusb 事件超时上，而在 SDK 的**入站派发层**——帧几十 µs 就到 libusb
+ *    回调（tool/libusb_xferprobe.c 实测完成间隔 32~127 µs），却每 ~77~100 ms 才交 ~50 帧
+ *    给我们的 onRecv（Example64_FeedbackRateDiag + recv 日志的突发结构实测）。
+ *    详见 memory/FACT.md §反馈链路。保留本文件仅供历史参考 / 手动复现实验。
+ *
  * 【要解决的问题】
  *   libdm_device.so 内部的线程 can_bus_box::usb_handle_thread_func() 循环是：
  *       while (runningFlag)
