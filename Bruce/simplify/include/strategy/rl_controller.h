@@ -151,7 +151,13 @@ inline float leg_pos_target(float action, int policy_idx) {
 //   - fc：每关节库仑摩擦，来自 Example54 吊装摩擦辨识（2026-09-04）。
 // ⚠ 实测值并不小（1.64~6.17 Nm，见 rl_controller.cpp 的 LEG_FF_FC），已接近部分关节的
 //   PD 输出量级；若真机出现"越动越快/振荡"，先关闭 LEG_FF_ENABLE 复核再折半。
-constexpr bool   LEG_FF_ENABLE  = true;
+// 🔴 2026-10-17 现场要求关闭（改为 false）。
+//   关闭后 leg_friction_ff() 直接 return 0：所有示例同时失效；已安装的 500 Hz override
+//   回调自动变空操作（EnableRlFrictionFF 的 lambda 返回值恒 0），无需改调用点。
+//   影响预期：库仑项并不小（2.4~6.17 Nm，接近部分关节 PD 输出量级）⇒ 静止/低速时
+//   位置误差会变大（calf 最明显）。想恢复只改回 true 并重编译（0.3 s）。
+//   ⚠ 与「重力前馈 tau_ff」无关：那是 JOINT_IMPEDANCE[][].tau_ff，目前全为 0。
+constexpr bool   LEG_FF_ENABLE  = false;
 constexpr float  LEG_FF_TANH_K  = 0.5f;   // tanh(τ_pd/K) 方向光滑参数
 extern const float LEG_FF_FC[12];          // 每关节库仑摩擦 (Nm)，POLICY order（12 腿）
 extern const float LEG_FF_FV[12];          // 每关节粘性阻尼 (Nm·s/rad)，POLICY order（12 腿）

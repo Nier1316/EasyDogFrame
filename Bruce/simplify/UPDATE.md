@@ -589,3 +589,16 @@ CAN0-M1(hip)    498.3 Hz      0 µs    98304 µs  🔴 攒批中(~100ms 一批)
 
 **需要复核的旧结论**：PACE 的 `I_a`/`T_d` "辨不出来"（原以为是反馈 10 Hz 阶梯）理由不再成立；
 `docs/ACTION_DELAY_MEASURE.md` 的"≈24 ms"建议在修复后用 Ex38 重测。
+
+### 关闭腿摩擦前馈（`LEG_FF_ENABLE = false`）
+
+现场要求关闭。改 `include/strategy/rl_controller.h` 的 `LEG_FF_ENABLE: true → false`：
+
+- `leg_friction_ff()` 第一行 `if (!LEG_FF_ENABLE) return 0.0f;` ⇒ **所有示例同时失效**；
+- 已安装的 500 Hz override 回调（Ex25/Ex36 的 `EnableRlFrictionFF`）自动变成**空操作**
+  （lambda 内部调用 `leg_friction_ff`，返回恒 0），**无需改任何调用点**；
+- 与**重力前馈** `tau_ff` 无关（`JOINT_IMPEDANCE[][].tau_ff` 目前全为 0）。
+
+预期影响：库仑项 2.40/3.36/4.82、1.64/1.89/4.54、2.59/2.13/6.17、1.84/2.56/5.38 N·m
+（接近部分关节 PD 输出量级）撤掉后，**静止/低速的位置误差会变大，calf 最明显**。
+恢复：改回 `true` 重编译（0.3 s）。
