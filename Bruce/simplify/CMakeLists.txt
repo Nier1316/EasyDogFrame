@@ -205,6 +205,23 @@ if(UNIX)
 endif()
 message(STATUS "策略离线回归: ${PROJECT_SOURCE_DIR}/bin/policy_selftest")
 
+# ---------------------------------------------------------------------------
+# 达妙 SDK 入站派发提速垫片：notification_thread_func 里硬编码 nanosleep(100 ms)
+#（.rodata@0x151e0 = timespec{0,100000000}）⇒ 上位机 ~10 Hz 攒批。
+# 本垫片只夹"libdm_device.so 内、请求 >20 ms"的 nanosleep（心跳的 10 ms 与我们自己的
+# sleep 都不受影响）。详见 tool/dmcan_fastdispatch.c。
+# ---------------------------------------------------------------------------
+add_library(dmcan_fastdispatch SHARED tool/dmcan_fastdispatch.c)
+set_target_properties(dmcan_fastdispatch PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin
+    PREFIX ""                      # 产物名要正好是 dmcan_fastdispatch.so（不带 lib 前缀）
+)
+target_link_libraries(dmcan_fastdispatch PRIVATE ${CMAKE_DL_LIBS})
+if(UNIX)
+    target_compile_options(dmcan_fastdispatch PRIVATE -Wall -Wextra)
+endif()
+message(STATUS "派发提速垫片: ${PROJECT_SOURCE_DIR}/bin/dmcan_fastdispatch.so")
+
 # ============ 编译信息 ============
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")

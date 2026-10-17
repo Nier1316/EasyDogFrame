@@ -522,3 +522,34 @@ IMU 正常（roll +2.0°/pitch +6.3°），16 个关节读数稳定且**四条�
 且 `mlp_forward_clipped`（action_clip=1.0）输出全在 [−1,1] ✓。
 
 ⚠ 新策略标注 **`terrain_trained=false`**：只训练过平地，**不得用于楼梯/崎岖地面**。
+
+### 🎯 100 ms 攒批的根因（反汇编定位）+ 修复垫片
+
+用 `objdump` 静态分析 `libdm_device.so`（**没有启动真机程序**）定位到确切口：
+
+```
+can_bus_box::notification_thread_func()      ← 入站帧派发线程（它才调我们的 onRecv）
+  10318: movdqa 0x4ec0(%rip),%xmm0    # .rodata@0x151e0 = timespec{tv_sec=0, tv_nsec=0x05F5E100}
+  10325: movaps %xmm0,0x40(%rsp)
+  10330: call   nanosleep             # ← 每轮睡 100,000,000 ns = **100 ms**
+```
+
+全库仅两个 `nanosleep` 调用点：派发线程 **100 ms**（@0x151e0）、心跳线程 10 ms（@0x151f0）。
+⇒ 帧由 libusb 回调压进队列后，**100 ms 才派发一次**，与"~10 Hz、每次 ~50 帧"完全吻合；
+也解释了为何夹 libusb 事件超时（@0x151d0 的 timeval{0,100000}）无效。
+
+**新增 `tool/dmcan_fastdispatch.c` → `bin/dmcan_fastdispatch.so`**：LD_PRELOAD 拦截 `nanosleep`，
+**仅当调用方位于 `libdm_device.so` 内且请求 >20 ms** 才夹到 `DMCAN_TICK_US`（默认 1 ms），
+因此心跳 10 ms、我们自己的 `sleep()/usleep()` 全部不受影响。
+
+用法：
+```bash
+LD_PRELOAD=./bin/dmcan_fastdispatch.so ./bin/can_motor_app
+# 或 VS Code F5：launch.json 的 "environment" 加
+#   { "name": "LD_PRELOAD", "value": "${workspaceFolder}/bin/dmcan_fastdispatch.so" }
+```
+验证：配合 `Example64` 看每电机位置更新率是否从 ~8 Hz 提到 ~500 Hz；退出时会打印
+"缩短 N 次 / 原样放过 M 次 / 最大请求时长"。
+
+⚠ 安全自测已过（从我们自己的代码调 `nanosleep(50ms)` 实测 50.1 ms，未被夹）；
+**真机效果尚未验证** —— 需要你允许启动程序后再测。

@@ -254,7 +254,31 @@
 > 6. 🔴 同时确认：**CAN3-M1（RR hip）在 8000 请求/s 下 0 次更新**（其余 15 个电机各 ~498 Hz）
 >    ⇒ 该电机**根本不回帧**（独立于攒批的硬件问题，10-13 那次是 CAN3-M4 不回，同一腿"换着电机"不回）。
 >
-> **剩余问题**：为什么恰好 ~100 ms / ~51 帧一批（SDK 内部派发线程的节拍未知）。
+> ### 🎯 2026-10-17 反汇编定位到根因：`notification_thread_func` 里 `nanosleep(100 ms)`
+>
+> ```
+> can_bus_box::notification_thread_func()  （= 入站帧派发线程，它才调我们的 onRecv）
+>   10318: movdqa 0x4ec0(%rip),%xmm0    # .rodata@0x151e0 = timespec{ tv_sec=0,
+>   10325: movaps %xmm0,0x40(%rsp)      #                            tv_nsec=0x05F5E100 }
+>   10330: call   nanosleep             # ← 每轮睡 **100,000,000 ns = 100 ms**
+> ```
+>
+> 全库**只有两个** `nanosleep` 调用点：
+>
+> | 地址 | 线程 | timespec（.rodata） | 时长 |
+> |---|---|---|---|
+> | `0x10330` | **`notification_thread_func`**（入站派发） | `@0x151e0` | **100 ms** ← 节拍来源 |
+> | `0x136e9` | `heartbeat_thread_func` | `@0x151f0` | 10 ms |
+>
+> 机制：libusb 回调（`can_bus_box::transfer_callback`）把帧压进 moodycamel 队列 →
+> **派发线程 100 ms 才醒一次**、一次把积压全交给我们 ⇒ 上位机看到 ~10 Hz / ~50 帧一批。
+> 这也解释了为什么夹 libusb 事件超时（`@0x151d0` 的 timeval{0,100000}）**没有效果**。
+>
+> **修复候选（已实现，待真机验证）**：`tool/dmcan_fastdispatch.c` → `bin/dmcan_fastdispatch.so`
+> LD_PRELOAD 拦截 `nanosleep`，**仅当"调用方在 libdm_device.so 内 且 请求 >20 ms"**才夹到
+> `DMCAN_TICK_US`（默认 1 ms）⇒ 只命中派发线程，心跳 10 ms 与我们自己的 sleep 都不动。
+> 预期：策略的关节观测从 ~10 Hz 提到 ~500 Hz。安全自测已过（我们自己的 50 ms sleep 原样放过）。
+> **剩余问题**：为什么恰好 ~100 ms / ~51 帧一批。
 > **可行路线**：① 试 LD_PRELOAD 拦截 SDK **导出**的 `can_bus_box::transfer_callback`
 > （`_ZN11can_bus_box17transfer_callbackEP15libusb_transfer`）绕过其派发；② 换 SocketCAN 传输层（对策 B）。
 
