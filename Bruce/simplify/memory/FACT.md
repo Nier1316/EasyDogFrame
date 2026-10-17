@@ -22,7 +22,9 @@
 
 ## RL 部署（dogurdf 轮足策略）
 ### 权重链路（2026-10-06 起 = **运行时三变体**，默认 5350）
-- 三套权重头**同时编译进程序**（`policy_weights.h` / `_standturn.h` / `_5350.h`），由 `strategy/policy_set.{h,cpp}` 在运行时选择；**换策略不再需要重新编译**。`POLICY_VARIANT` 现在只是默认值（= 2 / 5350）。详见下文「### 策略变体与权重」。
+- **四套**权重头**同时编译进程序**（`policy_weights.h` 9754 / `_standturn.h` 10000 / `_5350.h` 5350 /
+  `_rw9_plain_v11_s4.h` 8001），由 `strategy/policy_set.{h,cpp}` 在运行时选择；**换策略不需要重新编译**。
+  `POLICY_VARIANT` 只是默认值（**2026-10-17 起 = 3 / 8001**）。详见下文「### 策略变体与权重」。
 - 真机当前（main.cpp 激活 `Example37`）跑 **h52_s45_v4 / iteration_5350**（可前进 + 转向，宽摩擦 DR / 地形适应）；`Example61` 强制 `standstep_s4 / iteration_10000`。二者可同进程共存。
 - 网络：`64 → 512 → 256 → 128 → 16`，中间层 ELU 激活、输出层无激活（`include/strategy/mlp.h`）。
 - ⚠️ **sim2sim 默认 checkpoint 与真机已不一致**：`dogurdf_sim2sim_deploy/run_sim2sim.sh` 默认 `../weights/iteration_9754.pkl`（2026-09-29 按当时真机 9754 对齐而定），而真机 `Example37` 自 2026-10-06 起用 **5350** ⇒ 做对比**必须** `SIM2SIM_CKPT=../weights/iteration_5350.pkl`，否则两边跑的是**两个不同策略**、结论无效。（`SIM2SIM_CKPT=<path.pkl>` 可覆盖已有。）
@@ -51,7 +53,9 @@
   ⚠ **旧名 `POLICY_TO_MJX`/`MJX_TO_POLICY` 的字面含义与实际语义正好相反**（数组值没错、名字骗人；旧 `POLICY_TO_MJX` 实为 can→policy）。
   已按语义重命名，旧名保留为**引用别名**（`const int (&OLD)[N] = NEW;`）故既有调用点行为不变；新代码一律用新名。
   自检：`/tmp/perm_test`（9 项：腿/轮范围、双向互逆、双射、抽查、别名等价）全部通过。
-- `DEFAULT_POSE`（POLICY 序）：hip 0、thigh +0.20、calf **−0.35**、wheel 0（四腿相同）。
+- `DEFAULT_POSE`（POLICY 序）：hip 0、thigh **−0.03**、calf **−0.116**、wheel 0（四腿相同）。
+  ✅ 2026-10-17 起以 `RL_Train/code/src/robots/dogurdf.py` 的 **0.52 m 站高标定**为准（此前是
+  +0.20/−0.35，与训练侧差 0.18 rad=10.31°，FK 下轮心会陷地 ~50 mm —— 旧值确为错，已更正）。
   🔴⚠ **2026-10-12 核对：与 dogurdf `NOMINAL_*` 并**不一致**！** dogurdf.py 是 `NOMINAL_CALF = −0.53`
   （`NOMINAL_TORSO_HEIGHT = 0.40`），两者差 **0.18 rad = 10.31°**。FK 实测（机身 0.40 m）：
   calf −0.53 → 轮心 z **113.7 mm**（= 轮半径，刚触地）；calf −0.35 → 轮心 z **63.6 mm**（陷地 50 mm）。
@@ -166,7 +170,7 @@
   - **Example59 `GravityMassIdentify`**：重力矩系数 `G_j = m·g·d` 与质量-质心。单关节小幅慢扫 14 点 → 对 `[sinθ, cosθ, 1]` 最小二乘 ⇒ `G_j = √(a²+b²)`（与角度零点约定无关）；配合称重反推 `d`、配合 Ex47 的 `J` 得 `I_c = J − m·d²`；打印建议的 `LINK_DYNAMICS`/`BODY_MASS`。落盘 `log/sysid/gravity_summary_*.csv`。
 - ⚠️ 分工：`J/B/f_c/K_g` 由 **Example47** 辨识、腿摩擦由 **Example54** 辨识 —— 58/59 **不重复**，只补 Ex47 给不出的"大范围重力矩幅值"与"质量/质心"。
 - 文件分工：`ex_basic.cpp`（17~23，7 个）、`ex_diag.cpp`（24, 26~29, 33, 34, 39~50, 54, 57, **63**，22 个）、`ex_rl.cpp`（25, 30~32, 35~38, 51~53, 56, **61**，13 个）、**`ex_sysid.cpp`（58~59，2 个）**、**`ex_probe.cpp`（60, 62，2 个）** = 共 **46 个**。
-- 关键示例：Ex25 完整 RL + 手柄；Ex30 离线链路回归（不碰 CAN，**同时校验三套权重**）；Ex34 轮子方向核对；Ex35 轮摩擦前馈标定（历史）；Ex36 RL 站立循环；**Ex37 RL 遥操作（当前激活，强制 5350）**；Ex38 动作延迟辨识；Ex47 整狗 chirp 辨识；Ex49 轮 SPEED 环 kvp 扫描；Ex51 站立→趴下；**Ex58 力矩通道校验**；**Ex59 重力矩/质量-质心辨识**；Ex54 吊装摩擦辨识；Ex56 固定 yaw 遥测落盘；Ex57 单腿零位对照（验证 CONV_A/B）；**Ex61 站立/原地转向遥操作（强制 10000）**；**Ex62 PACE 式全关节同时 chirp 采集（400 Hz，写 `log/pace/`）**；**Ex63 被动姿态监视（不使能电机，只读 `0x0F` 角度 + IMU → UDP 姿态流给 `tool/pose_view.py`；⚠ 不使能 ⇒ 狗会软掉，需架起/吊起）**。
+- 关键示例：Ex25 完整 RL + 手柄；Ex30 离线链路回归（不碰 CAN，**同时校验四套权重**）；Ex34 轮子方向核对；Ex35 轮摩擦前馈标定（历史）；Ex36 RL 站立循环；**Ex37 RL 遥操作（当前激活，强制 8001 平地速度策略）**；Ex38 动作延迟辨识；Ex47 整狗 chirp 辨识；Ex49 轮 SPEED 环 kvp 扫描；Ex51 站立→趴下；**Ex58 力矩通道校验**；**Ex59 重力矩/质量-质心辨识**；Ex54 吊装摩擦辨识；Ex56 固定 yaw 遥测落盘；Ex57 单腿零位对照（验证 CONV_A/B）；**Ex61 站立/原地转向遥操作（强制 10000）**；**Ex62 PACE 式全关节同时 chirp 采集（400 Hz，写 `log/pace/`）**；**Ex63 被动姿态监视（不使能电机，只读 `0x0F` 角度 + IMU → UDP 姿态流给 `tool/pose_view.py`；⚠ 不使能 ⇒ 狗会软掉，需架起/吊起）**。
 - ⚠️ **无需使能也能读关节角**（Ex63 用的就是这条路）：`ReadParam(…, MOTOR_OR_angle=0x0F)` 走"读写参数"帧，回复由 `unpack_frame` 的参数分支解析并同样经 `ApplyMotorCalibrationPos` ⇒ `GetStatus()` 是标定后的 status 角。**但没有使能的电机不发周期回帧**（Ex62 里 4 个未使能的轮子 0 帧）。
   ⚠️ 2026-10-13 实测：**驱动器未上电时参数请求发得出去、没人回**，`position` 恒 0 ⇒ `status_to_urdf(0)=CONV_B` 看着像合法姿态；Ex63 已加"本秒零回帧"判活并停发。
 - `examples_common` 只有 4 个 helper：`RawTerminal`、`poll_key`、`g_rl_stop`+`rl_signal_handler`、`EnableRlFrictionFF/DisableRlFrictionFF`。

@@ -193,6 +193,18 @@ if(UNIX)
 endif()
 message(STATUS "libusb 传输探针: ${PROJECT_SOURCE_DIR}/bin/libusb_xferprobe.so")
 
+# ---------------------------------------------------------------------------
+# 策略权重离线数值回归（**不碰 CAN/USB**）：对全部变体跑 mlp_forward(REF_OBS) 并与
+# REF_ACTION 比对。单独一个可执行文件，避免为了验证权重去启动真机程序。
+# 用法：./bin/policy_selftest   （退出码 0=通过）
+# ---------------------------------------------------------------------------
+add_executable(policy_selftest tool/policy_selftest.cc src/strategy/policy_set.cpp)
+target_include_directories(policy_selftest PRIVATE ${PROJECT_SOURCE_DIR}/include)
+if(UNIX)
+    target_compile_options(policy_selftest PRIVATE -Wall -Wextra)
+endif()
+message(STATUS "策略离线回归: ${PROJECT_SOURCE_DIR}/bin/policy_selftest")
+
 # ============ 编译信息 ============
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")

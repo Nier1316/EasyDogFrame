@@ -502,3 +502,23 @@ IMU 正常（roll +2.0°/pitch +6.3°），16 个关节读数稳定且**四条�
 ⚠️ F5 配套注意：`[1] + Done "/usr/bin/gdb" ...` 只是 bash 报告的作业结束，不是错误。
 另：**跑之前确认机器人动力电已开**——否则所有电机 0 帧/s，看起来就像"程序坏了"
 （2026-10-17 实测：断电时 16 个电机全 0；上电时 15 个各 ~500 Hz，CAN3-M1 静默）。
+
+### 2026-10-17 部署新策略 rw9_plain_v1.1_s4 / iteration_8001（合并 origin/develop）
+
+`git merge origin/develop`（远程 5cbd2be），三处冲突的处理：
+
+| 文件 | 处理 |
+|---|---|
+| `include/strategy/sim2real_conv.h` | **采纳远程** `DEFAULT_POSE = hip 0 / thigh −0.03 / calf −0.116`（对齐 `RL_Train/code/src/robots/dogurdf.py` 的 **0.52 m 站高标定**），并把此前"旧值 −0.35 与训练侧差 0.18 rad、FK 下陷地 50 mm"的存疑**归档为已闭环** |
+| `include/strategy/policy_set.h` | 采纳远程"多套"表述 → 改为**四套**（9754/10000/5350/8001） |
+| `src/app/examples/ex_rl.cpp` | **保留本地**「运行时取 `rl::CurrentPolicy()`」，不采用远程硬编码 `"iteration_8001.pkl"`（单一真值来源） |
+
+自动合并已核对：`sim2real_conv.cpp` 同时保留远程的 `DEFAULT_POSE` 与本地 10-13 的 **FR hip 符号修复**
+（`CONV_A[3]=−1`、`CONV_B[3]=−0.0297`）。
+
+**新增 `tool/policy_selftest.cc` + CMake 目标 `policy_selftest`**（`./bin/policy_selftest`）：
+纯离线 MLP 数值回归，**不碰 CAN/USB、不启动真机程序**，因此无硬件时也能验证"新策略是否正确接入"。
+实测四套变体 `mlp_forward(REF_OBS)` vs `REF_ACTION` 最大误差 **1.3e-6 ~ 4.3e-6**（阈值 1e-3），
+且 `mlp_forward_clipped`（action_clip=1.0）输出全在 [−1,1] ✓。
+
+⚠ 新策略标注 **`terrain_trained=false`**：只训练过平地，**不得用于楼梯/崎岖地面**。
