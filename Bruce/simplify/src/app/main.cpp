@@ -6,9 +6,10 @@
 //  示例切换说明
 //  = 只运行一个示例：目标示例的 3 行取消注释、其余保持注释即可。
 //  = Example1-16 已清理（早期实验），现存 17~62（共 45 个；55 从未实现，已删除）。
-//  = 当前启用：Example37（RL 遥操作 前进/后退 + 转向）。Ex37 在进入 RL 前用
-//    rl::SetPolicyVariant() 强制 rw9_plain_v1.1_s4/iteration_8001，**与全局默认 POLICY_VARIANT 无关**
-//    （四套权重 9754 / 10000 / 5350 / 8001 同时编译进程序，见 include/strategy/policy_set.h）。
+//  = 当前启用：Example63（被动姿态监视，不使能电机；需先架起/吊起）。
+//    RL 遥操作等 RL 示例在进入 RL 前用 rl::SetPolicyVariant() 选策略；
+//    编译期默认 = rw9_plain_v1.2_s4_hipy25/iteration_9002
+//    （五套权重 9754 / 10000 / 5350 / 8001 / 9002 同时编译进程序，见 include/strategy/policy_set.h）。
 //
 //  ⚠ 2026-09-29：原先此处用 `signal(SIGINT, signal_handler)` 装了一个只把
 //    `static volatile bool g_running` 置 false 的处理器，而该变量**从未被读取**：

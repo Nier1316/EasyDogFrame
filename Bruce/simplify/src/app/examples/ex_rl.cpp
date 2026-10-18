@@ -4,12 +4,12 @@
 // ---- RL 示例（25 策略控制 / 30 链路验证 / 36 站立 / 37 遥操作 / 51-53 流程）的权重来源 ----
 // 多套策略权重**同时编译进程序**（见 policy_set.cpp），均由 tool/export_policy.py 从
 // weights/*.pkl 导出。示例在进入 RL 前用 rl::SetPolicyVariant() 选自己那一套：
-//   Example37 → POLICY_RW9_PLAIN_V11_S4_8001（最新平地速度）；
+//   Example37 → POLICY_RW9_PLAIN_V12_S4_HIPY25_9002（最新平地速度）；
 //   Example61 → POLICY_STANDTURN_10000（站立/原地转向）。
-//   最新平地速度策略 = POLICY_RW9_PLAIN_V11_S4_8001（rw9_plain_v1.1_s4/iteration_8001，
-//   plain 不含 HIM；仅训练过平地，不得用于楼梯/崎岖地面）。
+//   最新平地速度策略 = rw9_plain_v1.2_s4_hipy25/iteration_9002，
+//   plain 不含 HIM；仅训练过平地，不得用于楼梯/崎岖地面。
 // 换权重流程：export_policy.py（--ckpt 指定，--out-weights 指定变体头）→ 重新编译 →
-// 跑 Example30 做 MLP 数值回归门（同时核对全部四套 REF_OBS/REF_ACTION）。
+// 跑 Example30 做 MLP 数值回归门（同时核对全部五套 REF_OBS/REF_ACTION）。
 #include "app/examples/ex_rl.h"
 #include "app/examples_common.h"
 #include "motion/motion_controller.h"
@@ -263,11 +263,11 @@ void Example25_RLPolicyControl() {
 // 纯 CPU，不初始化 CAN、不使能电机。
 void Example30_RLPolicyLinkTest() {
     printf("\n========== 示例 30：RL 策略链路离线验证 ==========\n");
-    printf("[INFO] 不碰 CAN。全部四套权重各用 REF_OBS(64) 跑 mlp_forward，对比 REF_ACTION(16)。\n");
+    printf("[INFO] 不碰 CAN。全部五套权重各用 REF_OBS(64) 跑 mlp_forward，对比 REF_ACTION(16)。\n");
 
-    // 1) MLP 前向 vs 参考输出（四套变体都验：0=9754 / 1=10000 站立转向 / 2=5350 演示稳定 / 3=8001 最新平地）
+    // 1) MLP 前向 vs 参考输出（五套变体都验：0=9754 / 1=10000 / 2=5350 / 3=8001 / 4=9002）
     bool all_ok = true;
-    for (int vid = rl::POLICY_SMALLLIFT_9754; vid <= rl::POLICY_RW9_PLAIN_V11_S4_8001; vid++) {
+    for (int vid = rl::POLICY_SMALLLIFT_9754; vid <= rl::POLICY_RW9_PLAIN_V12_S4_HIPY25_9002; vid++) {
         const rl::PolicyWeights& w = rl::PolicyOf(vid);
         rl::SetPolicyVariant(vid);
 
@@ -292,7 +292,7 @@ void Example30_RLPolicyLinkTest() {
         }
     }
     printf("\n    %s\n", all_ok
-        ? "  [OK] 四套 MLP 权重与网络结构均正确"
+        ? "  [OK] 五套 MLP 权重与网络结构均正确"
         : "  [FAIL] 权重/结构有问题，需用 tool/export_policy.py 重新导出");
 
     // 恢复编译期默认变体，避免影响本示例后续（观测样本）与同进程其它逻辑
@@ -1174,10 +1174,10 @@ void Example36_RLStandLoop() {
 void Example37_RLTeleopControl() {
     printf("\n========== Example 37: RL 遥操作（手柄，走 MotionController） ==========\n");
 
-    // 本示例运行时强制 rw9_plain_v1.1_s4 / iteration_8001 —— 最新平地速度
+    // 本示例运行时强制 rw9_plain_v1.2_s4_hipy25 / iteration_9002 —— 最新平地速度
     // 策略（plain，不含 HIM；仅训练过平地，不得用于楼梯/崎岖地面）；
     // 与全局默认 POLICY_VARIANT 无关。
-    rl::SetPolicyVariant(rl::POLICY_RW9_PLAIN_V11_S4_8001);
+    rl::SetPolicyVariant(rl::POLICY_RW9_PLAIN_V12_S4_HIPY25_9002);
     printf("[策略] %s（%s，%s）\n", rl::CurrentPolicy().name,
            rl::CurrentPolicy().has_forward_vx ? "可前进" : "⚠ 不支持前进",
            rl::CurrentPolicy().terrain_trained ? "地形适应" : "仅平地，勿用于楼梯/崎岖地面");

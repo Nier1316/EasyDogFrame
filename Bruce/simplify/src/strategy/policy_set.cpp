@@ -9,7 +9,8 @@
 //    wt_smalllift       : weights/iteration_9754.pkl   （smalllift_s45 stage4.5，可前进）
 //    wt_standturn       : iteration_10000.pkl          （standstep_s4，站立/原地转向）
 //    wt_5350            : weights/iteration_5350.pkl   （h52_s45_v4，演示稳定）
-//    wt_rw9_plain_v11_s4: weights/iteration_8001.pkl（rw9_plain_v1.1_s4，最新平地速度）
+//    wt_rw9_plain_v11_s4: weights/iteration_8001.pkl（rw9_plain_v1.1_s4，上一版平地速度）
+//    wt_rw9_plain_v12_s4_hipy25: weights/iteration_9002.pkl（rw9_plain_v1.2_s4_hipy25，最新平地速度）
 // ============================================================================
 #include "strategy/policy_set.h"
 
@@ -32,6 +33,11 @@ namespace rl { namespace wt_rw9_plain_v11_s4 {
 #include "strategy/policy_weights_rw9_plain_v11_s4.h"
 #include "strategy/policy_test_ref_rw9_plain_v11_s4.h"
 } }  // namespace rl::wt_rw9_plain_v11_s4
+
+namespace rl { namespace wt_rw9_plain_v12_s4_hipy25 {
+#include "strategy/policy_weights_rw9_plain_v12_s4_hipy25.h"
+#include "strategy/policy_test_ref_rw9_plain_v12_s4_hipy25.h"
+} }  // namespace rl::wt_rw9_plain_v12_s4_hipy25
 
 namespace rl {
 
@@ -70,7 +76,7 @@ static const PolicyWeights kStandturn = {
     false, false,
 };
 
-// rw9_plain_v1.1_s4 / iteration_8001：最新平地速度策略（plain，不含 HIM 估计器）。
+// rw9_plain_v1.1_s4 / iteration_8001：上一版平地速度策略（plain，不含 HIM 估计器）。
 // obs 64 / action 16，训练时 base_lin_vel 恒 0；仅训练过平地，不得用于楼梯/崎岖地面。
 // 推理必须用动作均值（deterministic，不采样；std 仅约 0.36）。
 static const PolicyWeights kRw9PlainV11S4 = {
@@ -84,13 +90,28 @@ static const PolicyWeights kRw9PlainV11S4 = {
     true, false,
 };
 
+// rw9_plain_v1.2_s4_hipy25 / iteration_9002：最新平地速度策略（plain，不含 HIM 估计器）。
+// obs 64 / action 16，训练时 base_lin_vel 恒 0；仅训练过平地，不得用于楼梯/崎岖地面。
+// 推理必须用动作均值（deterministic，不采样；std 仅约 0.35）。
+static const PolicyWeights kRw9PlainV12S4Hipy25 = {
+    wt_rw9_plain_v12_s4_hipy25::ACTOR_W0, wt_rw9_plain_v12_s4_hipy25::ACTOR_B0,
+    wt_rw9_plain_v12_s4_hipy25::ACTOR_W1, wt_rw9_plain_v12_s4_hipy25::ACTOR_B1,
+    wt_rw9_plain_v12_s4_hipy25::ACTOR_W2, wt_rw9_plain_v12_s4_hipy25::ACTOR_B2,
+    wt_rw9_plain_v12_s4_hipy25::ACTOR_WO, wt_rw9_plain_v12_s4_hipy25::ACTOR_BO,
+    wt_rw9_plain_v12_s4_hipy25::REF_OBS,  wt_rw9_plain_v12_s4_hipy25::REF_ACTION,
+    "rw9_plain_v1.2_s4_hipy25/iteration_9002",
+    "checkpoints_20261018_104932_rw9_plain_v1.2_s4_hipy25/iteration_9002.pkl",
+    true, false,
+};
+
 const PolicyWeights& PolicyOf(int id) {
     switch (id) {
         case POLICY_SMALLLIFT_9754:        return kSmalllift;
         case POLICY_STANDTURN_10000:       return kStandturn;
         case POLICY_H52S45_V4_5350:        return k5350;
-        case POLICY_RW9_PLAIN_V11_S4_8001: return kRw9PlainV11S4;
-        default:                           return PolicyOf(POLICY_VARIANT);   // 越界 → 编译期默认
+        case POLICY_RW9_PLAIN_V11_S4_8001:        return kRw9PlainV11S4;
+        case POLICY_RW9_PLAIN_V12_S4_HIPY25_9002: return kRw9PlainV12S4Hipy25;
+        default:                                  return PolicyOf(POLICY_VARIANT);   // 越界 → 编译期默认
     }
 }
 
@@ -100,7 +121,8 @@ int PolicyVariant() { return g_variant; }
 
 void SetPolicyVariant(int id) {
     if (id == POLICY_SMALLLIFT_9754 || id == POLICY_STANDTURN_10000 ||
-        id == POLICY_H52S45_V4_5350 || id == POLICY_RW9_PLAIN_V11_S4_8001)
+        id == POLICY_H52S45_V4_5350 || id == POLICY_RW9_PLAIN_V11_S4_8001 ||
+        id == POLICY_RW9_PLAIN_V12_S4_HIPY25_9002)
         g_variant = id;
 }
 

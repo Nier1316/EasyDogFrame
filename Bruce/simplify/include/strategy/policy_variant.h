@@ -15,14 +15,17 @@
 //    2 = h52_s45_v4 / iteration_5350（2026-09-17）【演示/稳定】
 //        宽摩擦 DR、地形适应，可前进 + 转向；Example37 手柄遥操作使用。
 //        该权重于 2026-09-29 清理时删除、2026-10-06 从 git 历史恢复（逐字节一致）。
-//    3 = rw9_plain_v1.1_s4 / iteration_8001（2026-10-15）【默认 · 最新平地速度】
+//    3 = rw9_plain_v1.1_s4 / iteration_8001（2026-10-15）【上一版平地速度】
+//        plain checkpoint（不含 HIM 估计器），obs 64 / action 16。仅训练过平地，
+//        **不得用于楼梯/崎岖地面**。推理必须用动作均值（deterministic），不采样。
+//    4 = rw9_plain_v1.2_s4_hipy25 / iteration_9002（2026-10-18）【默认 · 最新平地速度】
 //        plain checkpoint（不含 HIM 估计器），obs 64 / action 16。仅训练过平地，
 //        **不得用于楼梯/崎岖地面**。推理必须用动作均值（deterministic），不采样。
 //
 //  ⚠ 无论选哪套，都建议跑一次 **Example30_RLPolicyLinkTest**（离线、不碰 CAN）：
-//    它会**同时校验全部四套权重**的 MLP 数值回归，确认导出权重与推理链路正确。
+//    它会**同时校验全部五套权重**的 MLP 数值回归，确认导出权重与推理链路正确。
 //  导出方法（训练环境，一条命令写完，注意不要用行尾反斜杠续行——会触发 -Wcomment）：
 //    <python> tool/export_policy.py --ckpt <...>/iteration_10000.pkl --out-weights include/strategy/policy_weights_standturn.h --out-ref include/strategy/policy_test_ref_standturn.h
 // ============================================================================
 
-#define POLICY_VARIANT 3   // 默认变体（0=9754 / 1=10000 / 2=5350 / 3=8001；示例可用 rl::SetPolicyVariant 覆盖）
+#define POLICY_VARIANT 4   // 默认变体（0=9754 / 1=10000 / 2=5350 / 3=8001 / 4=9002；示例可用 rl::SetPolicyVariant 覆盖）

@@ -26,8 +26,8 @@ constexpr int NUM_WHEELS      = 4;
 constexpr int OBS_DIM         = 64;
 
 // ---- 控制参数（与 RL_Train/code/src/sim2sim.py 权威实现保持一致）----
-// 当前默认部署权重 = POLICY_RW9_PLAIN_V11_S4_8001（rw9_plain_v1.1_s4/iteration_8001，
-// 由 tool/export_policy.py 导出到 policy_weights_rw9_plain_v11_s4.h）。
+// 当前默认部署权重 = POLICY_RW9_PLAIN_V12_S4_HIPY25_9002（rw9_plain_v1.2_s4_hipy25/iteration_9002，
+// 由 tool/export_policy.py 导出到 policy_weights_rw9_plain_v12_s4_hipy25.h）。
 constexpr float ACTION_SCALE        = 0.25f;
 constexpr float WHEEL_VEL_SCALE     = 12.5f;
 // LEG_KP/LEG_KD = 250/4：对齐 sim2sim.py 默认（训练 stiffness=250, damping=4）。

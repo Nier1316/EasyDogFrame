@@ -29,7 +29,7 @@ TRAIN = "/home/sysu/Desktop/Project/Bruce/RL_Train/code"
 # 默认指向入库的 weights/iteration_9754.pkl（smalllift_s45 stage4.5，2026-09-19，
 # 来自 checkpoints_20260919_115617_smalllift_s45），导出到 policy_weights.h 供 wt_smalllift
 # 变体使用。用 weights/ 副本而非 RL_Train 绝对路径：工程自包含，换电脑 git pull 即可导出。
-# 导出其它版本（如最新 rw9_plain_v1.1_s4/iteration_8001）时用 --ckpt 与 --out-weights/--out-ref 覆盖。
+# 导出其它版本（如 rw9_plain_v1.2_s4_hipy25/iteration_9002）时用 --ckpt 与 --out-weights/--out-ref 覆盖。
 CKPT = os.path.join(PROJECT, "weights", "iteration_9754.pkl")
 # 实际编译用的权重在 include/strategy/（include/rl/ 已废弃）
 OUT_WEIGHTS = os.path.join(PROJECT, "include/strategy/policy_weights.h")
