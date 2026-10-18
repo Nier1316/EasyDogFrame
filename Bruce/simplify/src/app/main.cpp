@@ -220,9 +220,9 @@ int main() {
     // 运行示例63 - 被动姿态监视（**不使能电机**，只读 0x0F 角度 + IMU → UDP 姿态流给 pose_view）
     //   ⚠️ 不使能 ⇒ 无保持力矩，狗会软掉：运行前必须架起/吊起，或它本来就趴着。
     //   配 tool/pose_view.py --udp 看实时三维姿态（本身不改任何电机状态，不会动）
-    printf("[INFO] Running Example63_PassivePoseMonitor...\n");
-    Example63_PassivePoseMonitor();
-    printf("[INFO] Example63 completed.\n");
+    // printf("[INFO] Running Example63_PassivePoseMonitor...\n");
+    // Example63_PassivePoseMonitor();
+    // printf("[INFO] Example63 completed.\n");
 
     // 运行示例64 - 反馈链路诊断（**不使能电机**，全速参数读制造 RL 级入站流量，
     //   统计 GetStatus() 的应用可见更新率）。配 tool/libusb_xferprobe.so / DMCAN_XFER_BYTES 做 A/B
@@ -269,9 +269,9 @@ int main() {
     // printf("[INFO] Example49 completed.\n");
 
     // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，USB2CAN 4 路）
-    // printf("[INFO] Running Example37_RLTeleopControl...\n");
-    // Example37_RLTeleopControl();
-    // printf("[INFO] Example37 completed.\n");
+    printf("[INFO] Running Example37_RLTeleopControl...\n");
+    Example37_RLTeleopControl();
+    printf("[INFO] Example37 completed.\n");
 
     // 运行示例56 - 固定 yaw 转向真机遥测录制（sim2real 原地转向对比，落盘 log/s2r_fixedyaw_*.csv）
     // printf("[INFO] Running Example56_FixedYawRecord...\n");

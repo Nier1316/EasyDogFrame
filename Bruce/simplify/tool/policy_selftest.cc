@@ -25,7 +25,9 @@ int main() {
            rl::ACTOR_DIM, rl::HIDDEN_0, rl::HIDDEN_1, rl::HIDDEN_2, rl::ACTION_DIM);
 
     bool all_ok = true;
-    for (int vid = rl::POLICY_SMALLLIFT_9754; vid <= rl::POLICY_RW9_PLAIN_V11_S4_8001; vid++) {
+    // 上界取"当前最后一档"。新增策略时只需在这里补一行（否则新变体会被静默跳过）。
+    const int last_vid = rl::POLICY_RW9_PLAIN_V12_S4_HIPY25_9002;
+    for (int vid = rl::POLICY_SMALLLIFT_9754; vid <= last_vid; vid++) {
         const rl::PolicyWeights& w = rl::PolicyOf(vid);
         rl::SetPolicyVariant(vid);
 
@@ -51,20 +53,20 @@ int main() {
 
     // 额外：新策略(8001) 的 action_clip 路径也要能跑（截断到 [-1,1]）
     {
-        rl::SetPolicyVariant(rl::POLICY_RW9_PLAIN_V11_S4_8001);
-        const rl::PolicyWeights& w = rl::PolicyOf(rl::POLICY_RW9_PLAIN_V11_S4_8001);
+        rl::SetPolicyVariant(rl::POLICY_RW9_PLAIN_V12_S4_HIPY25_9002);
+        const rl::PolicyWeights& w = rl::PolicyOf(rl::POLICY_RW9_PLAIN_V12_S4_HIPY25_9002);
         float act[rl::ACTION_DIM];
         rl::mlp_forward_clipped(w.ref_obs, act);
         bool in_range = true;
         for (int i = 0; i < rl::ACTION_DIM; i++)
             if (act[i] < -1.0f || act[i] > 1.0f) in_range = false;
-        printf("\n  mlp_forward_clipped(变体 3)：全部动作 ∈ [-1,1] %s\n",
+        printf("\n  mlp_forward_clipped(变体 %d)：全部动作 ∈ [-1,1] %s\n", last_vid,
                in_range ? "✅" : "❌");
         all_ok = all_ok && in_range;
     }
 
     printf("\n%s\n", all_ok
-        ? "✅ 全部通过：四套权重与网络结构正确，新策略 8001 已正确接入。"
+        ? "✅ 全部通过：全部权重与网络结构正确，最新策略已正确接入。"
         : "❌ 有变体超差：权重/结构需用 tool/export_policy.py 重新导出。");
     return all_ok ? 0 : 1;
 }
