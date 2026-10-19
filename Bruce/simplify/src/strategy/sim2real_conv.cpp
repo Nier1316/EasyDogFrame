@@ -74,16 +74,20 @@ const float* stand_pose() {
     static bool init = false;
     if (!init) {
         for (int i = 0; i < 16; i++) p[i] = DEFAULT_POSE[i];
-        // ---- 真机站高标定（2026-10-19 现场定：站高 480 mm）----
+        // ---- 真机站高标定（2026-10-19 现场定：站高 460 mm）----
         // 用 MJCF（dogurdf.xml，轮半径 113 mm）按两个约束反解：
-        //   ① 轮子刚触地时的机身高度 = 480 mm
+        //   ① 轮子刚触地时的机身高度 = 460 mm
         //   ② 轮心正好在髋关节正下方（与 dogurdf.py 的名义姿态定义一致）
-        // 解得 thigh = -1.09°（几乎保持竖直，与训练默认 -1.7° 接近）、
-        //      calf  = -15.04°（比训练默认 -6.6° 更弯 ⇒ 机身降低 40 mm）。
-        // 对照：旧 DEFAULT (0.20/-0.35) → 449 mm；训练默认 (-0.03/-0.116) → 520 mm。
+        // 解得 thigh = +0.89°、calf = -19.00°（膝更弯 ⇒ 机身更低）。
+        // ⚠ 机身固定在架上时，**站高越小 ⇒ 轮子相对机身越高 ⇒ 腿的离地余量越大**，
+        //   故 PACE 采集要把腿收得多一些（不要为了"余量"去抬高站高，那是反的）。
+        // 站高一览：449 mm(旧 0.20/-0.35) → 460(本次) → 480(上一档) → 520(训练默认)。
+        //   thigh  +0.89° / calf -19.00°  → 460 mm
+        //   thigh  -1.09° / calf -15.03°  → 480 mm
+        //   thigh  -1.70° / calf  -6.60°  → 520 mm
         // ⚠ 只改 stand_pose()，不动 DEFAULT_POSE（后者是策略观测基准）。
-        constexpr float STAND_THIGH_RAD = -0.0190f;   // -1.09°
-        constexpr float STAND_CALF_RAD  = -0.2624f;   // -15.04°
+        constexpr float STAND_THIGH_RAD = +0.0156f;   // +0.89°
+        constexpr float STAND_CALF_RAD  = -0.3316f;   // -19.00°
         for (int leg = 0; leg < 4; leg++) {
             p[leg * 3 + 0] = 0.0f;                    // hip 保持 0（左右对称）
             p[leg * 3 + 1] = STAND_THIGH_RAD;
@@ -101,7 +105,7 @@ const float* stand_pose() {
                 p[leg * 3 + 2] = ca;
             }
             std::printf("[STAND] 起立姿态被环境变量覆盖：thigh %+.1f° / calf %+.1f°"
-                        "（本机默认 %+.1f° / %+.1f°，站高 480 mm；DEFAULT_POSE %+.1f° / %+.1f° 未动）\n",
+                        "（本机默认 %+.1f° / %+.1f°，站高 460 mm；DEFAULT_POSE %+.1f° / %+.1f° 未动）\n",
                         th * 180.0f / pi, ca * 180.0f / pi,
                         dflt_t * 180.0f / pi, dflt_c * 180.0f / pi,
                         DEFAULT_POSE[1] * 180.0f / pi, DEFAULT_POSE[2] * 180.0f / pi);
