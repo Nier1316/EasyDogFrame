@@ -331,7 +331,10 @@ void Example62_PaceChirpCollect() {
     const float KD         = envf("PACE_KD", (float)rl::LEG_KD);   // 默认 = 4
     const int   HZ         = (int)envf("PACE_HZ", 400.0f);    // 辨识采样/控制频率（PACE 整机日志用 400 Hz）
     constexpr float POS_LIMIT  = 2.5f;     // status 坐标的硬保护（thigh 在 DEFAULT_POSE 就有 ~-1.16）
-    constexpr float DEV_LIMIT  = 0.5f;     // 偏离 chirp 偏置超过该值即中止（真正有意义的保护）
+    // 偏离保护：实测偏离 chirp 偏置超过该值即中止。默认 0.5，可用 PACE_DEV_LIMIT 收紧。
+    //   2026-10-19：幅值 0.10 时实测摆幅可达 ±0.13 rad（= 幅值 + 摩擦滞后 τ_f/kp），腿打到地板；
+    //   悬挂余量不足时可用 PACE_AMP_RAD 调小，或设 PACE_DEV_LIMIT=0.3 防跑飞。
+    const float DEV_LIMIT  = envf("PACE_DEV_LIMIT", 0.5f);
     // ------------------------------------------------------
 
     const int N = (int)(DURATION_S * HZ);
