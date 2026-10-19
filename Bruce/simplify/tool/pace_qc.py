@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import csv
 import glob
+import math
 import os
 import statistics
 import sys
@@ -73,7 +74,101 @@ def refresh_rate(col, dt):
 
 
 # ---------------------------------------------------------------- PACE
-def qc_pace(path, rate=400.0):
+def read_meta(path):
+    """读同名 *.meta.txt（采集时自动生成），拿 kp/kd/amp 等参数"""
+    d = {}
+    mp = path + ".meta.txt"
+    if not os.path.exists(mp):
+        return d
+    with open(mp, encoding="utf-8") as fh:
+        for line in fh:
+            if "=" in line:
+                k, v = line.strip().split("=", 1)
+                try:
+                    d[k] = float(v)
+                except ValueError:
+                    d[k] = v
+    return d
+
+
+def dyn_checks(hdr, body, meta, tau_max=27.0):
+    """动力学体检（2026-10-19 新增，针对"关节摩擦 ≈7 N·m"的现场条件）
+
+    基于采集时 PD 的实际出力  τ = kp·(des−meas) − kd·v_meas，逐项判：
+      · 摩擦占比：median|τ| 与激励上限 kp·amp 之比 —— 低于 3:1 时辨识条件差（摩擦吃掉激励）
+      · 力矩限幅：|τ| > tau_max 的拍占比 —— 这些拍 PACE 用 kp·e 反推的力矩与实际不符，应剔除
+      · 黏滞：|v| < 0.01 rad/s 的拍占比 —— 高则 stick-slip，动力学信息被摩擦淹没
+      · 可用带宽：分频段 std(meas)/std(des)，找出增益降到 0.5 的频率（高频段无信息）
+    纯标准库实现（不依赖 numpy），返回值 (行列表, 是否全部合格)
+    """
+    kp = float(meta.get("kp", 250.0))
+    kd = float(meta.get("kd", 4.0))
+    amp = float(meta.get("amp_rad", 0.06))
+    idx_d = [hdr.index(f"des_{j}") for j in JOINTS]
+    idx_m = [hdr.index(f"meas_{j}") for j in JOINTS]
+    t = [float(r[hdr.index("t_actual_s")]) for r in body]
+    n = len(body)
+    dt = (t[-1] - t[0]) / (n - 1) if n > 1 else 0.0025
+
+    rows = []
+    tau_med_all, sat_all, stick_all = [], [], []
+    for i in range(12):
+        d = [float(r[idx_d[i]]) for r in body]
+        m = [float(r[idx_m[i]]) for r in body]
+        v = [0.0] * n
+        for k in range(1, n - 1):
+            v[k] = (m[k + 1] - m[k - 1]) / (2 * dt)
+        v[0], v[-1] = v[1], v[-2]
+        e = [d[k] - m[k] for k in range(n)]
+        tau = [kp * e[k] - kd * v[k] for k in range(n)]
+        at = [abs(x) for x in tau]
+        tau_med_all.append(statistics.median(at))
+        sat_all.append(sum(1 for x in at if x > tau_max) / n)
+        stick_all.append(sum(1 for x in v if abs(x) < 0.01) / n)
+
+    tau_med = statistics.median(tau_med_all)
+    tau_amp = kp * amp
+    ratio = tau_amp / tau_med if tau_med > 0 else 99.0
+    sat = statistics.mean(sat_all)
+    stick = statistics.mean(stick_all)
+
+    # 分频段增益（8 段，等时长）
+    nb = 8
+    gains = []
+    for b in range(nb):
+        a0, a1 = b * n // nb, (b + 1) * n // nb
+        gs = []
+        for i in range(12):
+            d = [float(r[idx_d[i]]) for r in body[a0:a1]]
+            m = [float(r[idx_m[i]]) for r in body[a0:a1]]
+            sd = statistics.pstdev(d) if len(d) > 1 else 0.0
+            sm = statistics.pstdev(m) if len(m) > 1 else 0.0
+            if sd > 1e-9:
+                gs.append(sm / sd)
+        gains.append(statistics.median(gs) if gs else 0.0)
+    f0 = float(meta.get("f0_hz", 0.1))
+    f1 = float(meta.get("f1_hz", 10.0))
+    freqs = [f0 + (f1 - f0) * (b + 0.5) / nb for b in range(nb)]
+    bw = None
+    for f, g in zip(freqs, gains):
+        if g < 0.5:
+            bw = f
+            break
+
+    rows.append(("摩擦/激励比 ≥ 3:1（辨识条件）", ratio >= 3.0,
+                 f"激励 {tau_amp:.1f} N·m / 摩擦(中位) {tau_med:.1f} N·m = {ratio:.1f}:1"))
+    rows.append(("力矩限幅拍 < 1%", sat < 0.01,
+                 f"|τ|>{tau_max:.0f} N·m 占 {sat*100:.1f}%"
+                 + ("" if sat < 0.01 else "，这些拍应剔除")))
+    rows.append(("黏滞拍 < 5%（|v|<0.01）", stick < 0.05, f"{stick*100:.1f}%"))
+    rows.append(("可用带宽 ≥ 2 Hz", (bw is None or bw >= 2.0),
+                 ("全频段增益 ≥0.5" if bw is None else f"增益降到 0.5 约在 {bw:.1f} Hz")
+                 + f"；分段增益 {', '.join(f'{g:.2f}' for g in gains)}"))
+    ok = all(g for _, g, _ in rows)
+    return rows, ok
+
+
+def qc_pace(path, rate=400.0, tau_max=27.0, strict=False):
     hdr, body, truncated = read_csv(path)
     if not hdr or "t_actual_s" not in hdr:
         print(f"{BAD} 不是 PACE 采集文件（缺 t_actual_s 列）: {path}")
@@ -118,14 +213,27 @@ def qc_pace(path, rate=400.0):
     print(f"  ·  逐关节最长保持(ms): " +
           " ".join(f"{j}={h:.0f}" for j, h in zip(JOINTS, hold)))
 
+    # ---- 动力学体检（2026-10-19：针对"关节摩擦 ≈7 N·m"，单纯时间基合格不够）----
+    meta = read_meta(path)
+    meta_src = f"{os.path.basename(path)}.meta.txt" if meta else "无 meta.txt（用默认 kp=250/kd=4/amp=0.06）"
+    print(f"  ·  动力学体检参数来源: {meta_src}")
+    drows, dok = dyn_checks(hdr, body, meta, tau_max)
+    for name, good, detail in drows:
+        print(f"  {OK if good else WARN} {name:<34} {detail}")
+
     hard_ok = all(g for name, g, _ in gates[:5])
     if not hard_ok:
         print(f"  {BAD} 结论：**不可用于拟合**（先修上面标红项）")
     elif upd < 200:
         print(f"  {WARN} 结论：时间基已达标，可导出；但 meas 只有 {upd:.0f} Hz 刷新率 ⇒ "
               f"5~10 Hz 激励段不可观测，I_a / T_d 辨不出来（只有 d / τ_f / q̃_b 等低频项可信）")
+    elif not dok:
+        print(f"  {WARN} 结论：时间基与反馈率达标、可用于拟合；但**动力学条件不足** ⇒ "
+              f"τ_f/偏置可信，I_a / T_d 不确定度大。建议加大幅值（≥0.084 rad，推荐 0.10）或降低 kp")
     else:
-        print(f"  {OK} 结论：通过全部判据")
+        print(f"  {OK} 结论：通过全部判据（含动力学条件）")
+    if strict:
+        return hard_ok and upd >= 200 and dok
     return hard_ok and upd >= 200
 
 
@@ -193,6 +301,8 @@ def main():
     ap = argparse.ArgumentParser(description="PACE / 反馈链路体检")
     ap.add_argument("csv", nargs="?", help="要体检的 CSV（省略则取 log/pace 最新一份）")
     ap.add_argument("--compare", nargs=2, metavar=("A", "B"), help="对比两份的 meas 刷新率")
+    ap.add_argument("--tau-max", type=float, default=27.0, help="电机力矩限幅（默认 27 N·m，DM 的 P_MAX）")
+    ap.add_argument("--strict", action="store_true", help="动力学条件不合格也让退出码非 0")
     a = ap.parse_args()
 
     if a.compare:
@@ -207,7 +317,8 @@ def main():
     if not os.path.exists(path):
         print(f"找不到 {path}")
         return 2
-    ok = qc_dataset(path) if "dataset_" in os.path.basename(path) else qc_pace(path)
+    ok = (qc_dataset(path) if "dataset_" in os.path.basename(path)
+          else qc_pace(path, tau_max=a.tau_max, strict=a.strict))
     return 0 if ok else 1
 
 
