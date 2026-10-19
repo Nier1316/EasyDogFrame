@@ -1236,7 +1236,7 @@ void Example37_RLTeleopControl() {
     motion.init(motor_mgr, imu_ok ? &imu : nullptr);
 
     printf("[INFO] 起立中（10s）...\n");
-    if (!motion.standTo(rl::DEFAULT_POSE, 10.0f, []() { return g_rl_stop != 0; })) {
+    if (!motion.standTo(rl::stand_pose(), 10.0f, []() { return g_rl_stop != 0; })) {
         printf("[WARN] 起立被中止，直接失能退出\n");
         signal(SIGINT, SIG_DFL);
         DisableRlFrictionFF(motor_mgr);
@@ -2596,7 +2596,7 @@ void Example61_RLStandTurnTeleop() {
     motion.init(motor_mgr, imu_ok ? &imu : nullptr);
 
     printf("[INFO] 起立中（10s 到 DEFAULT_POSE）...\n");
-    if (!motion.standTo(rl::DEFAULT_POSE, 10.0f, []() { return g_rl_stop != 0; })) {
+    if (!motion.standTo(rl::stand_pose(), 10.0f, []() { return g_rl_stop != 0; })) {
         printf("[WARN] 起立被中止，直接失能退出\n");
         signal(SIGINT, SIG_DFL);
         DisableRlFrictionFF(motor_mgr);

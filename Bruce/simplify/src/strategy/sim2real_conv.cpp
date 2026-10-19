@@ -3,6 +3,8 @@
  * @brief   sim2real 标定常量定义（真机↔URDF 转换，见 sim2real_conv.h）
  */
 #include "strategy/sim2real_conv.h"
+#include <cstdio>
+#include <cstdlib>
 
 namespace rl {
 
@@ -61,5 +63,35 @@ const float CONV_B[16] = {
     -0.0297f, -0.9624f, -1.2832f,   // RR hip：随 A 翻号（保零位）
     0.0f, 0.0f, 0.0f, 0.0f
 };
+
+// ---------------------------------------------------------------------
+//  真机起立/摆放目标：默认 = DEFAULT_POSE，可用环境变量覆盖 thigh/calf（4 腿相同）
+//  为什么不直接改 DEFAULT_POSE：它参与策略观测 joint_pos_rel = q − DEFAULT_POSE，
+//  改它会引入恒定偏置；而站高只关心机械上轮子刚好触地。
+// ---------------------------------------------------------------------
+const float* stand_pose() {
+    static float p[16];
+    static bool init = false;
+    if (!init) {
+        for (int i = 0; i < 16; i++) p[i] = DEFAULT_POSE[i];
+        const char* ts = std::getenv("STAND_THIGH_DEG");
+        const char* cs = std::getenv("STAND_CALF_DEG");
+        if ((ts && *ts) || (cs && *cs)) {
+            const float pi = 3.14159265358979323846f;
+            const float th = (ts && *ts) ? (float)std::atof(ts) * pi / 180.0f : p[1];
+            const float ca = (cs && *cs) ? (float)std::atof(cs) * pi / 180.0f : p[2];
+            for (int leg = 0; leg < 4; leg++) {
+                p[leg * 3 + 1] = th;
+                p[leg * 3 + 2] = ca;
+            }
+            std::printf("[STAND] 起立姿态被环境变量覆盖：thigh %+.1f° / calf %+.1f°"
+                        "（默认 %+.1f° / %+.1f°）\n",
+                        th * 180.0f / pi, ca * 180.0f / pi,
+                        DEFAULT_POSE[1] * 180.0f / pi, DEFAULT_POSE[2] * 180.0f / pi);
+        }
+        init = true;
+    }
+    return p;
+}
 
 } // namespace rl

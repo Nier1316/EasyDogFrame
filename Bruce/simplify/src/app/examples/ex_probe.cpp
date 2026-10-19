@@ -362,12 +362,12 @@ void Example62_PaceChirpCollect() {
     for (int leg = 0; leg < 4; leg++)
         for (int j = 0; j < 3; j++) {
             const int i = leg * 3 + j;
-            target_urdf[i] = rl::DEFAULT_POSE[i];
+            target_urdf[i] = rl::stand_pose()[i];   // 真机起立姿态（可用 STAND_THIGH_DEG/STAND_CALF_DEG 覆盖）
             start_urdf[i]  = rl::status_to_urdf(mm.GetStatus(leg, j + 1).position, i);
             base[i]        = target_urdf[i];   // 兜底：中途异常退出也不会用到未初始化值
         }
 
-    printf("\n[1/4] 从当前姿态线性插值到 DEFAULT_POSE（%.0f s @%d Hz，kp/kd %.0f/%.1f）...\n",
+    printf("\n[1/4] 从当前姿态线性插值到**起立姿态** stand_pose()（%.0f s @%d Hz，kp/kd %.0f/%.1f）...\n",
            APPROACH_S, APPROACH_HZ, KP, KD);
     printf("      起始（URDF）: ");
     for (int i = 0; i < 12; i++) printf("%+.3f ", start_urdf[i]);

@@ -18,6 +18,20 @@ namespace rl {
 //   FK 下旧值会让轮心陷地约 50 mm ⇒ 旧值确实是错的，现以 RL_Train 的 0.52 m 站高标定为准。
 extern const float DEFAULT_POSE[16];
 
+/**
+ * @brief 真机**起立/摆放目标**姿态（URDF，16：POLICY 序 12 腿 + 4 轮）
+ *
+ * 与 `DEFAULT_POSE` 的区别（重要）：
+ *   · `DEFAULT_POSE` = **训练侧**名义姿态 ⇒ 参与策略观测 `joint_pos_rel = q − DEFAULT_POSE`，
+ *     **不要为了调站高去改它**（会让策略观测带上恒定偏置）。
+ *   · `stand_pose()` = **真机**起立/摆放目标，只为机械上站得舒服（轮子刚好触地）。
+ *     默认值 = `DEFAULT_POSE`；可用环境变量实时覆盖（4 条腿相同）：
+ *         STAND_THIGH_DEG=-8   STAND_CALF_DEG=-3   ./run.sh 62
+ *     实测（MJCF FK，轮半径 113 mm）：每档 thigh −1.7°/calf +1.7° 抬高约 8~10 mm。
+ * @return 指向静态数组的指针（首次调用时按环境变量初始化）
+ */
+const float* stand_pose();
+
 // 真机 GetStatus 角 ↔ URDF 角每关节映射（2026-08-20 真机 L 形测量）：
 //   URDF = CONV_A[joint]*GetStatus + CONV_B[joint]（rad）
 //   hip   默认 A=+1 B=+0.0297（**例外：FR hip 为 A=-1 B=-0.0297**，2026-10-13 现场确认

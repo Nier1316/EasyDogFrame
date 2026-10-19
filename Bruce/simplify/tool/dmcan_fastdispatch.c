@@ -41,6 +41,12 @@
 #include <time.h>
 #include <stdint.h>
 
+static int64_t now_us(void) {   /* 单调时钟，用于"进度每 10 s 报一次"的节流 */
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000000LL + (int64_t)ts.tv_nsec / 1000LL;
+}
+
 typedef int (*nanosleep_fn)(const struct timespec*, struct timespec*);
 static nanosleep_fn g_real = NULL;
 
@@ -51,6 +57,7 @@ static int g_quiet = -1;
 static long g_tick_us = -1;
 static long g_thresh_us = -1;
 
+static int64_t g_last_report_us = 0;
 static unsigned long g_clamped = 0;
 static unsigned long g_passed = 0;
 static long g_max_seen_us = 0;
@@ -142,9 +149,16 @@ int nanosleep(const struct timespec* req, struct timespec* rem) {
                             "把请求 %ld µs 夹到 %ld µs\n",
                     (unsigned long)g_sdk_lo, (unsigned long)g_sdk_hi, us, tick_us());
         g_clamped++;
-        if (!quiet() && (g_clamped % 200) == 0)
-            fprintf(stderr, "[FASTDISPATCH] 已缩短 %lu 次（原样放过 %lu 次）\n",
-                    g_clamped, g_passed);
+        // 进度打印改成**每 10 秒最多一次**（原先每 200 次一次 ⇒ 派发跑 1 kHz 时每秒刷 5 行）
+        if (!quiet()) {
+            const int64_t now = now_us();
+            if (now - g_last_report_us >= 10000000LL) {
+                g_last_report_us = now;
+                fprintf(stderr, "[FASTDISPATCH] 已缩短 %lu 次 / 原样放过 %lu 次"
+                                "（每 10 s 报一次；静默：DMCAN_FASTDISPATCH_QUIET=1）\n",
+                        g_clamped, g_passed);
+            }
+        }
         return g_real(&t, NULL);      /* 缩短后正常睡完 ⇒ 不设 rem */
     }
     g_passed++;
