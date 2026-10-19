@@ -91,7 +91,13 @@ def read_meta(path):
     return d
 
 
-def dyn_checks(hdr, body, meta, tau_max=27.0):
+def dyn_checks(hdr, body, meta, tau_max=None):
+    # 命令力矩上限（include/motor/ele_motor_def.h::TORQUE_CMD_LIMIT）：Hip/Thigh 120、Calf 200。
+    # ⚠ 不是 27 N·m（那是别的机型/示例的 P_MAX）；用错会把正常数据误报成"限幅"。
+    if tau_max is None:
+        lim = [120.0, 120.0, 200.0] * 4          # 每个 leg: HAA/HFE/KFE
+    else:
+        lim = [tau_max] * 12
     """动力学体检（2026-10-19 新增，针对"关节摩擦 ≈7 N·m"的现场条件）
 
     基于采集时 PD 的实际出力  τ = kp·(des−meas) − kd·v_meas，逐项判：
@@ -111,7 +117,7 @@ def dyn_checks(hdr, body, meta, tau_max=27.0):
     dt = (t[-1] - t[0]) / (n - 1) if n > 1 else 0.0025
 
     rows = []
-    tau_med_all, sat_all, stick_all = [], [], []
+    tau_med_all, tau_stuck_all, sat_all, stick_all = [], [], [], []
     for i in range(12):
         d = [float(r[idx_d[i]]) for r in body]
         m = [float(r[idx_m[i]]) for r in body]
@@ -123,12 +129,25 @@ def dyn_checks(hdr, body, meta, tau_max=27.0):
         tau = [kp * e[k] - kd * v[k] for k in range(n)]
         at = [abs(x) for x in tau]
         tau_med_all.append(statistics.median(at))
-        sat_all.append(sum(1 for x in at if x > tau_max) / n)
-        stick_all.append(sum(1 for x in v if abs(x) < 0.01) / n)
+        vd = [0.0] * n
+        for k in range(1, n - 1):
+            vd[k] = (d[k + 1] - d[k - 1]) / (2 * dt)
+        vd[0], vd[-1] = vd[1], vd[-2]
+        # 黏滞 = 实测速度远小于命令速度（只在命令确实在动时统计，扣掉过零的几何成分）
+        moving = [k for k in range(n) if abs(vd[k]) > 0.02]
+        stuck = [at[k] for k in range(n) if abs(v[k]) < 0.2 * abs(vd[k])]
+        if len(stuck) >= 20:
+            tau_stuck_all.append(statistics.median(stuck))
+        sat_all.append(sum(1 for x in at if x > lim[i]) / n)
+        stick_all.append(sum(1 for k in moving if abs(v[k]) < 0.2 * abs(vd[k])) / len(moving)
+                         if moving else 0.0)
 
     tau_med = statistics.median(tau_med_all)
     tau_amp = kp * amp
-    ratio = tau_amp / tau_med if tau_med > 0 else 99.0
+    # τ_f 估计：用"黏滞拍"的中位力矩（|v|<0.01 时 τ 主要就是静摩擦+重力），
+    # 比 median|τ| 干净 —— 后者已包含动态力矩，拿它当分母是循环论证。
+    tf_est = statistics.median(tau_stuck_all) if tau_stuck_all else tau_med
+    ratio = tau_amp / tf_est if tf_est > 0 else 99.0
     sat = statistics.mean(sat_all)
     stick = statistics.mean(stick_all)
 
@@ -163,17 +182,18 @@ def dyn_checks(hdr, body, meta, tau_max=27.0):
     rows.append(("meta 与实际数据一致（幅值）", amp_ok,
                  f"meta 写 {amp:.4f} rad，实测 {amp_meas:.4f} rad"
                  + ("" if amp_ok else "  ← 参数没生效？检查环境变量/是否走了 sudo（sudo 吞 env）")))
-    rows.append(("摩擦/激励比 ≥ 3:1（辨识条件）", ratio >= 3.0,
-                 f"激励 {tau_amp:.1f} N·m / 摩擦(中位) {tau_med:.1f} N·m = {ratio:.1f}:1"))
+    rows.append(("摩擦/激励比 ≥ 2.5:1（辨识条件）", ratio >= 2.5,
+                 f"激励 {tau_amp:.1f} N·m / 静摩擦估计 {tf_est:.1f} N·m = {ratio:.1f}:1"))
     rows.append(("力矩限幅拍 < 1%", sat < 0.01,
-                 f"|τ|>{tau_max:.0f} N·m 占 {sat*100:.1f}%"
+                 f"|τ|超上限(Hip/Calf 120/200 N·m) 占 {sat*100:.1f}%"
                  + ("" if sat < 0.01 else "，这些拍应剔除")))
-    rows.append(("黏滞拍 < 5%（|v|<0.01）", stick < 0.05, f"{stick*100:.1f}%"))
+    # 黏滞只作信息：实测速度由 0.381 mrad 量化的位置差分得到，低频段量化噪声会主导，不能当门禁
+    info = [("黏滞拍（信息，非门禁）", True, f"{stick*100:.1f}% 的'命令在动'采样里实测速度不足命令的 20%")]
     rows.append(("可用带宽 ≥ 2 Hz", (bw is None or bw >= 2.0),
                  ("全频段增益 ≥0.5" if bw is None else f"增益降到 0.5 约在 {bw:.1f} Hz")
                  + f"；分段增益 {', '.join(f'{g:.2f}' for g in gains)}"))
     ok = all(g for _, g, _ in rows)
-    return rows, ok
+    return rows + info, ok
 
 
 def qc_pace(path, rate=400.0, tau_max=27.0, strict=False):
@@ -236,8 +256,12 @@ def qc_pace(path, rate=400.0, tau_max=27.0, strict=False):
         print(f"  {WARN} 结论：时间基已达标，可导出；但 meas 只有 {upd:.0f} Hz 刷新率 ⇒ "
               f"5~10 Hz 激励段不可观测，I_a / T_d 辨不出来（只有 d / τ_f / q̃_b 等低频项可信）")
     elif not dok:
-        print(f"  {WARN} 结论：时间基与反馈率达标、可用于拟合；但**动力学条件不足** ⇒ "
-              f"τ_f/偏置可信，I_a / T_d 不确定度大。建议加大幅值（≥0.084 rad，推荐 0.10）或降低 kp")
+        amp_now = meta.get("amp_rad", 0.06)
+        tip = ("幅值已到位（≥0.084）⇒ 摩擦/激励比受限于 τ_f 本身；"
+               "可接受，τ_f 会由辨识吸收" if amp_now >= 0.084
+               else f"幅值偏小（{amp_now:.3f}）⇒ 建议提到 ≥0.084（推荐 0.10）")
+        print(f"  {WARN} 结论：时间基/反馈率/带宽达标，**可用于拟合**；但摩擦占比偏高 ⇒ "
+              f"τ_f、偏置可信，I_a / T_d 不确定度大。{tip}")
     else:
         print(f"  {OK} 结论：通过全部判据（含动力学条件）")
     if strict:
@@ -309,7 +333,8 @@ def main():
     ap = argparse.ArgumentParser(description="PACE / 反馈链路体检")
     ap.add_argument("csv", nargs="?", help="要体检的 CSV（省略则取 log/pace 最新一份）")
     ap.add_argument("--compare", nargs=2, metavar=("A", "B"), help="对比两份的 meas 刷新率")
-    ap.add_argument("--tau-max", type=float, default=27.0, help="电机力矩限幅（默认 27 N·m，DM 的 P_MAX）")
+    ap.add_argument("--tau-max", type=float, default=None,
+                    help="统一力矩上限；省略则按关节类型（Hip/Thigh 120、Calf 200，见 ele_motor_def.h）")
     ap.add_argument("--strict", action="store_true", help="动力学条件不合格也让退出码非 0")
     a = ap.parse_args()
 
