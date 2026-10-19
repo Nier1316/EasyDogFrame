@@ -1,4 +1,7 @@
 #include <stdio.h>
+#include <stdlib.h>   // getenv/atoi（运行时示例选择）
+#include <string.h>   // strcmp
+#include <unistd.h>   // sleep
 #include <dlfcn.h>   // dlsym：自检 LD_PRELOAD 垫片（tool/libusb_fastpoll.c）是否已加载
 #include "app/examples.h"
 
@@ -20,7 +23,49 @@
 //    另有 16 个会发使能帧但没有 SIGINT 保护 —— Ex18/19/20/21/22/23/29/32/41/44/45/46/47/48/49/57，
 //    这些示例中断只能靠固件 CAN_Timeout 兜底，使用前务必确认急停手段（电源开关）。
 //  =====================================================================
-int main() {
+// =====================================================================
+//  运行时示例选择（2026-10-18，便于 VS Code 快捷键 / 脚本一键启动）
+//
+//  为什么需要：工程原本靠"改 main.cpp 注释 + 重编译"切换示例（无命令行参数）。
+//  这对现场频繁切换（Ex63 被动核对 / Ex62 PACE 采集 / Ex37 遥操作）很不方便，
+//  而且多次出现"HEAD 的激活状态与现场不一致"。
+//
+//  用法：  ./run.sh 63        或   EXAMPLE=63 ./run.sh
+//          ./bin/can_motor_app --list
+//  ⚠ 白名单只含**明确安全**的示例；未列入的示例仍走编译期注释那套（保持原行为）。
+//  ⚠ 远程/无人值守时不要用会**使能电机**的编号（25/36/37/62...）。
+// =====================================================================
+static bool RunExampleByNumber(int n) {
+    switch (n) {
+        case 24: Example24_ReadMotorParams();        return true;   // 只读固件参数
+        case 25: Example25_RLPolicyControl();        return true;   // RL（使能电机）
+        case 30: Example30_RLPolicyLinkTest();       return true;   // 离线策略链路（不碰 CAN）
+        case 36: Example36_RLStandLoop();            return true;   // RL 站立（使能电机）
+        case 37: Example37_RLTeleopControl();        return true;   // RL 遥操作（使能电机）
+        case 42: Example42_Usb2CanRateTest();        return true;   // USB2CAN 发送吞吐
+        case 57: Example57_SingleLegZeroAlign();     return true;   // 单腿零位对照
+        case 62: Example62_PaceChirpCollect();       return true;   // PACE chirp（使能电机）
+        case 63: Example63_PassivePoseMonitor();     return true;   // 被动姿态（不使能）
+        case 64: Example64_FeedbackRateDiag();       return true;   // 反馈率诊断（不使能）
+        default: return false;
+    }
+}
+
+static void PrintExampleList() {
+    printf("可用示例号（运行时选择）：\n");
+    printf("  24  只读固件参数            （不使能、安全）\n");
+    printf("  30  离线策略链路回归        （不碰 CAN，安全）\n");
+    printf("  42  USB2CAN 发送吞吐        （不使能、安全）\n");
+    printf("  57  单腿零位对照            （低增益，摆腿）\n");
+    printf("  63  被动姿态监视            （不使能、安全）\n");
+    printf("  64  反馈链路诊断            （不使能、安全）\n");
+    printf("  25  RL 策略控制             （⚠ 使能电机）\n");
+    printf("  36  RL 站立循环             （⚠ 使能电机）\n");
+    printf("  37  RL 遥操作               （⚠ 使能电机）\n");
+    printf("  62  PACE chirp 采集         （⚠ 使能电机，狗需固定/腿悬空）\n");
+}
+
+int main(int argc, char** argv) {
     // ------------------------------------------------------------------
     // libusb 垫片自检（2026-10-08 加，2026-10-17 更正）
     // 历史：达妙 SDK 的 usb_handle_thread_func() 把 libusb 事件收割超时写死成 100 ms。
@@ -34,6 +79,35 @@ int main() {
             (const char* (*)())dlsym(RTLD_DEFAULT, "dsh_libusb_fastpoll_marker");
         if (marker)
             printf("[INFO] libusb 回帧垫片: 已加载（%s；实测对本 SDK 无效，可忽略）\n", marker());
+    }
+
+    // ------------------------------------------------------------------
+    // 运行时示例选择（优先于下面的编译期注释）
+    // ------------------------------------------------------------------
+    {
+        const char* sel = (argc > 1) ? argv[1] : getenv("EXAMPLE");
+        if (sel && *sel) {
+            if (strcmp(sel, "--list") == 0 || strcmp(sel, "-l") == 0) {
+                PrintExampleList();
+                return 0;
+            }
+            const int n = atoi(sel);
+            // 安全闸：会使能电机的示例先给 3 秒反悔窗口（热键误触/看错编号时能救回来）。
+            //   跳过：EXAMPLE_YES=1；远程/自动化场景请显式设置。
+            const bool motor_enabling = (n == 25 || n == 36 || n == 37 || n == 62);
+            if (motor_enabling && !getenv("EXAMPLE_YES")) {
+                printf("[⚠ 安全] Example%d 会**使能电机**，3 秒后开始 —— Ctrl+C 可取消"
+                       "（自动场景设 EXAMPLE_YES=1 跳过）\n", n);
+                fflush(stdout);
+                sleep(3);
+            }
+            if (RunExampleByNumber(n)) {
+                printf("[INFO] Example%d 完成（运行时选择）\n", n);
+                return 0;
+            }
+            printf("[ERROR] 未知示例号 \"%s\"。用 --list 查看可用编号。\n", sel);
+            return 2;
+        }
     }
 
     // 运行示例17 - SimSync 仿真集成
