@@ -304,7 +304,9 @@ void Example62_PaceChirpCollect() {
     //   PACE_DURATION_S  PACE_F0_HZ  PACE_F1_HZ  PACE_AMP_RAD  PACE_KP  PACE_KD  PACE_HZ
     // 为什么要调幅值：实测关节摩擦 ≈7 N·m，而 0.06 rad×kp250 只有 15 N·m ⇒ 激励/摩擦仅 2.1:1，
     //   黏滞拍 6~12%、中位力矩 6~10 N·m 全在"喂摩擦"，I_a/T_d 难辨。
-    //   推荐：PACE_AMP_RAD=0.10 PACE_KP=200（命令力矩上限 20 N·m，不撞 27 N·m 限幅，比值 3.6:1）。
+    //   推荐：PACE_AMP_RAD=0.10 PACE_KP=250（**必须 = 部署值 rl::LEG_KP**，PACE §2.1 要求辨识增益==部署增益；
+    //   命令力矩 25 N·m，而命令上限是 Hip/Thigh 120、Calf 200 N·m ⇒ 不会削顶）。
+    //   ⚠ 2026-10-19 曾误按"27 N·m 限幅"把 kp 降到 200，导致标定模型不能用于 250 部署，已改回。
     auto envf = [](const char* name, float dflt) {
         const char* v = std::getenv(name);
         if (v && *v) {
