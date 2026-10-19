@@ -155,6 +155,14 @@ def dyn_checks(hdr, body, meta, tau_max=27.0):
             bw = f
             break
 
+    # meta 与实测数据一致性：des 峰峰应为 2×amp（防止"环境变量没生效却看不出来"）
+    pp = statistics.mean([max(float(r[idx_d[i]]) for r in body) -
+                          min(float(r[idx_d[i]]) for r in body) for i in range(12)])
+    amp_meas = pp / 2.0
+    amp_ok = abs(amp_meas - amp) <= max(0.05 * amp, 2e-3)
+    rows.append(("meta 与实际数据一致（幅值）", amp_ok,
+                 f"meta 写 {amp:.4f} rad，实测 {amp_meas:.4f} rad"
+                 + ("" if amp_ok else "  ← 参数没生效？检查环境变量/是否走了 sudo（sudo 吞 env）")))
     rows.append(("摩擦/激励比 ≥ 3:1（辨识条件）", ratio >= 3.0,
                  f"激励 {tau_amp:.1f} N·m / 摩擦(中位) {tau_med:.1f} N·m = {ratio:.1f}:1"))
     rows.append(("力矩限幅拍 < 1%", sat < 0.01,
