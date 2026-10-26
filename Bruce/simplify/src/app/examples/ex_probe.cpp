@@ -302,8 +302,13 @@ void Example62_PaceChirpCollect() {
     // ---------------- 可调参数（改这里即可）----------------
     constexpr float DURATION_S = 20.0f;    // 序列时长（PACE：20~60 s）
     constexpr float F0_HZ      = 0.1f;     // 起始频率
-    constexpr float F1_HZ      = 10.0f;    // 终止频率（PACE 官方例程上限）
-    constexpr float AMP_RAD    = 0.06f;    // chirp 幅值（保守；现场按机械余量确认）
+    // 2026-10-26：10 -> 5。理由：kp=250 时闭环带宽约 3~4 Hz，5 Hz 以上真机跟随比已掉到 0.56 以下，
+    //   再往上扫只增加噪声；2026-10-19 那份数据实测 0.1~5 Hz 已能覆盖极点（全频段增益 >= 0.5）。
+    constexpr float F1_HZ      = 5.0f;     // 终止频率
+    // 2026-10-26：0.06 -> 0.12。理由：体检判据"摩擦/激励比 >= 2.5"，
+    //   激励力矩 = kp*amp = 250*0.12 = 30 N·m，对静摩擦 ~8.1 N·m => 3.7:1 ✓（0.06 时只有 1.9:1）；
+    //   同时显著减轻低速"粘滑"（实测零变化采样占比 15~26%、最长卡值 258 ms）。
+    constexpr float AMP_RAD    = 0.12f;    // chirp 幅值（折叠姿态下已核算离地/限位余量，见 CHIRP_BASE）
     // ---- PD 增益：**必须与真机部署腿 PD 逐字相同**（PACE §2.1 / Eq.7：增益参与闭环，与动力学
     //   联合优化会不唯一，故禁止"辨识一套、部署另一套"）。
     //   2026-10-08 决定：由 50/1（借 Go2W 的部署值）改为**直接取本工程部署值** rl::LEG_KP / rl::LEG_KD。
@@ -358,16 +363,28 @@ void Example62_PaceChirpCollect() {
     //   `URDF = CONV_A·status + CONV_B`（thigh 还要**反号**且差 ~0.96 rad、calf 差 ~1.28 rad）。
     //   所以：**下发前必须 urdf_to_status，记录时必须 status_to_urdf**，
     //   否则一来拉到的姿态完全不对（thigh 会差 ~78°），二来导出的 .pt 不在仿真坐标系里。
+    // chirp 的**操作点**（不是 DEFAULT_POSE！后者是策略的度量衡，禁止为采集而改）。
+    // 2026-10-26：固定基座架不高、轮子会打地面 ⇒ 把腿**折叠**（大腿更平、小腿更收）：
+    //   轮子相对髋的下垂 ~0.68 m -> ~0.52 m（+16 cm 离地余量）；
+    //   轮子垂向行程/每弧度 ~0.26 -> ~0.05 m/rad ⇒ 才能承受更大幅值。
+    //   幅值 0.12 时：轮子垂向行程 ≈ ±(0.34·sin1.0 + 0.343·sin0.25)·0.12 ≈ ±4.5 cm ≪ 16 cm ✓
+    //   限位余量：thigh [0.88,1.12] ⊆ [-0.7,1.75] ✓ ； calf [-0.87,-0.63] ⊆ [-1.0,0.35] ✓
+    constexpr float CHIRP_BASE[12] = {
+        0.0f, 1.00f, -0.75f,   // FL hip/thigh/calf（URDF 约定）
+        0.0f, 1.00f, -0.75f,   // FR
+        0.0f, 1.00f, -0.75f,   // RL
+        0.0f, 1.00f, -0.75f,   // RR
+    };
     float target_urdf[12], start_urdf[12], base[12];
     for (int leg = 0; leg < 4; leg++)
         for (int j = 0; j < 3; j++) {
             const int i = leg * 3 + j;
-            target_urdf[i] = rl::DEFAULT_POSE[i];
+            target_urdf[i] = CHIRP_BASE[i];   // 折叠操作点（默认姿态仍由 DEFAULT_POSE 定义，未改）
             start_urdf[i]  = rl::status_to_urdf(mm.GetStatus(leg, j + 1).position, i);
             base[i]        = target_urdf[i];   // 兜底：中途异常退出也不会用到未初始化值
         }
 
-    printf("\n[1/4] 从当前姿态线性插值到 DEFAULT_POSE（%.0f s @%d Hz，kp/kd %.0f/%.1f）...\n",
+    printf("\n[1/4] 从当前姿态线性插值到 chirp 操作点（%.0f s @%d Hz，kp/kd %.0f/%.1f）...\n",
            APPROACH_S, APPROACH_HZ, KP, KD);
     printf("      起始（URDF）: ");
     for (int i = 0; i < 12; i++) printf("%+.3f ", start_urdf[i]);
