@@ -423,6 +423,32 @@ void Example62_PaceChirpCollect() {
         0.0f, base_thigh, base_calf,   // RL
         0.0f, base_thigh, base_calf,   // RR
     };
+    // ---------------- 每关节 chirp 相位（2026-10-26）----------------
+    // 背景：12 关节全同相 ⇒ 整机被推成一个刚体运动，容易与固定架共振（现场已观察到）。
+    // 现场要求：**左腿外摆时右腿也外摆**（髋左右镜像）、**前腿前摆时后腿下摆**（大腿前后反相）。
+    //   髋轴世界方向四面相同（+1,0,0）⇒ 左侧 + 为外摆、右侧 + 为内摆 ⇒ 右侧取反相 π；
+    //   大腿正方向=向后 ⇒ 前腿与后腿取反相 π。
+    // 可用 PACE_PHASE_MODE 切换：mirror(默认) / same(旧行为，全同相) / spread(12 等分相，去相关最强)
+    const char* phase_env = getenv("PACE_PHASE_MODE");
+    const std::string phase_mode = (phase_env && *phase_env) ? phase_env : "mirror";
+    const float PI_F = 3.14159265f;
+    float CHIRP_PHASE[12] = {0,0,0, 0,0,0, 0,0,0, 0,0,0};
+    if (phase_mode == "mirror") {
+        // FL: hip 0, thigh 0, calf 0      （基准）
+        CHIRP_PHASE[3] = PI_F;                            // FR hip 反相 ⇒ 左右同时外摆
+        CHIRP_PHASE[6] = 0.0f; CHIRP_PHASE[7] = PI_F; CHIRP_PHASE[8] = PI_F;   // RL: 后腿反相
+        CHIRP_PHASE[9] = PI_F; CHIRP_PHASE[10] = PI_F; CHIRP_PHASE[11] = PI_F; // RR: hip 反相 + 后腿反相
+    } else if (phase_mode == "spread") {
+        for (int i = 0; i < 12; i++) CHIRP_PHASE[i] = 2.0f * PI_F * (float)i / 12.0f;
+    } else if (phase_mode != "same") {
+        printf("[WARN] 未知 PACE_PHASE_MODE=%s，按 mirror 处理\n", phase_mode.c_str());
+        CHIRP_PHASE[3] = PI_F;
+        CHIRP_PHASE[7] = CHIRP_PHASE[8] = PI_F;
+        CHIRP_PHASE[9] = CHIRP_PHASE[10] = CHIRP_PHASE[11] = PI_F;
+    }
+    printf("[相位] 模式 %-6s（0=同相 π=反相）: ", phase_mode.c_str());
+    for (int i = 0; i < 12; i++) printf("%s%.0f", (i % 3) ? "/" : " ", CHIRP_PHASE[i] / PI_F);
+    printf("\n");
     float target_urdf[12], start_urdf[12], base[12];
     for (int leg = 0; leg < 4; leg++)
         for (int j = 0; j < 3; j++) {
@@ -520,6 +546,7 @@ void Example62_PaceChirpCollect() {
         fprintf(fm, "approach_s=%.1f\nsettle_s=%.1f\n", APPROACH_S, SETTLE_S);
         fprintf(fm, "joint_order=");
         for (int i = 0; i < 12; i++) fprintf(fm, "%s%s", jn[i], i < 11 ? "," : "");
+        fprintf(fm, "phase_mode=%s\n", phase_mode.c_str());
         fprintf(fm, "\nnote=固定基座/离地/固件补偿开关 由操作者填写\n");
         fclose(fm);
     }
@@ -556,13 +583,14 @@ void Example62_PaceChirpCollect() {
         const float t = (float)k / HZ;                       // 理想等距时间
         const float ph = 2.0f * (float)M_PI *
                          (F0_HZ * t + (F1_HZ - F0_HZ) / (2.0f * DURATION_S) * t * t);
-        const float w = sinf(ph);
         // 全关节同时、同一 chirp（PACE 官方例程亦如此），偏置 = base 实测
         for (int leg = 0; leg < 4; leg++)
             for (int j = 0; j < 3; j++) {
                 const int i = leg * 3 + j;
                 // 下发：URDF 目标 → status（见上面坐标约定说明）
-                mm.SendImpedance(leg, j + 1, rl::urdf_to_status(base[i] + AMP_RAD * w, i), 0, KP, KD, 0);
+                mm.SendImpedance(leg, j + 1,
+                                 rl::urdf_to_status(base[i] + AMP_RAD * sinf(ph + CHIRP_PHASE[i]), i),
+                                 0, KP, KD, 0);
             }
         // 记录（同一拍内先下发再读反馈）
         const auto now = std::chrono::steady_clock::now();
@@ -570,7 +598,7 @@ void Example62_PaceChirpCollect() {
         fprintf(f, "%d,%.6f", k, t_act);
         for (int leg = 0; leg < 4; leg++)
             for (int j = 0; j < 3; j++)
-                fprintf(f, ",%.6f", base[leg * 3 + j] + AMP_RAD * w);
+                fprintf(f, ",%.6f", base[leg * 3 + j] + AMP_RAD * sinf(ph + CHIRP_PHASE[leg * 3 + j]));
         for (int leg = 0; leg < 4; leg++)
             for (int j = 0; j < 3; j++) {
                 const int i = leg * 3 + j;
