@@ -18,14 +18,28 @@ namespace rl {
 //   FK 下旧值会让轮心陷地约 50 mm ⇒ 旧值确实是错的，现以 RL_Train 的 0.52 m 站高标定为准。
 extern const float DEFAULT_POSE[16];
 
-// 真机 GetStatus 角 ↔ URDF 角每关节映射（2026-08-20 真机 L 形测量）：
+// 真机 GetStatus 角 ↔ URDF 角每关节映射（**以 sim2real_conv.cpp 的数组为唯一准据**）：
 //   URDF = CONV_A[joint]*GetStatus + CONV_B[joint]（rad）
-//   hip   默认 A=+1 B=+0.0297（**例外：FR hip 为 A=-1 B=-0.0297**，2026-10-13 现场确认
-//         观测方向反了，修法=整个映射取反以保零位，见 sim2real_conv.cpp 注释）
-//   thigh A=-1 B=-0.9624   calf A=+1 B=-1.2832   wheel A=+1 B=0
-// ⚠ 基于一次 L 形目测（08-20）；**hip 的符号还叠加了电机层 pos_scale 的对角模式**
-//   （FL −1 / FR +1 / RL +1 / RR −1，自 57cd63b 起未复核），FR 已于 10-13 现场纠正，
-//   RL 待现场确认。判据：腿远端向机器人左侧推 ⇒ URDF 读数应变大。
+//   hip   : 左侧 FL/RL  A=+1 B=+0.0297 ；右侧 FR/RR  A=-1 B=-0.0297   （左右镜像）
+//   thigh : 四腿        A=-1 B=-0.9624
+//   calf  : 四腿        A=+1 B=-1.2832
+//   wheel : 四腿        A=+1 B=0
+// 叠加电机层 MOTOR_CALIBRATION.pos_scale（FL −1 / FR +1 / RL +1 / RR −1，对角模式，
+// 自 57cd63b 引入）后的合成关系 q_urdf = a*raw + b，逐腿数值见
+// docs/JOINT_FRAME_CHAIN.md：
+//   hip   四腿 b = +0.6407 / −0.6407 / +0.6407 / −0.6407（左右镜像）
+//   thigh 四腿 b = −1.4034 ； calf 四腿 b = −1.0722（四腿同值）
+//
+// ✅ 2026-10-26 状态一：**符号已由用户现场确认为正确**，不再回退。
+//    硬理由：PD 符号错 ⇒ 正反馈 ⇒ 立刻失控；"机器人能走"本身就证明 12 个腿关节符号
+//    全部正确 ⇒ 不要把"腿间符号不整齐"当成可"统一"的遗留问题。
+// ✅ 2026-10-26 状态二：**零位已用 SolidWorks 几何复核**。判据：把腿卡在限位块
+//    （= 编码器 0）处，该姿态的 SW 关节角必须等于上面的 b。结果：hip 左右镜像正常、
+//    calf 正常、thigh 与"装配零位后倾 52°（竖直 ⇔ −52.41°）"自洽
+//    ⇒ **CONV_A / CONV_B / pos_scale / pos_offset 全部无需修改**（零位这条线已关闭）。
+// ⚠ 历史：本条曾因"手推腿判方向"反复翻转（10-13 翻 FR、10-17 补翻 RR）并留下自相矛盾
+//    的注释。今后判方向**只做运动验证**（给该关节已知 +Δ 指令，看腿实际往哪边走），
+//    不要靠手推 —— 见 sim2real_conv.cpp 的教训段。
 extern const float CONV_A[16];   // ±1 符号
 extern const float CONV_B[16];   // 偏移 (rad)
 
