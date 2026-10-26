@@ -349,9 +349,17 @@ void Example62_PaceChirpCollect() {
     printf("   4) 固件补偿开关（cogging/摩擦补偿）在整个辨识与后续部署期间**保持一致**\n");
     printf("   5) kp/kd 取**部署值** %.0f/%.1f（rl::LEG_KP/LEG_KD；PACE 禁止把 PD 增益与动力学联合优化）\n",
            KP, KD);
-    printf("准备好后按回车开始（Ctrl+C 取消）: ");
-    fflush(stdout);
-    { int c; while ((c = getchar()) != '\n' && c != EOF) {} }
+    // 2026-10-26：PACE_AUTO_START=1 ⇒ 不再等回车，改成 3 秒倒计时（Ctrl+C 取消），
+    //   便于 VS Code 的 F7 一键采集；不设该变量时仍是原来的"按回车开始"（更安全）。
+    if (getenv("PACE_AUTO_START") && *getenv("PACE_AUTO_START")) {
+        printf("[自动] PACE_AUTO_START=1 ⇒ 3 秒后开始（Ctrl+C 取消）...\n");
+        fflush(stdout);
+        for (int i = 3; i > 0; i--) { printf("  %d...\n", i); fflush(stdout); sleep(1); }
+    } else {
+        printf("准备好后按回车开始（Ctrl+C 取消）: ");
+        fflush(stdout);
+        { int c; while ((c = getchar()) != '\n' && c != EOF) {} }
+    }
     if (g_rl_stop) { printf("[INFO] 已取消\n"); return; }
 
     MotorManager& mm = MotorManager::GetInstance();
@@ -384,12 +392,63 @@ void Example62_PaceChirpCollect() {
     //   轮子垂向行程/每弧度 ~0.26 -> ~0.05 m/rad ⇒ 才能承受更大幅值。
     //   幅值 0.12 时：轮子垂向行程 ≈ ±(0.34·sin1.0 + 0.343·sin0.25)·0.12 ≈ ±4.5 cm ≪ 16 cm ✓
     //   限位余量：thigh [0.88,1.12] ⊆ [-0.7,1.75] ✓ ； calf [-0.87,-0.63] ⊆ [-1.0,0.35] ✓
-    constexpr float CHIRP_BASE[12] = {
-        0.0f, 1.00f, -0.75f,   // FL hip/thigh/calf（URDF 约定）
-        0.0f, 1.00f, -0.75f,   // FR
-        0.0f, 1.00f, -0.75f,   // RL
-        0.0f, 1.00f, -0.75f,   // RR
+    // ⚠️ 机架限制（2026-10-26 现场）：**大腿不能水平**，只能从竖直向后摆 ≤45°（URDF thigh ∈ [0°, +45°]）。
+    //   原方案 thigh = +1.00 rad(+57.3°) 会打到固定架子 ⇒ 改为 +30°，并用 PACE_BASE_* 可调。
+    //   2026-10-26 二次调整：现场要求 thigh 再**向下**放 45°（+30° → -15°，即偏向竖直前方）。
+    //   calf 允许中心区间由"±(幅值+滞后)=±0.152 rad"决定：[−48.6°, +11.4°]。
+    //   → thigh -15° / calf -45°：
+    //       范围 thigh [-23.7°, -6.3°]（URDF -40.1°，留 16.4°；机架只限正向 45°，这里远离）
+    //       范围 calf  [-53.7°, -36.3°]（URDF -57.3°，留 3.6°）
+    //       chirp 中轮子最低点在髋下 ≈230 mm（大腿竖直时 424 mm）⇒ 仍多约 194 mm 余量。
+    //   （thigh 取 -30° 时轮子最低 137 mm、余量更多，但会进一步偏离竖直；按现场要求取 -15°。）
+    const float base_thigh = envf("PACE_BASE_THIGH_DEG", -15.0f) * 3.14159265f / 180.0f;
+    const float base_calf  = envf("PACE_BASE_CALF_DEG", -45.0f) * 3.14159265f / 180.0f;
+    {
+        // 预检：把"摆幅 + 摩擦滞后"算进范围，和机架/URDF 限位对照
+        const float EXC = AMP_RAD + 0.032f;                 // 单侧最大偏移
+        const float d2r = 57.2957795f;
+        printf("[预检] 操作点 thigh %+.1f° / calf %+.1f°，单侧偏移 %.3f rad\n",
+               base_thigh * d2r, base_calf * d2r, EXC);
+        // 机架只限制"从竖直向后"这一侧（上限 +45°）；向下的下限由 URDF 限位 -0.7 rad 决定。
+        printf("       thigh 范围 [%+.1f°, %+.1f°]（机架上限 +45.0°，URDF 下限 -40.1°）%s\n",
+               (base_thigh - EXC) * d2r, (base_thigh + EXC) * d2r,
+               (base_thigh + EXC > 0.7854f || base_thigh - EXC < -0.7f) ? "  🔴 超限！" : "  ✅");
+        printf("       calf  范围 [%+.1f°, %+.1f°]（URDF 限位 [-57.3°, +20.1°]）%s\n",
+               (base_calf - EXC) * d2r, (base_calf + EXC) * d2r,
+               (base_calf - EXC < -1.0f || base_calf + EXC > 0.35f) ? "  🔴 超 URDF 限位！" : "  ✅");
+    }
+    const float CHIRP_BASE[12] = {
+        0.0f, base_thigh, base_calf,   // FL hip/thigh/calf（URDF 约定）
+        0.0f, base_thigh, base_calf,   // FR
+        0.0f, base_thigh, base_calf,   // RL
+        0.0f, base_thigh, base_calf,   // RR
     };
+    // ---------------- 每关节 chirp 相位（2026-10-26）----------------
+    // 背景：12 关节全同相 ⇒ 整机被推成一个刚体运动，容易与固定架共振（现场已观察到）。
+    // 现场要求：**左腿外摆时右腿也外摆**（髋左右镜像）、**前腿前摆时后腿下摆**（大腿前后反相）。
+    //   髋轴世界方向四面相同（+1,0,0）⇒ 左侧 + 为外摆、右侧 + 为内摆 ⇒ 右侧取反相 π；
+    //   大腿正方向=向后 ⇒ 前腿与后腿取反相 π。
+    // 可用 PACE_PHASE_MODE 切换：mirror(默认) / same(旧行为，全同相) / spread(12 等分相，去相关最强)
+    const char* phase_env = getenv("PACE_PHASE_MODE");
+    const std::string phase_mode = (phase_env && *phase_env) ? phase_env : "mirror";
+    const float PI_F = 3.14159265f;
+    float CHIRP_PHASE[12] = {0,0,0, 0,0,0, 0,0,0, 0,0,0};
+    if (phase_mode == "mirror") {
+        // FL: hip 0, thigh 0, calf 0      （基准）
+        CHIRP_PHASE[3] = PI_F;                            // FR hip 反相 ⇒ 左右同时外摆
+        CHIRP_PHASE[6] = 0.0f; CHIRP_PHASE[7] = PI_F; CHIRP_PHASE[8] = PI_F;   // RL: 后腿反相
+        CHIRP_PHASE[9] = PI_F; CHIRP_PHASE[10] = PI_F; CHIRP_PHASE[11] = PI_F; // RR: hip 反相 + 后腿反相
+    } else if (phase_mode == "spread") {
+        for (int i = 0; i < 12; i++) CHIRP_PHASE[i] = 2.0f * PI_F * (float)i / 12.0f;
+    } else if (phase_mode != "same") {
+        printf("[WARN] 未知 PACE_PHASE_MODE=%s，按 mirror 处理\n", phase_mode.c_str());
+        CHIRP_PHASE[3] = PI_F;
+        CHIRP_PHASE[7] = CHIRP_PHASE[8] = PI_F;
+        CHIRP_PHASE[9] = CHIRP_PHASE[10] = CHIRP_PHASE[11] = PI_F;
+    }
+    printf("[相位] 模式 %-6s（0=同相 π=反相）: ", phase_mode.c_str());
+    for (int i = 0; i < 12; i++) printf("%s%.0f", (i % 3) ? "/" : " ", CHIRP_PHASE[i] / PI_F);
+    printf("\n");
     float target_urdf[12], start_urdf[12], base[12];
     for (int leg = 0; leg < 4; leg++)
         for (int j = 0; j < 3; j++) {
@@ -487,6 +546,7 @@ void Example62_PaceChirpCollect() {
         fprintf(fm, "approach_s=%.1f\nsettle_s=%.1f\n", APPROACH_S, SETTLE_S);
         fprintf(fm, "joint_order=");
         for (int i = 0; i < 12; i++) fprintf(fm, "%s%s", jn[i], i < 11 ? "," : "");
+        fprintf(fm, "phase_mode=%s\n", phase_mode.c_str());
         fprintf(fm, "\nnote=固定基座/离地/固件补偿开关 由操作者填写\n");
         fclose(fm);
     }
@@ -523,13 +583,14 @@ void Example62_PaceChirpCollect() {
         const float t = (float)k / HZ;                       // 理想等距时间
         const float ph = 2.0f * (float)M_PI *
                          (F0_HZ * t + (F1_HZ - F0_HZ) / (2.0f * DURATION_S) * t * t);
-        const float w = sinf(ph);
         // 全关节同时、同一 chirp（PACE 官方例程亦如此），偏置 = base 实测
         for (int leg = 0; leg < 4; leg++)
             for (int j = 0; j < 3; j++) {
                 const int i = leg * 3 + j;
                 // 下发：URDF 目标 → status（见上面坐标约定说明）
-                mm.SendImpedance(leg, j + 1, rl::urdf_to_status(base[i] + AMP_RAD * w, i), 0, KP, KD, 0);
+                mm.SendImpedance(leg, j + 1,
+                                 rl::urdf_to_status(base[i] + AMP_RAD * sinf(ph + CHIRP_PHASE[i]), i),
+                                 0, KP, KD, 0);
             }
         // 记录（同一拍内先下发再读反馈）
         const auto now = std::chrono::steady_clock::now();
@@ -537,7 +598,7 @@ void Example62_PaceChirpCollect() {
         fprintf(f, "%d,%.6f", k, t_act);
         for (int leg = 0; leg < 4; leg++)
             for (int j = 0; j < 3; j++)
-                fprintf(f, ",%.6f", base[leg * 3 + j] + AMP_RAD * w);
+                fprintf(f, ",%.6f", base[leg * 3 + j] + AMP_RAD * sinf(ph + CHIRP_PHASE[leg * 3 + j]));
         for (int leg = 0; leg < 4; leg++)
             for (int j = 0; j < 3; j++) {
                 const int i = leg * 3 + j;

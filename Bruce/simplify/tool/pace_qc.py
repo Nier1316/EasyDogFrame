@@ -167,7 +167,13 @@ def dyn_checks(hdr, body, meta, tau_max=None):
         gains.append(statistics.median(gs) if gs else 0.0)
     f0 = float(meta.get("f0_hz", 0.1))
     f1 = float(meta.get("f1_hz", 10.0))
-    freqs = [f0 + (f1 - f0) * (b + 0.5) / nb for b in range(nb)]
+    # ⚠ 采集被截断时，实际扫频只走到 f_actual = f0 + (f1-f0)*t_last/duration，
+    #   分频段增益必须按**实际到达的频率**标注，否则会把 2.7 Hz 的数据标成 4.7 Hz。
+    dur_meta = float(meta.get("duration_s", 20.0))
+    t_last = float(t[-1]) if t else 0.0
+    frac = min(1.0, t_last / dur_meta) if dur_meta > 0 else 1.0
+    f1_eff = f0 + (f1 - f0) * frac
+    freqs = [f0 + (f1_eff - f0) * (b + 0.5) / nb for b in range(nb)]
     bw = None
     for f, g in zip(freqs, gains):
         if g < 0.5:
@@ -191,7 +197,7 @@ def dyn_checks(hdr, body, meta, tau_max=None):
     info = [("黏滞拍（信息，非门禁）", True, f"{stick*100:.1f}% 的'命令在动'采样里实测速度不足命令的 20%")]
     rows.append(("可用带宽 ≥ 2 Hz", (bw is None or bw >= 2.0),
                  ("全频段增益 ≥0.5" if bw is None else f"增益降到 0.5 约在 {bw:.1f} Hz")
-                 + f"；分段增益 {', '.join(f'{g:.2f}' for g in gains)}"))
+                 + f"；实际扫到 {f1_eff:.2f} Hz（分段增益 {', '.join(f'{g:.2f}' for g in gains)}）"))
     ok = all(g for _, g, _ in rows)
     return rows + info, ok
 
