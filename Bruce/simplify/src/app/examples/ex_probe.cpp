@@ -394,12 +394,14 @@ void Example62_PaceChirpCollect() {
     //   限位余量：thigh [0.88,1.12] ⊆ [-0.7,1.75] ✓ ； calf [-0.87,-0.63] ⊆ [-1.0,0.35] ✓
     // ⚠️ 机架限制（2026-10-26 现场）：**大腿不能水平**，只能从竖直向后摆 ≤45°（URDF thigh ∈ [0°, +45°]）。
     //   原方案 thigh = +1.00 rad(+57.3°) 会打到固定架子 ⇒ 改为 +30°，并用 PACE_BASE_* 可调。
-    //   选取依据（MJCF FK，幅值 0.12 + 摩擦滞后 0.032 ⇒ 单侧偏移 0.152 rad）：
-    //     thigh ∈ [8.7°, 36.3°]、calf ∈ [-48.6°, +11.3°] 才能让 ±0.152 都落在限位内；
-    //     在可行域内取"chirp 全过程轮子最低点最高"的解 → thigh +30° / calf -45°：
-    //       轮子最低点只在髋下 223 mm（大腿竖直时 424 mm）⇒ 多出约 200 mm 离地余量；
-    //       余量：thigh 最高 38.7°（机架 45°，留 6.3°）、calf 最低 -53.7°（URDF -57.3°，留 3.6°）。
-    const float base_thigh = envf("PACE_BASE_THIGH_DEG", 30.0f) * 3.14159265f / 180.0f;
+    //   2026-10-26 二次调整：现场要求 thigh 再**向下**放 45°（+30° → -15°，即偏向竖直前方）。
+    //   calf 允许中心区间由"±(幅值+滞后)=±0.152 rad"决定：[−48.6°, +11.4°]。
+    //   → thigh -15° / calf -45°：
+    //       范围 thigh [-23.7°, -6.3°]（URDF -40.1°，留 16.4°；机架只限正向 45°，这里远离）
+    //       范围 calf  [-53.7°, -36.3°]（URDF -57.3°，留 3.6°）
+    //       chirp 中轮子最低点在髋下 ≈230 mm（大腿竖直时 424 mm）⇒ 仍多约 194 mm 余量。
+    //   （thigh 取 -30° 时轮子最低 137 mm、余量更多，但会进一步偏离竖直；按现场要求取 -15°。）
+    const float base_thigh = envf("PACE_BASE_THIGH_DEG", -15.0f) * 3.14159265f / 180.0f;
     const float base_calf  = envf("PACE_BASE_CALF_DEG", -45.0f) * 3.14159265f / 180.0f;
     {
         // 预检：把"摆幅 + 摩擦滞后"算进范围，和机架/URDF 限位对照
@@ -407,9 +409,10 @@ void Example62_PaceChirpCollect() {
         const float d2r = 57.2957795f;
         printf("[预检] 操作点 thigh %+.1f° / calf %+.1f°，单侧偏移 %.3f rad\n",
                base_thigh * d2r, base_calf * d2r, EXC);
-        printf("       thigh 范围 [%+.1f°, %+.1f°]（机架允许 [0°, 45°]）%s\n",
+        // 机架只限制"从竖直向后"这一侧（上限 +45°）；向下的下限由 URDF 限位 -0.7 rad 决定。
+        printf("       thigh 范围 [%+.1f°, %+.1f°]（机架上限 +45.0°，URDF 下限 -40.1°）%s\n",
                (base_thigh - EXC) * d2r, (base_thigh + EXC) * d2r,
-               (base_thigh - EXC < 0.0f || base_thigh + EXC > 0.7854f) ? "  🔴 超机架限制！" : "  ✅");
+               (base_thigh + EXC > 0.7854f || base_thigh - EXC < -0.7f) ? "  🔴 超限！" : "  ✅");
         printf("       calf  范围 [%+.1f°, %+.1f°]（URDF 限位 [-57.3°, +20.1°]）%s\n",
                (base_calf - EXC) * d2r, (base_calf + EXC) * d2r,
                (base_calf - EXC < -1.0f || base_calf + EXC > 0.35f) ? "  🔴 超 URDF 限位！" : "  ✅");
