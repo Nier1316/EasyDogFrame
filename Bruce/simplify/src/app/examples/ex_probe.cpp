@@ -349,9 +349,17 @@ void Example62_PaceChirpCollect() {
     printf("   4) 固件补偿开关（cogging/摩擦补偿）在整个辨识与后续部署期间**保持一致**\n");
     printf("   5) kp/kd 取**部署值** %.0f/%.1f（rl::LEG_KP/LEG_KD；PACE 禁止把 PD 增益与动力学联合优化）\n",
            KP, KD);
-    printf("准备好后按回车开始（Ctrl+C 取消）: ");
-    fflush(stdout);
-    { int c; while ((c = getchar()) != '\n' && c != EOF) {} }
+    // 2026-10-26：PACE_AUTO_START=1 ⇒ 不再等回车，改成 3 秒倒计时（Ctrl+C 取消），
+    //   便于 VS Code 的 F7 一键采集；不设该变量时仍是原来的"按回车开始"（更安全）。
+    if (getenv("PACE_AUTO_START") && *getenv("PACE_AUTO_START")) {
+        printf("[自动] PACE_AUTO_START=1 ⇒ 3 秒后开始（Ctrl+C 取消）...\n");
+        fflush(stdout);
+        for (int i = 3; i > 0; i--) { printf("  %d...\n", i); fflush(stdout); sleep(1); }
+    } else {
+        printf("准备好后按回车开始（Ctrl+C 取消）: ");
+        fflush(stdout);
+        { int c; while ((c = getchar()) != '\n' && c != EOF) {} }
+    }
     if (g_rl_stop) { printf("[INFO] 已取消\n"); return; }
 
     MotorManager& mm = MotorManager::GetInstance();

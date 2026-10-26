@@ -877,3 +877,26 @@ PACE_AMP_RAD=0.10 PACE_KP=200 PACE_F1_HZ=5 ./run.sh 62
 
 可用环境变量免重编调参：`PACE_BASE_THIGH_DEG` / `PACE_BASE_CALF_DEG`（默认 30 / −45）。
 采前会打印**预检**：thigh/calf 的预期范围与机架/URDF 限位对照，超限直接标红。
+
+### 2026-10-26 F7 一键采集（30 方案 + 免回车）
+
+`run-PACE-62` 任务的环境变量固定为 **30 方案**，按 F7 即用，不依赖手敲：
+
+```
+PACE_AMP_RAD=0.12  PACE_KP=250  PACE_KD=4  PACE_F1_HZ=5
+PACE_BASE_THIGH_DEG=30  PACE_BASE_CALF_DEG=-45
+PACE_DEV_LIMIT=0.3  PACE_AUTO_START=1
+```
+
+`PACE_AUTO_START=1` ⇒ 跳过"按回车开始"，改为 **3 秒倒计时（Ctrl+C 取消）**，
+便于一键采集；不设该变量时仍是原来的回车确认（更安全）。
+
+启动时应按此打印（可据此确认参数生效）：
+
+```
+[预检] 操作点 thigh +30.0° / calf -45.0°，单侧偏移 0.152 rad
+       thigh 范围 [+21.3°, +38.7°]（机架允许 [0°, 45°]）  ✅
+       calf  范围 [-53.7°, -36.3°]（URDF 限位 [-57.3°, +20.1°]）  ✅
+[参数] PACE_AMP_RAD=0.12 覆盖默认 0.12
+[自动] PACE_AUTO_START=1 ⇒ 3 秒后开始（Ctrl+C 取消）...
+```
