@@ -70,7 +70,7 @@ constexpr MotorCalibrationParam MOTOR_CALIBRATION[CAN_PORTS][MOTORS_PER_CAN] = {
         {-1.0f, -1.0f, 0.441f}, // Motor 2 (Thigh)
         {1.0f, 1.0f, 0.211f},
         // Motor 3 (Calf)
-        {1.0f, 1.0f, 0.0f}, // Motor 4 (Wheel) — 待实测
+        {1.0f, 1.0f, 0.0f}, // Motor 4 (Wheel) — 依左右分组与 FR 同号；RR 单轮方向未单独实测（若直行时该轮反向，单测复核此值）
     },
 };
 

@@ -252,9 +252,11 @@ int main(int argc, char** argv) {
     // printf("[INFO] Example44 completed.\n");
 
     // 运行示例54 - 吊装摩擦辨识（重力标定 + 前馈恒速 + 双向配对，数据落盘 log/fric_id/）
-    printf("[INFO] Running Example54_FrictionSysId...\n");
-    Example54_FrictionSysId();
-    printf("[INFO] Example54 completed.\n");
+    // ⚠ 2026-10-26 合并修正：远端激活 Ex62 时漏了 Ex54，导致 Ex62 之前会先跑 Ex54（使能电机做摩擦辨识）
+    //   本工程约定"编译期只有一个激活示例"，这里把 Ex54 注释掉，保持 Ex62 为唯一激活。
+    // printf("[INFO] Running Example54_FrictionSysId...\n");
+    // Example54_FrictionSysId();
+    // printf("[INFO] Example54 completed.\n");
 
     // 运行示例45 - 选择电机移动到物理零位（USB2CAN）
     // printf("[INFO] Running Example45_USB2CanMoveToZero...\n");
@@ -287,9 +289,9 @@ int main(int argc, char** argv) {
     // printf("[INFO] Example60 completed.\n");
 
     // 运行示例62 - PACE 式真机辨识采集（12 腿关节同时位置 chirp，0.1→10Hz/20s/400Hz，写 PACE 兼容 CSV）
-    // printf("[INFO] Running Example62_PaceChirpCollect...\n");
-    // Example62_PaceChirpCollect();
-    // printf("[INFO] Example62 completed.\n");
+    printf("[INFO] Running Example62_PaceChirpCollect...\n");
+    Example62_PaceChirpCollect();
+    printf("[INFO] Example62 completed.\n");
 
     // 运行示例63 - 被动姿态监视（**不使能电机**，只读 0x0F 角度 + IMU → UDP 姿态流给 pose_view）
     //   ⚠️ 不使能 ⇒ 无保持力矩，狗会软掉：运行前必须架起/吊起，或它本来就趴着。

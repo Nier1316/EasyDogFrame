@@ -299,14 +299,13 @@ void Example60_SysIdProbe() {
 void Example62_PaceChirpCollect() {
     printf("\n========== 示例 62：PACE 式真机辨识采集（全关节同时位置 chirp）==========\n");
 
-    // ---------------- 可调参数 ----------------
+    // ---------------- 可调参数（改这里即可）----------------
     // 2026-10-19：改为**环境变量可覆盖**，试参数不用改源码重编。
-    //   PACE_DURATION_S  PACE_F0_HZ  PACE_F1_HZ  PACE_AMP_RAD  PACE_KP  PACE_KD  PACE_HZ
-    // 为什么要调幅值：实测关节摩擦 ≈7 N·m，而 0.06 rad×kp250 只有 15 N·m ⇒ 激励/摩擦仅 2.1:1，
-    //   黏滞拍 6~12%、中位力矩 6~10 N·m 全在"喂摩擦"，I_a/T_d 难辨。
-    //   推荐：PACE_AMP_RAD=0.10 PACE_KP=250（**必须 = 部署值 rl::LEG_KP**，PACE §2.1 要求辨识增益==部署增益；
-    //   命令力矩 25 N·m，而命令上限是 Hip/Thigh 120、Calf 200 N·m ⇒ 不会削顶）。
-    //   ⚠ 2026-10-19 曾误按"27 N·m 限幅"把 kp 降到 200，导致标定模型不能用于 250 部署，已改回。
+    //   PACE_DURATION_S / PACE_F0_HZ / PACE_F1_HZ / PACE_AMP_RAD / PACE_KP / PACE_KD / PACE_HZ / PACE_DEV_LIMIT
+    // 默认值 = 2026-10-26 远端方案（折叠操作点 CHIRP_BASE + 幅值 0.12 + 扫频 5 Hz）：
+    //   幅值 0.12 ⇒ 激励 30 N·m vs 静摩擦 ~8.1 N·m = 3.7:1；折叠姿态使轮子下垂 0.68→0.52 m
+    //   （+16 cm 余量）且垂向行程 0.26→0.05 m/rad ⇒ 才吃得下更大幅值。
+    // ⚠ kp 必须 == 部署值 rl::LEG_KP（PACE §2.1）；命令上限 Hip/Thigh 120、Calf 200 N·m，30 N·m 不削顶。
     auto envf = [](const char* name, float dflt) {
         const char* v = std::getenv(name);
         if (v && *v) {
@@ -318,8 +317,13 @@ void Example62_PaceChirpCollect() {
     };
     const float DURATION_S = envf("PACE_DURATION_S", 20.0f);   // 序列时长（PACE：20~60 s）
     const float F0_HZ      = envf("PACE_F0_HZ",      0.1f);    // 起始频率
-    const float F1_HZ      = envf("PACE_F1_HZ",     10.0f);    // 终止频率（实测 >5 Hz 腿跟不上，建议 5）
-    const float AMP_RAD    = envf("PACE_AMP_RAD",    0.06f);   // chirp 幅值（建议 ≥0.10，见上）
+    // 2026-10-26：10 -> 5。理由：kp=250 时闭环带宽约 3~4 Hz，5 Hz 以上真机跟随比已掉到 0.56 以下，
+    //   再往上扫只增加噪声；2026-10-19 那份数据实测 0.1~5 Hz 已能覆盖极点（全频段增益 >= 0.5）。
+    const float F1_HZ      = envf("PACE_F1_HZ", 5.0f);   // 终止频率（>5 Hz 跟随比 <0.56，无信息）
+    // 2026-10-26：0.06 -> 0.12。理由：体检判据"摩擦/激励比 >= 2.5"，
+    //   激励力矩 = kp*amp = 250*0.12 = 30 N·m，对静摩擦 ~8.1 N·m => 3.7:1 ✓（0.06 时只有 1.9:1）；
+    //   同时显著减轻低速"粘滑"（实测零变化采样占比 15~26%、最长卡值 258 ms）。
+    const float AMP_RAD    = envf("PACE_AMP_RAD", 0.12f); // chirp 幅值（折叠姿态下已核算离地/限位余量）
     // ---- PD 增益：**必须与真机部署腿 PD 逐字相同**（PACE §2.1 / Eq.7：增益参与闭环，与动力学
     //   联合优化会不唯一，故禁止"辨识一套、部署另一套"）。
     //   2026-10-08 决定：由 50/1（借 Go2W 的部署值）改为**直接取本工程部署值** rl::LEG_KP / rl::LEG_KD。
@@ -327,18 +331,15 @@ void Example62_PaceChirpCollect() {
     //     低增益使闭环极点落在 0.1~10 Hz 激励带宽内 ⇒ 执行器动态更可观测；取 250/4 后闭环更硬、
     //     带宽更高，高频段可观测性会下降，换来的是硬规则成立 + 位置跟踪显著变好（50/1 时实测跟踪失真）。
     //     若日后要回到低增益，必须**同时**改部署 PD，不可只改这里。
-    const float KP         = envf("PACE_KP", (float)rl::LEG_KP);   // 默认 = 部署值 250（单一真值源）
+    const float KP         = envf("PACE_KP", (float)rl::LEG_KP);   // 默认 = 部署值 250
     const float KD         = envf("PACE_KD", (float)rl::LEG_KD);   // 默认 = 4
-    const int   HZ         = (int)envf("PACE_HZ", 400.0f);    // 辨识采样/控制频率（PACE 整机日志用 400 Hz）
+    const int   HZ         = (int)envf("PACE_HZ", 400.0f);   // 辨识采样/控制频率
     constexpr float POS_LIMIT  = 2.5f;     // status 坐标的硬保护（thigh 在 DEFAULT_POSE 就有 ~-1.16）
-    // 偏离保护：实测偏离 chirp 偏置超过该值即中止。默认 0.5，可用 PACE_DEV_LIMIT 收紧。
-    //   2026-10-19：幅值 0.10 时实测摆幅可达 ±0.13 rad（= 幅值 + 摩擦滞后 τ_f/kp），腿打到地板；
-    //   悬挂余量不足时可用 PACE_AMP_RAD 调小，或设 PACE_DEV_LIMIT=0.3 防跑飞。
-    const float DEV_LIMIT  = envf("PACE_DEV_LIMIT", 0.5f);
+    const float DEV_LIMIT  = envf("PACE_DEV_LIMIT", 0.5f);  // 偏离 chirp 偏置超过即中止（防跑飞）
     // ------------------------------------------------------
 
     const int N = (int)(DURATION_S * HZ);
-    printf("[参数] 时长 %.0fs | chirp %.2f→%.2f Hz | 幅值 %.4f rad | kp/kd %.0f/%.1f | %d Hz | %d 拍\n",
+    printf("[参数] 时长 %.0fs | chirp %.2f→%.2f Hz | 幅值 %.3f rad | kp/kd %.0f/%.1f | %d Hz | %d 拍\n",
            DURATION_S, F0_HZ, F1_HZ, AMP_RAD, KP, KD, HZ, N);
 
     printf("\n⚠️ 前置条件（PACE §2.1，缺一不可）：\n");
@@ -377,16 +378,28 @@ void Example62_PaceChirpCollect() {
     //   `URDF = CONV_A·status + CONV_B`（thigh 还要**反号**且差 ~0.96 rad、calf 差 ~1.28 rad）。
     //   所以：**下发前必须 urdf_to_status，记录时必须 status_to_urdf**，
     //   否则一来拉到的姿态完全不对（thigh 会差 ~78°），二来导出的 .pt 不在仿真坐标系里。
+    // chirp 的**操作点**（不是 DEFAULT_POSE！后者是策略的度量衡，禁止为采集而改）。
+    // 2026-10-26：固定基座架不高、轮子会打地面 ⇒ 把腿**折叠**（大腿更平、小腿更收）：
+    //   轮子相对髋的下垂 ~0.68 m -> ~0.52 m（+16 cm 离地余量）；
+    //   轮子垂向行程/每弧度 ~0.26 -> ~0.05 m/rad ⇒ 才能承受更大幅值。
+    //   幅值 0.12 时：轮子垂向行程 ≈ ±(0.34·sin1.0 + 0.343·sin0.25)·0.12 ≈ ±4.5 cm ≪ 16 cm ✓
+    //   限位余量：thigh [0.88,1.12] ⊆ [-0.7,1.75] ✓ ； calf [-0.87,-0.63] ⊆ [-1.0,0.35] ✓
+    constexpr float CHIRP_BASE[12] = {
+        0.0f, 1.00f, -0.75f,   // FL hip/thigh/calf（URDF 约定）
+        0.0f, 1.00f, -0.75f,   // FR
+        0.0f, 1.00f, -0.75f,   // RL
+        0.0f, 1.00f, -0.75f,   // RR
+    };
     float target_urdf[12], start_urdf[12], base[12];
     for (int leg = 0; leg < 4; leg++)
         for (int j = 0; j < 3; j++) {
             const int i = leg * 3 + j;
-            target_urdf[i] = rl::stand_pose()[i];   // 真机起立姿态（可用 STAND_THIGH_DEG/STAND_CALF_DEG 覆盖）
+            target_urdf[i] = CHIRP_BASE[i];   // 折叠操作点（默认姿态仍由 DEFAULT_POSE 定义，未改）
             start_urdf[i]  = rl::status_to_urdf(mm.GetStatus(leg, j + 1).position, i);
             base[i]        = target_urdf[i];   // 兜底：中途异常退出也不会用到未初始化值
         }
 
-    printf("\n[1/4] 从当前姿态线性插值到**起立姿态** stand_pose()（%.0f s @%d Hz，kp/kd %.0f/%.1f）...\n",
+    printf("\n[1/4] 从当前姿态线性插值到 chirp 操作点（%.0f s @%d Hz，kp/kd %.0f/%.1f）...\n",
            APPROACH_S, APPROACH_HZ, KP, KD);
     printf("      起始（URDF）: ");
     for (int i = 0; i < 12; i++) printf("%+.3f ", start_urdf[i]);
