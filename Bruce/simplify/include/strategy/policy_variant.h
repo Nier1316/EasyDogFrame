@@ -36,4 +36,4 @@
 //    <python> tool/export_policy.py --ckpt <...>/iteration_10000.pkl --out-weights include/strategy/policy_weights_standturn.h --out-ref include/strategy/policy_test_ref_standturn.h
 // ============================================================================
 
-#define POLICY_VARIANT 4   // 默认变体（0=9754 / 1=10000 / 2=5350 / 3=8001 / 4=9002；示例可用 rl::SetPolicyVariant 覆盖）
+#define POLICY_VARIANT 5   // 默认变体（0=9754 / 1=10000 / 2=5350 / 3=8001 / 4=9002 / 5=dogurdf_legacy_it1500；示例可用 rl::SetPolicyVariant 覆盖）
