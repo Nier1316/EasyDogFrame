@@ -9,7 +9,7 @@
 //   最新平地速度策略 = rw9_plain_v1.2_s4_hipy25/iteration_9002，
 //   plain 不含 HIM；仅训练过平地，不得用于楼梯/崎岖地面。
 // 换权重流程：export_policy.py（--ckpt 指定，--out-weights 指定变体头）→ 重新编译 →
-// 跑 Example30 做 MLP 数值回归门（同时核对全部五套 REF_OBS/REF_ACTION）。
+// 跑 Example30 做 MLP 数值回归门（同时核对全部六套 REF_OBS/REF_ACTION）。
 #include "app/examples/ex_rl.h"
 #include "app/examples_common.h"
 #include "motion/motion_controller.h"
@@ -263,11 +263,12 @@ void Example25_RLPolicyControl() {
 // 纯 CPU，不初始化 CAN、不使能电机。
 void Example30_RLPolicyLinkTest() {
     printf("\n========== 示例 30：RL 策略链路离线验证 ==========\n");
-    printf("[INFO] 不碰 CAN。全部五套权重各用 REF_OBS(64) 跑 mlp_forward，对比 REF_ACTION(16)。\n");
+    printf("[INFO] 不碰 CAN。全部六套权重各用 REF_OBS(64) 跑 mlp_forward，对比 REF_ACTION(16)。\n");
 
-    // 1) MLP 前向 vs 参考输出（五套变体都验：0=9754 / 1=10000 / 2=5350 / 3=8001 / 4=9002）
+    // 1) MLP 前向 vs 参考输出（六套变体都验：0=9754 / 1=10000 / 2=5350 / 3=8001 /
+    //    4=9002 / 5=1500_legacy）
     bool all_ok = true;
-    for (int vid = rl::POLICY_SMALLLIFT_9754; vid <= rl::POLICY_RW9_PLAIN_V12_S4_HIPY25_9002; vid++) {
+    for (int vid = rl::POLICY_SMALLLIFT_9754; vid <= rl::POLICY_DOGURDF_LEGACY_S4_1500; vid++) {
         const rl::PolicyWeights& w = rl::PolicyOf(vid);
         rl::SetPolicyVariant(vid);
 
@@ -292,7 +293,7 @@ void Example30_RLPolicyLinkTest() {
         }
     }
     printf("\n    %s\n", all_ok
-        ? "  [OK] 五套 MLP 权重与网络结构均正确"
+        ? "  [OK] 六套 MLP 权重与网络结构均正确"
         : "  [FAIL] 权重/结构有问题，需用 tool/export_policy.py 重新导出");
 
     // 恢复编译期默认变体，避免影响本示例后续（观测样本）与同进程其它逻辑

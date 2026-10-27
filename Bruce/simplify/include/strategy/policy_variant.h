@@ -21,9 +21,17 @@
 //    4 = rw9_plain_v1.2_s4_hipy25 / iteration_9002（2026-10-18）【默认 · 最新平地速度】
 //        plain checkpoint（不含 HIM 估计器），obs 64 / action 16。仅训练过平地，
 //        **不得用于楼梯/崎岖地面**。推理必须用动作均值（deterministic），不采样。
+//    5 = dogurdf_legacy_s4 / iteration_1500（2026-10-27）【旧模型线 · stage-4 + RAW 观测】
+//        checkpoint: checkpoints_20261027_195149_repro_s4_legacy/iteration_1500.pkl。
+//        plain actor（不含 HIM），obs 64 / action 16；**观测通道是 RAW**
+//        （ang_vel / joint_vel 不乘 0.25 / 0.05，= 2026-10-22 之前的训练约定），
+//        与本框架 build_observation 的原始通道一致 —— 反过来用缩放通道喂它，
+//        实测原地转会从 ~92% 打成 266%~281%（超转狂转）。
+//        nominal 姿态与 PD 增益和框架一致（0/−0.03/−0.116、Kp/Kd 250/4、0.25、12.5）。
+//        仅平地 + stage-4 参数 DR 训练，**不得用于楼梯/崎岖地面**。推理用动作均值。
 //
 //  ⚠ 无论选哪套，都建议跑一次 **Example30_RLPolicyLinkTest**（离线、不碰 CAN）：
-//    它会**同时校验全部五套权重**的 MLP 数值回归，确认导出权重与推理链路正确。
+//    它会**同时校验全部六套权重**的 MLP 数值回归，确认导出权重与推理链路正确。
 //  导出方法（训练环境，一条命令写完，注意不要用行尾反斜杠续行——会触发 -Wcomment）：
 //    <python> tool/export_policy.py --ckpt <...>/iteration_10000.pkl --out-weights include/strategy/policy_weights_standturn.h --out-ref include/strategy/policy_test_ref_standturn.h
 // ============================================================================

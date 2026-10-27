@@ -11,6 +11,8 @@
 //    wt_5350            : weights/iteration_5350.pkl   （h52_s45_v4，演示稳定）
 //    wt_rw9_plain_v11_s4: weights/iteration_8001.pkl（rw9_plain_v1.1_s4，上一版平地速度）
 //    wt_rw9_plain_v12_s4_hipy25: weights/iteration_9002.pkl（rw9_plain_v1.2_s4_hipy25，最新平地速度）
+//    wt_dogurdf_legacy_s4_it1500: weights/dogurdf_legacy_s4_it1500.pkl
+//                                 （repro_s4_legacy / iteration_1500，stage-4 + **RAW 观测**）
 // ============================================================================
 #include "strategy/policy_set.h"
 
@@ -38,6 +40,11 @@ namespace rl { namespace wt_rw9_plain_v12_s4_hipy25 {
 #include "strategy/policy_weights_rw9_plain_v12_s4_hipy25.h"
 #include "strategy/policy_test_ref_rw9_plain_v12_s4_hipy25.h"
 } }  // namespace rl::wt_rw9_plain_v12_s4_hipy25
+
+namespace rl { namespace wt_dogurdf_legacy_s4_it1500 {
+#include "strategy/policy_weights_dogurdf_legacy_s4_it1500.h"
+#include "strategy/policy_test_ref_dogurdf_legacy_s4_it1500.h"
+} }  // namespace rl::wt_dogurdf_legacy_s4_it1500
 
 namespace rl {
 
@@ -104,6 +111,25 @@ static const PolicyWeights kRw9PlainV12S4Hipy25 = {
     true, false,
 };
 
+// dogurdf_legacy_s4 / iteration_1500：2026-10-27 的 repro_s4_legacy 重现 run（stage 4 DR）。
+// plain actor（不含 HIM 估计器），obs 64 / action 16，训练时 base_lin_vel 恒 0。
+// ⚠ 观测约定 = **RAW**（ang_vel / joint_vel 通道不乘 0.25 / 0.05）——该 run 以
+//   --obs_ang_vel_scale 1.0 --obs_joint_vel_scale 1.0 训练，即 2026-10-22 之前的通道约定；
+//   本框架的 build_observation 一直是 RAW，两者一致（用缩放通道会把原地转打成 200%+）。
+// 仅在平地/stage-4 DR 下训练，不得用于楼梯/崎岖地面。推理用动作均值（deterministic）。
+// 训练侧 nominal 姿态与 PD 增益和框架完全一致：hip/thigh/calf = 0/−0.03/−0.116、
+// Kp/Kd = 250/4、action_scale 0.25、wheel_vel_scale 12.5。
+static const PolicyWeights kDogurdfLegacyS4It1500 = {
+    wt_dogurdf_legacy_s4_it1500::ACTOR_W0, wt_dogurdf_legacy_s4_it1500::ACTOR_B0,
+    wt_dogurdf_legacy_s4_it1500::ACTOR_W1, wt_dogurdf_legacy_s4_it1500::ACTOR_B1,
+    wt_dogurdf_legacy_s4_it1500::ACTOR_W2, wt_dogurdf_legacy_s4_it1500::ACTOR_B2,
+    wt_dogurdf_legacy_s4_it1500::ACTOR_WO, wt_dogurdf_legacy_s4_it1500::ACTOR_BO,
+    wt_dogurdf_legacy_s4_it1500::REF_OBS,  wt_dogurdf_legacy_s4_it1500::REF_ACTION,
+    "dogurdf_legacy_s4/iteration_1500",
+    "checkpoints_20261027_195149_repro_s4_legacy/iteration_1500.pkl",
+    true, false,
+};
+
 const PolicyWeights& PolicyOf(int id) {
     switch (id) {
         case POLICY_SMALLLIFT_9754:        return kSmalllift;
@@ -111,6 +137,7 @@ const PolicyWeights& PolicyOf(int id) {
         case POLICY_H52S45_V4_5350:        return k5350;
         case POLICY_RW9_PLAIN_V11_S4_8001:        return kRw9PlainV11S4;
         case POLICY_RW9_PLAIN_V12_S4_HIPY25_9002: return kRw9PlainV12S4Hipy25;
+        case POLICY_DOGURDF_LEGACY_S4_1500:       return kDogurdfLegacyS4It1500;
         default:                                  return PolicyOf(POLICY_VARIANT);   // 越界 → 编译期默认
     }
 }
@@ -122,7 +149,8 @@ int PolicyVariant() { return g_variant; }
 void SetPolicyVariant(int id) {
     if (id == POLICY_SMALLLIFT_9754 || id == POLICY_STANDTURN_10000 ||
         id == POLICY_H52S45_V4_5350 || id == POLICY_RW9_PLAIN_V11_S4_8001 ||
-        id == POLICY_RW9_PLAIN_V12_S4_HIPY25_9002)
+        id == POLICY_RW9_PLAIN_V12_S4_HIPY25_9002 ||
+        id == POLICY_DOGURDF_LEGACY_S4_1500)
         g_variant = id;
 }
 
