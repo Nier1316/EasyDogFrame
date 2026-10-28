@@ -3,6 +3,7 @@
  * @brief   dogurdf 策略观测构建与控制律的实现
  */
 #include "strategy/rl_controller.h"
+#include "strategy/policy_set.h"   // 逐变体观测通道系数（obs_ang_vel_scale / obs_joint_vel_scale）
 #include <cmath>
 
 namespace rl {
@@ -142,6 +143,22 @@ void build_observation(const float* gyro, const float* quat,
     }
     for (int foot = 0; foot < 4; ++foot) obs[56 + foot] = sin_ph[foot];   // sin × 4
     for (int foot = 0; foot < 4; ++foot) obs[60 + foot] = cos_ph[foot];   // cos × 4
+
+    // 9) 逐变体观测通道系数（2026-10-28）：训练侧把 actor obs 的 ang_vel 与 joint_vel
+    //    各乘一个常数（velocity/observations.py:129-130 缺省、:203/:206 施加；
+    //    velocity/__init__.py:255-260 注入）。2026-10-22 起为 0.25 / 0.05，之前是 RAW(1.0)。
+    //    **先乘系数、再 clip ±100**，与训练侧顺序一致。
+    //    ⚠ joint_vel 是 obs[21..37) 全部 16 维：训练里 his_dof_vel = 12 腿 + 4 轮，
+    //      一起乘 0.05；框架把它拆成 joint_vel[21..33) 与 wheel_vel[33..37) 两段，
+    //      两段都必须乘（只乘前 12 维 = 轮速通道少缩 20 倍，转向/直行会明显跑偏）。
+    //    既有变体系数 = 1.0 → 逐位不变（下面的 != 1.0f 判断让旧变体根本不进循环）。
+    const PolicyWeights& pw = CurrentPolicy();
+    if (pw.obs_ang_vel_scale != 1.0f) {
+        for (int i = 3; i < 6; ++i) obs[i] *= pw.obs_ang_vel_scale;
+    }
+    if (pw.obs_joint_vel_scale != 1.0f) {
+        for (int i = 21; i < 37; ++i) obs[i] *= pw.obs_joint_vel_scale;
+    }
 
     // clip 到 [-100, 100]（与 sim2sim.py 一致）
     for (int i = 0; i < OBS_DIM; ++i) {
