@@ -198,7 +198,9 @@ message(STATUS "libusb 传输探针: ${PROJECT_SOURCE_DIR}/bin/libusb_xferprobe.
 # REF_ACTION 比对。单独一个可执行文件，避免为了验证权重去启动真机程序。
 # 用法：./bin/policy_selftest   （退出码 0=通过）
 # ---------------------------------------------------------------------------
-add_executable(policy_selftest tool/policy_selftest.cc src/strategy/policy_set.cpp)
+add_executable(policy_selftest tool/policy_selftest.cc src/strategy/policy_set.cpp
+                                 src/strategy/rl_controller.cpp
+                                 src/strategy/sim2real_conv.cpp)   # 观测通道自检需要 build_observation + DEFAULT_POSE（纯 CPU）
 target_include_directories(policy_selftest PRIVATE ${PROJECT_SOURCE_DIR}/include)
 if(UNIX)
     target_compile_options(policy_selftest PRIVATE -Wall -Wextra)
