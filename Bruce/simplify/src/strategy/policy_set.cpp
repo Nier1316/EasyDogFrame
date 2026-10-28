@@ -15,6 +15,8 @@
 //                                 （repro_s4_legacy / iteration_1500，stage-4 + **RAW 观测**）
 //    wt_dogurdf_pace_stg4_it6503: weights/dogurdf_pace_stg4_it6503.pkl
 //                                 （pace stg4 / iteration_6503，stage-4 + **缩放观测 0.25/0.05**）
+//    wt_dogurdf_pace_s45_it6800:  weights/dogurdf_pace_s45_it6800.pkl
+//                                 （pace_s45 / iteration_6800，6503 续训到 stage-4.5，缩放观测 0.25/0.05）
 // ============================================================================
 #include "strategy/policy_set.h"
 
@@ -52,6 +54,11 @@ namespace rl { namespace wt_dogurdf_pace_stg4_it6503 {
 #include "strategy/policy_weights_dogurdf_pace_stg4_it6503.h"
 #include "strategy/policy_test_ref_dogurdf_pace_stg4_it6503.h"
 } }  // namespace rl::wt_dogurdf_pace_stg4_it6503
+
+namespace rl { namespace wt_dogurdf_pace_s45_it6800 {
+#include "strategy/policy_weights_dogurdf_pace_s45_it6800.h"
+#include "strategy/policy_test_ref_dogurdf_pace_s45_it6800.h"
+} }  // namespace rl::wt_dogurdf_pace_s45_it6800
 
 namespace rl {
 
@@ -171,6 +178,40 @@ static const PolicyWeights kDogurdfPaceStg4It6503 = {
     0.25f, 0.05f,   // 缩放观测通道（2026-10-22 之后的训练约定）
 };
 
+// dogurdf_pace_s45 / iteration_6800：**从上面的 pace_stg4/6503 直接续训**的 run
+// （2026-10-28 16:29 启动，iteration 6504→6800，随后停在 6800；训练侧 run 名 pace_s45）。
+// plain actor（不含 HIM），obs 64 / action 16 / critic 88，训练时 obs[0:3] 恒零。
+// ⚠ 观测通道 = **缩放**（ang_vel ×0.25、joint_vel ×0.05，12 腿 + 4 轮共 16 维一起乘），
+//   与变体 6 相同。依据：
+//     · 该 run 未由任何脚本启动（scripts/ 下无 pace_s45 引用），也没有传 --obs_*；
+//     · src/train.py:244-261 的 --obs_ang_vel_scale/--obs_joint_vel_scale 缺省 None
+//       ⇒ 落到 src/components/tasks/velocity/__init__.py:255-260 的 config 注入，
+//       config 无该键 ⇒ observations.py:129-130 的缺省 0.25 / 0.05；
+//     · src/cfg/dogurdf_config.py 只设 config.obs_scales.*（=1.0，另一套旧缩放字段），
+//       **没有** obs_ang_vel_scale / obs_joint_vel_scale；
+//     · 旁证（首层 actor 权重行 |W| 均值，6503 → 6800）：ang_vel 行 5.2251 → 5.2297（×1.001）、
+//       12 腿 joint_vel 行 8.3547 → 8.3070（×0.994）、轮速行 4.0730 → 3.8064（×0.935），
+//       而 legacy RAW → 6503 是 ×2.64 / ×8.49 / ×10.16 —— 6800 与 6503 同一通道，
+//       若它改用 RAW，297 iter 内不可能把这三行的量级保持不动。
+// 训练边界：stage 4.5 = stage-4 参数 DR **+ 整图连续 Perlin 崎岖地**
+//   （dogurdf_config.py:344-347 与 get_dr_stage_overrides 的 4.5 分支：mesh_type=hfield、
+//   all_rough=True、rough_range=0.075，run 日志里也确有 hfield/allrough npy 加载行）。
+//   与变体 6 的区别：6 是平地（stage 4），7 是崎岖地续训；**台阶/楼梯仍未训练**。
+//   带 PACE 辨识的 6.25 ms 力矩延迟与关节阻尼。推理必须用动作均值（deterministic）。
+// 训练侧 nominal 姿态与 PD 增益和框架完全一致：hip/thigh/calf = 0/−0.03/−0.116、
+// Kp/Kd = 250/4、action_scale 0.25、wheel_vel_scale 12.5、action_clip 1.0。
+static const PolicyWeights kDogurdfPaceS45It6800 = {
+    wt_dogurdf_pace_s45_it6800::ACTOR_W0, wt_dogurdf_pace_s45_it6800::ACTOR_B0,
+    wt_dogurdf_pace_s45_it6800::ACTOR_W1, wt_dogurdf_pace_s45_it6800::ACTOR_B1,
+    wt_dogurdf_pace_s45_it6800::ACTOR_W2, wt_dogurdf_pace_s45_it6800::ACTOR_B2,
+    wt_dogurdf_pace_s45_it6800::ACTOR_WO, wt_dogurdf_pace_s45_it6800::ACTOR_BO,
+    wt_dogurdf_pace_s45_it6800::REF_OBS,  wt_dogurdf_pace_s45_it6800::REF_ACTION,
+    "dogurdf_pace_s45/iteration_6800",
+    "checkpoints_20261028_162903_pace_s45/iteration_6800.pkl",
+    true, true,
+    0.25f, 0.05f,   // 缩放观测通道（2026-10-22 之后的训练约定，与变体 6 相同）
+};
+
 const PolicyWeights& PolicyOf(int id) {
     switch (id) {
         case POLICY_SMALLLIFT_9754:        return kSmalllift;
@@ -180,6 +221,7 @@ const PolicyWeights& PolicyOf(int id) {
         case POLICY_RW9_PLAIN_V12_S4_HIPY25_9002: return kRw9PlainV12S4Hipy25;
         case POLICY_DOGURDF_LEGACY_S4_1500:       return kDogurdfLegacyS4It1500;
         case POLICY_DOGURDF_PACE_STG4_6503:       return kDogurdfPaceStg4It6503;
+        case POLICY_DOGURDF_PACE_S45_6800:        return kDogurdfPaceS45It6800;
         default:                                  return PolicyOf(POLICY_VARIANT);   // 越界 → 编译期默认
     }
 }
@@ -193,7 +235,8 @@ void SetPolicyVariant(int id) {
         id == POLICY_H52S45_V4_5350 || id == POLICY_RW9_PLAIN_V11_S4_8001 ||
         id == POLICY_RW9_PLAIN_V12_S4_HIPY25_9002 ||
         id == POLICY_DOGURDF_LEGACY_S4_1500 ||
-        id == POLICY_DOGURDF_PACE_STG4_6503)
+        id == POLICY_DOGURDF_PACE_STG4_6503 ||
+        id == POLICY_DOGURDF_PACE_S45_6800)
         g_variant = id;
 }
 

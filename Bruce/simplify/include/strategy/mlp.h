@@ -7,7 +7,7 @@
  *
  * 权重由 tool/export_policy.py 从 flax checkpoint 导出到 policy_weights*.h，
  * 布局为 x @ W + b（W 形状 [in_dim][out_dim]，row-major）。
- * 多套变体（9754 / 10000 / 5350 / 8001 / 9002 / 1500_legacy / pace_6503）同时编译进来，由 rl::SetPolicyVariant() 运行时选择，
+ * 多套变体（9754 / 10000 / 5350 / 8001 / 9002 / 1500_legacy / pace_6503 / pace_s45_6800）同时编译进来，由 rl::SetPolicyVariant() 运行时选择，
  * 默认值见 strategy/policy_variant.h；本函数用 rl::CurrentPolicy() 取当前权重。
  *
  * 零外部依赖（不用 libtorch / onnxruntime），20 万参数、50 Hz 下 CPU 无压力。

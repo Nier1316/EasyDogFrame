@@ -29,7 +29,7 @@ int main() {
 
     bool all_ok = true;
     // 上界取"当前最后一档"。新增策略时只需在这里补一行（否则新变体会被静默跳过）。
-    const int last_vid = rl::POLICY_DOGURDF_PACE_STG4_6503;
+    const int last_vid = rl::POLICY_DOGURDF_PACE_S45_6800;
     for (int vid = rl::POLICY_SMALLLIFT_9754; vid <= last_vid; vid++) {
         const rl::PolicyWeights& w = rl::PolicyOf(vid);
         rl::SetPolicyVariant(vid);

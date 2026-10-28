@@ -9,7 +9,7 @@
 //   最新平地速度策略 = rw9_plain_v1.2_s4_hipy25/iteration_9002，
 //   plain 不含 HIM；仅训练过平地，不得用于楼梯/崎岖地面。
 // 换权重流程：export_policy.py（--ckpt 指定，--out-weights 指定变体头）→ 重新编译 →
-// 跑 Example30 做 MLP 数值回归门（同时核对全部七套 REF_OBS/REF_ACTION）。
+// 跑 Example30 做 MLP 数值回归门（同时核对全部八套 REF_OBS/REF_ACTION）。
 #include "app/examples/ex_rl.h"
 #include "app/examples_common.h"
 #include "motion/motion_controller.h"
@@ -263,12 +263,12 @@ void Example25_RLPolicyControl() {
 // 纯 CPU，不初始化 CAN、不使能电机。
 void Example30_RLPolicyLinkTest() {
     printf("\n========== 示例 30：RL 策略链路离线验证 ==========\n");
-    printf("[INFO] 不碰 CAN。全部七套权重各用 REF_OBS(64) 跑 mlp_forward，对比 REF_ACTION(16)。\n");
+    printf("[INFO] 不碰 CAN。全部八套权重各用 REF_OBS(64) 跑 mlp_forward，对比 REF_ACTION(16)。\n");
 
-    // 1) MLP 前向 vs 参考输出（七套变体都验：0=9754 / 1=10000 / 2=5350 / 3=8001 /
-    //    4=9002 / 5=1500_legacy / 6=pace_stg4_6503）
+    // 1) MLP 前向 vs 参考输出（八套变体都验：0=9754 / 1=10000 / 2=5350 / 3=8001 /
+    //    4=9002 / 5=1500_legacy / 6=pace_stg4_6503 / 7=pace_s45_6800）
     bool all_ok = true;
-    for (int vid = rl::POLICY_SMALLLIFT_9754; vid <= rl::POLICY_DOGURDF_PACE_STG4_6503; vid++) {
+    for (int vid = rl::POLICY_SMALLLIFT_9754; vid <= rl::POLICY_DOGURDF_PACE_S45_6800; vid++) {
         const rl::PolicyWeights& w = rl::PolicyOf(vid);
         rl::SetPolicyVariant(vid);
 
@@ -293,7 +293,7 @@ void Example30_RLPolicyLinkTest() {
         }
     }
     printf("\n    %s\n", all_ok
-        ? "  [OK] 七套 MLP 权重与网络结构均正确"
+        ? "  [OK] 八套 MLP 权重与网络结构均正确"
         : "  [FAIL] 权重/结构有问题，需用 tool/export_policy.py 重新导出");
 
     // 恢复编译期默认变体，避免影响本示例后续（观测样本）与同进程其它逻辑
@@ -1175,14 +1175,15 @@ void Example36_RLStandLoop() {
 void Example37_RLTeleopControl() {
     printf("\n========== Example 37: RL 遥操作（手柄，走 MotionController） ==========\n");
 
-    // 2026-10-28：切到 **PACE 辨识之后训练的策略** —— dogurdf_pace_stg4 / iteration_6503（变体 6）。
-    //   它是 PACE 分阶段链（stage 1→4）的终点，训练时用到了 PACE 辨识出的 6.25 ms 力矩延迟
-    //   与关节阻尼；观测通道为**缩放版**（ang_vel ×0.25、joint_vel/轮速 ×0.05），
-    //   由 PolicyWeights 的逐变体系数在 build_observation 内自动施加，本示例无需额外处理。
-    //   上一版是 rw9_plain_v1.2_s4_hipy25 / iteration_9002（变体 4，旧模型线）。
+    // 2026-10-28（晚）：切到 **dogurdf_pace_s45 / iteration_6800（变体 7）** ——
+    //   它是变体 6（pace_stg4/6503）的直接续训（iteration 6504→6800），并在 stage 4.5
+    //   的整图连续 Perlin 崎岖地上练过；观测通道与变体 6 相同，是**缩放版**
+    //   （ang_vel ×0.25、joint_vel/轮速 ×0.05），由 PolicyWeights 的逐变体系数在
+    //   build_observation 内自动施加，本示例无需额外处理。
+    //   上一版是 dogurdf_pace_stg4 / iteration_6503（变体 6，平地 stage-4）。
     // 本示例**显式钉住**该变体（与全局默认 POLICY_VARIANT 解耦），避免默认值变动悄悄改掉部署策略；
     // 若要跟随编译期默认，改成 rl::SetPolicyVariant(POLICY_VARIANT) 即可。
-    rl::SetPolicyVariant(rl::POLICY_DOGURDF_PACE_STG4_6503);
+    rl::SetPolicyVariant(rl::POLICY_DOGURDF_PACE_S45_6800);
     printf("[策略] %s（%s，%s）\n", rl::CurrentPolicy().name,
            rl::CurrentPolicy().has_forward_vx ? "可前进" : "⚠ 不支持前进",
            rl::CurrentPolicy().terrain_trained ? "地形适应" : "仅平地，勿用于楼梯/崎岖地面");
