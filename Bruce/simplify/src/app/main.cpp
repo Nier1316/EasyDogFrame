@@ -210,10 +210,10 @@ int main(int argc, char** argv) {
     // Example36_RLStandLoop();
     // printf("[INFO] Example36 completed.\n");
 
-    // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，USB2CAN 4 路）
-    // printf("[INFO] Running Example37_RLTeleopControl...\n");
-    // Example37_RLTeleopControl();
-    // printf("[INFO] Example37 completed.\n");
+    // 运行示例37 - RL 遥操作（手柄前进/后退 + 转向，USB2CAN 4 路）★编译期默认激活
+    printf("[INFO] Running Example37_RLTeleopControl...\n");
+    Example37_RLTeleopControl();
+    printf("[INFO] Example37 completed.\n");
 
 
     // 运行示例38 - 执行器延迟辨识（扫频测 Action Delay，定 action_delay_steps）
@@ -289,9 +289,10 @@ int main(int argc, char** argv) {
     // printf("[INFO] Example60 completed.\n");
 
     // 运行示例62 - PACE 式真机辨识采集（12 腿关节同时位置 chirp，0.1→10Hz/20s/400Hz，写 PACE 兼容 CSV）
-    printf("[INFO] Running Example62_PaceChirpCollect...\n");
-    Example62_PaceChirpCollect();
-    printf("[INFO] Example62 completed.\n");
+    // 2026-10-28：编译期默认改回 Ex37（部署默认）。PACE 采集请用 F7 或 ./run.sh 62。
+    // printf("[INFO] Running Example62_PaceChirpCollect...\n");
+    // Example62_PaceChirpCollect();
+    // printf("[INFO] Example62 completed.\n");
 
     // 运行示例63 - 被动姿态监视（**不使能电机**，只读 0x0F 角度 + IMU → UDP 姿态流给 pose_view）
     //   ⚠️ 不使能 ⇒ 无保持力矩，狗会软掉：运行前必须架起/吊起，或它本来就趴着。
