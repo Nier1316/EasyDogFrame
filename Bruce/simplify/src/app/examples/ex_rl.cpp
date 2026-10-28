@@ -1175,10 +1175,14 @@ void Example36_RLStandLoop() {
 void Example37_RLTeleopControl() {
     printf("\n========== Example 37: RL 遥操作（手柄，走 MotionController） ==========\n");
 
-    // 本示例运行时强制 rw9_plain_v1.2_s4_hipy25 / iteration_9002 —— 最新平地速度
-    // 策略（plain，不含 HIM；仅训练过平地，不得用于楼梯/崎岖地面）；
-    // 与全局默认 POLICY_VARIANT 无关。
-    rl::SetPolicyVariant(rl::POLICY_RW9_PLAIN_V12_S4_HIPY25_9002);
+    // 2026-10-28：切到 **PACE 辨识之后训练的策略** —— dogurdf_pace_stg4 / iteration_6503（变体 6）。
+    //   它是 PACE 分阶段链（stage 1→4）的终点，训练时用到了 PACE 辨识出的 6.25 ms 力矩延迟
+    //   与关节阻尼；观测通道为**缩放版**（ang_vel ×0.25、joint_vel/轮速 ×0.05），
+    //   由 PolicyWeights 的逐变体系数在 build_observation 内自动施加，本示例无需额外处理。
+    //   上一版是 rw9_plain_v1.2_s4_hipy25 / iteration_9002（变体 4，旧模型线）。
+    // 本示例**显式钉住**该变体（与全局默认 POLICY_VARIANT 解耦），避免默认值变动悄悄改掉部署策略；
+    // 若要跟随编译期默认，改成 rl::SetPolicyVariant(POLICY_VARIANT) 即可。
+    rl::SetPolicyVariant(rl::POLICY_DOGURDF_PACE_STG4_6503);
     printf("[策略] %s（%s，%s）\n", rl::CurrentPolicy().name,
            rl::CurrentPolicy().has_forward_vx ? "可前进" : "⚠ 不支持前进",
            rl::CurrentPolicy().terrain_trained ? "地形适应" : "仅平地，勿用于楼梯/崎岖地面");
